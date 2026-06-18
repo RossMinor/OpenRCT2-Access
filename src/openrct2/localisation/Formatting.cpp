@@ -1,0 +1,930 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#include "Formatting.h"
+
+#include "../Context.h"
+#include "../Diagnostic.h"
+#include "../config/Config.h"
+#include "../core/String.hpp"
+#include "../core/UnitConversion.h"
+#include "../object/ObjectManager.h"
+#include "../object/PeepNamesObject.h"
+#include "Currency.h"
+#include "FormatCodes.h"
+#include "Formatter.h"
+#include "Language.h"
+#include "Localisation.Date.h"
+#include "StringIds.h"
+
+#include <cmath>
+#include <cstdint>
+
+namespace OpenRCT2
+{
+    static void FormatMonthYear(FormatBuffer& ss, int32_t month, int32_t year, bool inSentence);
+
+    static std::optional<int32_t> ParseNumericToken(std::string_view s)
+    {
+        if (s.size() >= 3 && s.size() <= 5 && s[0] == '{' && s[s.size() - 1] == '}')
+        {
+            char buffer[8]{};
+            std::memcpy(buffer, s.data() + 1, s.size() - 2);
+            return std::atoi(buffer);
+        }
+        return std::nullopt;
+    }
+
+    static std::optional<int32_t> ParseNumericToken(std::string_view str, size_t& i)
+    {
+        if (i < str.size() && str[i] == '{')
+        {
+            auto parameterStart = i;
+            do
+            {
+                i++;
+            } while (i < str.size() && str[i] != '}');
+            if (i < str.size() && str[i] == '}')
+            {
+                i++;
+            }
+
+            auto parameter = str.substr(parameterStart, i - parameterStart);
+            return ParseNumericToken(parameter);
+        }
+        return std::nullopt;
+    }
+
+    FmtString::Token::Token(FormatToken k, std::string_view s, uint32_t p)
+        : kind(k)
+        , text(s)
+        , parameter(p)
+    {
+    }
+
+    bool FmtString::Token::IsLiteral() const
+    {
+        return kind == FormatToken::literal;
+    }
+
+    bool FmtString::Token::IsCodepoint() const
+    {
+        return kind == FormatToken::escaped;
+    }
+
+    codepoint_t FmtString::Token::GetCodepoint() const
+    {
+        if (kind == FormatToken::escaped)
+        {
+            // Assume text is only "{{" or "}}" for now
+            return text[0];
+        }
+        return 0;
+    }
+
+    FmtString::iterator::iterator(std::string_view s, size_t i)
+        : str(s)
+        , index(i)
+    {
+        update();
+    }
+
+    void FmtString::iterator::update()
+    {
+        auto i = index;
+        if (i >= str.size())
+        {
+            current = Token();
+            return;
+        }
+
+        if (str[i] == '\n' || str[i] == '\r')
+        {
+            i++;
+        }
+        else if (str[i] == '{' && i + 1 < str.size() && str[i + 1] == '{')
+        {
+            i += 2;
+        }
+        else if (str[i] == '}' && i + 1 < str.size() && str[i + 1] == '}')
+        {
+            i += 2;
+        }
+        else if (str[i] == '{' && i + 1 < str.size() && str[i + 1] != '{')
+        {
+            // Move to end brace
+            auto startIndex = i;
+            do
+            {
+                i++;
+            } while (i < str.size() && str[i] != '}');
+            if (i < str.size() && str[i] == '}')
+            {
+                i++;
+
+                auto inner = str.substr(startIndex + 1, i - startIndex - 2);
+                if (inner == "MOVE_X")
+                {
+                    uint32_t p = 0;
+                    auto p0 = ParseNumericToken(str, i);
+                    if (p0)
+                    {
+                        p = *p0;
+                    }
+                    current = Token(FormatToken::move, str.substr(startIndex, i - startIndex), p);
+                    return;
+                }
+
+                if (inner == "INLINE_SPRITE")
+                {
+                    uint32_t p = 0;
+                    auto p0 = ParseNumericToken(str, i);
+                    auto p1 = ParseNumericToken(str, i);
+                    auto p2 = ParseNumericToken(str, i);
+                    auto p3 = ParseNumericToken(str, i);
+                    if (p0 && p1 && p2 && p3)
+                    {
+                        p |= (*p0);
+                        p |= (*p1) << 8;
+                        p |= (*p2) << 16;
+                        p |= (*p3) << 24;
+                    }
+                    current = Token(FormatToken::inlineSprite, str.substr(startIndex, i - startIndex), p);
+                    return;
+                }
+            }
+        }
+        else
+        {
+            do
+            {
+                i++;
+            } while (i < str.size() && str[i] != '{' && str[i] != '}' && str[i] != '\n' && str[i] != '\r');
+        }
+        current = CreateToken(i - index);
+    }
+
+    bool FmtString::iterator::operator==(iterator& rhs)
+    {
+        return index == rhs.index;
+    }
+
+    bool FmtString::iterator::operator!=(iterator& rhs)
+    {
+        return index != rhs.index;
+    }
+
+    FmtString::Token FmtString::iterator::CreateToken(size_t len)
+    {
+        std::string_view sztoken = str.substr(index, len);
+
+        if (sztoken.size() >= 2 && ((sztoken[0] == '{' && sztoken[1] == '{') || (sztoken[0] == '}' && sztoken[1] == '}')))
+        {
+            return Token(FormatToken::escaped, sztoken);
+        }
+        if (sztoken.size() >= 2 && sztoken[0] == '{' && sztoken[1] != '{')
+        {
+            auto kind = FormatTokenFromString(sztoken.substr(1, len - 2));
+            return Token(kind, sztoken);
+        }
+        if (sztoken == "\n" || sztoken == "\r")
+        {
+            return Token(FormatToken::newline, sztoken);
+        }
+        return Token(FormatToken::literal, sztoken);
+    }
+
+    const FmtString::Token* FmtString::iterator::operator->() const
+    {
+        return &current;
+    }
+
+    const FmtString::Token& FmtString::iterator::operator*()
+    {
+        return current;
+    }
+
+    FmtString::iterator& FmtString::iterator::operator++()
+    {
+        if (index < str.size())
+        {
+            index += current.text.size();
+            update();
+        }
+        return *this;
+    }
+
+    FmtString::iterator FmtString::iterator::operator++(int)
+    {
+        auto result = *this;
+        if (index < str.size())
+        {
+            index += current.text.size();
+            update();
+        }
+        return result;
+    }
+
+    bool FmtString::iterator::eol() const
+    {
+        return index >= str.size();
+    }
+
+    FmtString::FmtString(std::string&& s)
+    {
+        _strOwned = std::move(s);
+        _str = _strOwned;
+    }
+
+    FmtString::FmtString(std::string_view s)
+        : _str(s)
+    {
+    }
+
+    FmtString::FmtString(const char* s)
+        : FmtString(s == nullptr ? std::string_view() : std::string_view(s))
+    {
+    }
+
+    FmtString::iterator FmtString::begin() const
+    {
+        return iterator(_str, 0);
+    }
+
+    FmtString::iterator FmtString::end() const
+    {
+        return iterator(_str, _str.size());
+    }
+
+    std::string FmtString::WithoutFormatTokens() const
+    {
+        std::string result;
+        result.reserve(_str.size() * 4);
+        for (const auto& t : *this)
+        {
+            if (t.IsLiteral())
+            {
+                result += t.text;
+            }
+        }
+        return result;
+    }
+
+    static std::string_view GetDigitSeparator()
+    {
+        auto sz = LanguageGetString(STR_LOCALE_THOUSANDS_SEPARATOR);
+        return sz != nullptr ? sz : std::string_view();
+    }
+
+    static std::string_view GetDecimalSeparator()
+    {
+        auto sz = LanguageGetString(STR_LOCALE_DECIMAL_POINT);
+        return sz != nullptr ? sz : std::string_view();
+    }
+
+    void FormatRealName(FormatBuffer& ss, StringId id)
+    {
+        if (IsRealNameStringId(id))
+        {
+            auto& objManager = GetContext()->GetObjectManager();
+            auto* peepNamesObj = objManager.GetLoadedObject<PeepNamesObject>(0);
+            if (peepNamesObj != nullptr)
+            {
+                auto realNameIndex = id - kRealNameStart;
+                ss << peepNamesObj->GetGivenNameAt(realNameIndex);
+                ss << ' ';
+                ss << peepNamesObj->GetSurnameAt(realNameIndex >> 10);
+            }
+        }
+    }
+
+    template<size_t TSize, typename TIndex>
+    static void AppendSeparatorReversed(char (&buffer)[TSize], TIndex& i, std::string_view sep)
+    {
+        if (i + sep.size() >= TSize)
+            return;
+
+        utf8 sepBuffer[32];
+        std::memcpy(&sepBuffer[0], sep.data(), sep.size());
+        for (int32_t j = static_cast<int32_t>(sep.size()) - 1; j >= 0; j--)
+        {
+            buffer[i++] = sepBuffer[j];
+        }
+    }
+
+    template<size_t TDecimalPlace, bool TDigitSep, typename T>
+    void FormatNumber(FormatBuffer& ss, T value)
+    {
+        char buffer[32];
+        size_t i = 0;
+
+        uint64_t num;
+        if constexpr (std::is_signed<T>::value)
+        {
+            if (value < 0)
+            {
+                ss << '-';
+                if (value == std::numeric_limits<int64_t>::min())
+                {
+                    // Edge case: int64_t can not store this number so manually assign num to (int64_t::max + 1)
+                    num = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1;
+                }
+                else
+                {
+                    // Cast negative number to int64_t and then reverse sign
+                    num = -static_cast<int64_t>(value);
+                }
+            }
+            else
+            {
+                num = value;
+            }
+        }
+        else
+        {
+            num = value;
+        }
+
+        // Decimal digits
+        if constexpr (TDecimalPlace > 0)
+        {
+            while (num != 0 && i < sizeof(buffer) && i < TDecimalPlace)
+            {
+                buffer[i++] = static_cast<char>('0' + (num % 10));
+                num /= 10;
+            }
+            // handle case where value has fewer sig figs than required decimal places
+            while (num == 0 && i < TDecimalPlace && i < sizeof(buffer))
+            {
+                buffer[i++] = '0';
+            }
+
+            auto decSep = GetDecimalSeparator();
+            AppendSeparatorReversed(buffer, i, decSep);
+        }
+
+        // Whole digits
+        [[maybe_unused]] auto digitSep = GetDigitSeparator();
+        [[maybe_unused]] size_t groupLen = 0;
+        do
+        {
+            if constexpr (TDigitSep)
+            {
+                if (groupLen >= 3)
+                {
+                    groupLen = 0;
+                    AppendSeparatorReversed(buffer, i, digitSep);
+                }
+            }
+            buffer[i++] = static_cast<char>('0' + (num % 10));
+            num /= 10;
+            if constexpr (TDigitSep)
+            {
+                groupLen++;
+            }
+        } while (num != 0 && i < sizeof(buffer));
+
+        // Finally reverse append the string
+        for (int32_t j = static_cast<int32_t>(i - 1); j >= 0; j--)
+        {
+            ss << buffer[j];
+        }
+    }
+
+    template<size_t TDecimalPlace, bool TDigitSep, typename T>
+    void FormatCurrency(FormatBuffer& ss, T rawValue)
+    {
+        auto currencyDesc = &CurrencyDescriptors[EnumValue(Config::Get().general.currencyFormat)];
+        auto value = static_cast<int64_t>(rawValue) * currencyDesc->rate;
+
+        // Negative sign
+        if (value < 0)
+        {
+            ss << '-';
+            value = -value;
+        }
+
+        // Round the value away from zero
+        if constexpr (TDecimalPlace < 2)
+        {
+            value = (value + 99) / 100;
+        }
+
+        // Currency symbol
+        auto symbol = currencyDesc->symbol_unicode;
+        auto affix = currencyDesc->affix_unicode;
+        if (!FontSupportsString(symbol, FontStyle::medium))
+        {
+            symbol = currencyDesc->symbol_ascii;
+            affix = currencyDesc->affix_ascii;
+        }
+
+        // Currency symbol prefix
+        if (affix == CurrencyAffix::prefix)
+        {
+            ss << symbol;
+        }
+
+        // Drop the pennies for "large" currencies
+        auto dropPennies = false;
+        if constexpr (TDecimalPlace >= 2)
+        {
+            dropPennies = currencyDesc->rate >= 100;
+        }
+        if (dropPennies)
+        {
+            FormatNumber<0, TDigitSep>(ss, value / 100);
+        }
+        else
+        {
+            FormatNumber<TDecimalPlace, TDigitSep>(ss, value);
+        }
+
+        // Currency symbol suffix
+        if (affix == CurrencyAffix::suffix)
+        {
+            ss << symbol;
+        }
+    }
+
+    template<typename T>
+    static void FormatMinutesSeconds(FormatBuffer& ss, T value)
+    {
+        static constexpr StringId Formats[][2] = {
+            { STR_DURATION_SEC, STR_DURATION_SECS },
+            { STR_DURATION_MIN_SEC, STR_DURATION_MIN_SECS },
+            { STR_DURATION_MINS_SEC, STR_DURATION_MINS_SECS },
+        };
+
+        auto minutes = value / 60;
+        auto seconds = value % 60;
+        if (minutes == 0)
+        {
+            auto fmt = Formats[0][seconds == 1 ? 0 : 1];
+            FormatStringID(ss, fmt, seconds);
+        }
+        else
+        {
+            auto fmt = Formats[minutes == 1 ? 1 : 2][seconds == 1 ? 0 : 1];
+            FormatStringID(ss, fmt, minutes, seconds);
+        }
+    }
+
+    template<typename T>
+    static void FormatHoursMinutes(FormatBuffer& ss, T value)
+    {
+        static constexpr StringId Formats[][2] = {
+            { STR_REALTIME_MIN, STR_REALTIME_MINS },
+            { STR_REALTIME_HOUR_MIN, STR_REALTIME_HOUR_MINS },
+            { STR_REALTIME_HOURS_MIN, STR_REALTIME_HOURS_MINS },
+        };
+
+        auto hours = value / 60;
+        auto minutes = value % 60;
+        if (hours == 0)
+        {
+            auto fmt = Formats[0][minutes == 1 ? 0 : 1];
+            FormatStringID(ss, fmt, minutes);
+        }
+        else
+        {
+            auto fmt = Formats[hours == 1 ? 1 : 2][minutes == 1 ? 0 : 1];
+            FormatStringID(ss, fmt, hours, minutes);
+        }
+    }
+
+    template<typename T>
+    void FormatArgument(FormatBuffer& ss, FormatToken token, T arg)
+    {
+        switch (token)
+        {
+            case FormatToken::uint16:
+            case FormatToken::int32:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatNumber<0, false>(ss, arg);
+                }
+                break;
+            case FormatToken::comma16:
+            case FormatToken::comma32:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatNumber<0, true>(ss, arg);
+                }
+                break;
+            case FormatToken::comma1dp16:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatNumber<1, true>(ss, arg);
+                }
+                else if constexpr (std::is_floating_point<T>())
+                {
+                    FormatNumber<1, true>(ss, std::round(arg * 10));
+                }
+                break;
+            case FormatToken::comma2dp32:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatNumber<2, true>(ss, arg);
+                }
+                else if constexpr (std::is_floating_point<T>())
+                {
+                    FormatNumber<2, true>(ss, std::round(arg * 100));
+                }
+                break;
+            case FormatToken::currency2dp:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatCurrency<2, true>(ss, arg);
+                }
+                break;
+            case FormatToken::currency:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatCurrency<0, true>(ss, arg);
+                }
+                break;
+            case FormatToken::velocity:
+                if constexpr (std::is_integral<T>())
+                {
+                    switch (Config::Get().general.measurementFormat)
+                    {
+                        default:
+                        case MeasurementFormat::imperial:
+                            FormatStringID(ss, STR_UNIT_SUFFIX_MILES_PER_HOUR, arg);
+                            break;
+                        case MeasurementFormat::metric:
+                            FormatStringID(ss, STR_UNIT_SUFFIX_KILOMETRES_PER_HOUR, MphToKmph(arg));
+                            break;
+                        case MeasurementFormat::SI:
+                            FormatStringID(ss, STR_UNIT_SUFFIX_METRES_PER_SECOND, MphToDmps(arg));
+                            break;
+                    }
+                }
+                break;
+            case FormatToken::durationShort:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatMinutesSeconds(ss, arg);
+                }
+                break;
+            case FormatToken::durationLong:
+                if constexpr (std::is_integral<T>())
+                {
+                    FormatHoursMinutes(ss, arg);
+                }
+                break;
+            case FormatToken::length:
+                if constexpr (std::is_integral<T>())
+                {
+                    switch (Config::Get().general.measurementFormat)
+                    {
+                        default:
+                        case MeasurementFormat::imperial:
+                            FormatStringID(ss, STR_UNIT_SUFFIX_FEET, MetresToFeet(arg));
+                            break;
+                        case MeasurementFormat::metric:
+                        case MeasurementFormat::SI:
+                            FormatStringID(ss, STR_UNIT_SUFFIX_METRES, arg);
+                            break;
+                    }
+                }
+                break;
+            case FormatToken::height:
+                if constexpr (std::is_integral<T>())
+                {
+                    auto metres = HeightUnitsToMetres(arg);
+                    switch (Config::Get().general.measurementFormat)
+                    {
+                        default:
+                        case MeasurementFormat::imperial:
+                            FormatStringID(ss, STR_UNIT_SUFFIX_FEET, MetresToFeet(metres));
+                            break;
+                        case MeasurementFormat::metric:
+                        case MeasurementFormat::SI:
+                            FormatStringID(ss, STR_UNIT_SUFFIX_METRES, metres);
+                            break;
+                    }
+                }
+                break;
+            case FormatToken::monthYear:
+            case FormatToken::monthYearSentence:
+                if constexpr (std::is_integral<T>())
+                {
+                    auto month = DateGetMonth(arg);
+                    auto year = DateGetYear(arg) + 1;
+                    FormatMonthYear(ss, month, year, token == FormatToken::monthYearSentence);
+                }
+                break;
+            case FormatToken::month:
+                if constexpr (std::is_integral<T>())
+                {
+                    auto szMonth = LanguageGetString(DateGameMonthNames[DateGetMonth(arg)]);
+                    if (szMonth != nullptr)
+                    {
+                        ss << szMonth;
+                    }
+                }
+                break;
+            case FormatToken::string:
+                ss << arg;
+                break;
+            case FormatToken::sprite:
+                if constexpr (std::is_integral<T>())
+                {
+                    auto idx = static_cast<uint32_t>(arg);
+                    char inlineBuf[64];
+                    size_t len = snprintf(
+                        inlineBuf, sizeof(inlineBuf), "{INLINE_SPRITE}{%u}{%u}{%u}{%u}", ((idx >> 0) & 0xFF),
+                        ((idx >> 8) & 0xFF), ((idx >> 16) & 0xFF), ((idx >> 24) & 0xFF));
+                    ss.append(inlineBuf, len);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    template void FormatArgument(FormatBuffer&, FormatToken, uint16_t);
+    template void FormatArgument(FormatBuffer&, FormatToken, int16_t);
+    template void FormatArgument(FormatBuffer&, FormatToken, int32_t);
+    template void FormatArgument(FormatBuffer&, FormatToken, int64_t);
+    template void FormatArgument(FormatBuffer&, FormatToken, uint32_t);
+    template void FormatArgument(FormatBuffer&, FormatToken, uint64_t);
+    template void FormatArgument(FormatBuffer&, FormatToken, const char*);
+    template void FormatArgument(FormatBuffer&, FormatToken, std::string_view);
+
+    bool IsRealNameStringId(StringId id)
+    {
+        return id >= kRealNameStart && id <= kRealNameEnd;
+    }
+
+    FmtString GetFmtStringById(StringId id)
+    {
+        auto fmtc = LanguageGetString(id);
+        return FmtString(fmtc);
+    }
+
+    FormatBuffer& GetThreadFormatStream()
+    {
+        thread_local FormatBuffer ss;
+        ss.clear();
+        return ss;
+    }
+
+    size_t CopyStringStreamToBuffer(char* buffer, size_t bufferLen, FormatBuffer& ss)
+    {
+        auto copyLen = std::min<size_t>(bufferLen - 1, ss.size());
+
+        std::copy(ss.data(), ss.data() + copyLen, buffer);
+        buffer[copyLen] = '\0';
+
+        return ss.size();
+    }
+
+    static void FormatArgumentAny(FormatBuffer& ss, FormatToken token, const FormatArg_t& value)
+    {
+        if (std::holds_alternative<uint16_t>(value))
+        {
+            FormatArgument(ss, token, std::get<uint16_t>(value));
+        }
+        else if (std::holds_alternative<int32_t>(value))
+        {
+            FormatArgument(ss, token, std::get<int32_t>(value));
+        }
+        else if (std::holds_alternative<int64_t>(value))
+        {
+            FormatArgument(ss, token, std::get<int64_t>(value));
+        }
+        else if (std::holds_alternative<const char*>(value))
+        {
+            FormatArgument(ss, token, std::get<const char*>(value));
+        }
+        else if (std::holds_alternative<std::string>(value))
+        {
+            FormatArgument(ss, token, std::get<std::string>(value));
+        }
+        else
+        {
+            throw std::runtime_error("No support for format argument type.");
+        }
+    }
+
+    static void FormatStringAny(FormatBuffer& ss, const FmtString& fmt, const std::vector<FormatArg_t>& args, size_t& argIndex)
+    {
+        for (const auto& token : fmt)
+        {
+            if (token.kind == FormatToken::stringById)
+            {
+                if (argIndex < args.size())
+                {
+                    const auto& arg = args[argIndex++];
+                    std::optional<StringId> stringId;
+                    if (auto value16 = std::get_if<uint16_t>(&arg))
+                    {
+                        stringId = *value16;
+                    }
+                    else if (auto value32 = std::get_if<int32_t>(&arg))
+                    {
+                        stringId = *value32;
+                    }
+                    if (stringId)
+                    {
+                        if (IsRealNameStringId(*stringId))
+                        {
+                            FormatRealName(ss, *stringId);
+                        }
+                        else
+                        {
+                            auto subfmt = GetFmtStringById(*stringId);
+                            FormatStringAny(ss, subfmt, args, argIndex);
+                        }
+                    }
+                }
+                else
+                {
+                    argIndex++;
+                }
+            }
+            else if (FormatTokenTakesArgument(token.kind))
+            {
+                if (argIndex < args.size())
+                {
+                    FormatArgumentAny(ss, token.kind, args[argIndex]);
+                }
+                argIndex++;
+            }
+            else if (token.kind != FormatToken::push16 && token.kind != FormatToken::pop16)
+            {
+                ss << token.text;
+            }
+        }
+    }
+
+    std::string FormatStringAny(const FmtString& fmt, const std::vector<FormatArg_t>& args)
+    {
+        auto& ss = GetThreadFormatStream();
+        size_t argIndex = 0;
+        FormatStringAny(ss, fmt, args, argIndex);
+        return ss.data();
+    }
+
+    size_t FormatStringAny(char* buffer, size_t bufferLen, const FmtString& fmt, const std::vector<FormatArg_t>& args)
+    {
+        auto& ss = GetThreadFormatStream();
+        size_t argIndex = 0;
+        FormatStringAny(ss, fmt, args, argIndex);
+        return CopyStringStreamToBuffer(buffer, bufferLen, ss);
+    }
+
+    template<typename T>
+    static T ReadFromArgs(const void*& args)
+    {
+        T value;
+        std::memcpy(&value, args, sizeof(T));
+        args = reinterpret_cast<const char*>(reinterpret_cast<uintptr_t>(args) + sizeof(T));
+        return value;
+    }
+
+    static void BuildAnyArgListFromLegacyArgBuffer(const FmtString& fmt, std::vector<FormatArg_t>& anyArgs, const void*& args)
+    {
+        for (const auto& t : fmt)
+        {
+            switch (t.kind)
+            {
+                case FormatToken::comma32:
+                case FormatToken::int32:
+                case FormatToken::comma2dp32:
+                case FormatToken::sprite:
+                    anyArgs.emplace_back(ReadFromArgs<int32_t>(args));
+                    break;
+                case FormatToken::currency2dp:
+                case FormatToken::currency:
+                    anyArgs.emplace_back(ReadFromArgs<int64_t>(args));
+                    break;
+                case FormatToken::uint16:
+                case FormatToken::monthYear:
+                case FormatToken::monthYearSentence:
+                case FormatToken::month:
+                case FormatToken::velocity:
+                case FormatToken::durationShort:
+                case FormatToken::durationLong:
+                    anyArgs.emplace_back(ReadFromArgs<uint16_t>(args));
+                    break;
+                case FormatToken::comma16:
+                case FormatToken::length:
+                case FormatToken::height:
+                case FormatToken::comma1dp16:
+                    anyArgs.emplace_back(ReadFromArgs<int16_t>(args));
+                    break;
+                case FormatToken::stringById:
+                {
+                    auto stringId = ReadFromArgs<StringId>(args);
+                    anyArgs.emplace_back(stringId);
+                    BuildAnyArgListFromLegacyArgBuffer(GetFmtStringById(stringId), anyArgs, args);
+                    break;
+                }
+                case FormatToken::string:
+                {
+                    auto sz = ReadFromArgs<const char*>(args);
+                    anyArgs.emplace_back(sz);
+                    break;
+                }
+                case FormatToken::pop16:
+                    args = reinterpret_cast<const char*>(reinterpret_cast<uintptr_t>(args) + 2);
+                    break;
+                case FormatToken::push16:
+                    args = reinterpret_cast<const char*>(reinterpret_cast<uintptr_t>(args) - 2);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    static void FormatMonthYear(FormatBuffer& ss, int32_t month, int32_t year, bool inSentence)
+    {
+        thread_local std::vector<FormatArg_t> tempArgs;
+        tempArgs.clear();
+
+        auto stringId = inSentence ? STR_DATE_FORMAT_MY_SENTENCE : STR_DATE_FORMAT_MY;
+        auto fmt = GetFmtStringById(stringId);
+        Formatter ft;
+        ft.Add<uint16_t>(month);
+        ft.Add<uint16_t>(year);
+        const void* legacyArgs = ft.Data();
+        BuildAnyArgListFromLegacyArgBuffer(fmt, tempArgs, legacyArgs);
+        size_t argIndex = 0;
+        FormatStringAny(ss, fmt, tempArgs, argIndex);
+    }
+
+    size_t FormatStringLegacy(char* buffer, size_t bufferLen, StringId id, const void* args)
+    {
+        thread_local std::vector<FormatArg_t> anyArgs;
+        anyArgs.clear();
+        auto fmt = GetFmtStringById(id);
+        BuildAnyArgListFromLegacyArgBuffer(fmt, anyArgs, args);
+        return FormatStringAny(buffer, bufferLen, fmt, anyArgs);
+    }
+
+    std::string FormatStringIDLegacy(StringId format, const void* args)
+    {
+        std::string buffer(256, 0);
+        size_t len{};
+        for (;;)
+        {
+            FormatStringLegacy(buffer.data(), buffer.size(), format, args);
+            len = buffer.find('\0');
+            if (len == std::string::npos)
+            {
+                len = buffer.size();
+            }
+            if (len >= buffer.size() - 1)
+            {
+                // Null terminator to close to end of buffer, grow buffer and try again
+                buffer.resize(buffer.size() * 2);
+            }
+            else
+            {
+                buffer.resize(len);
+                break;
+            }
+        }
+        return buffer;
+    }
+
+    /**
+     * Writes a formatted string to a buffer and converts it to upper case.
+     *  rct2: 0x006C2538
+     * dest (edi)
+     * format (ax)
+     * args (ecx)
+     */
+    void FormatStringToUpper(utf8* dest, size_t size, StringId format, const void* args)
+    {
+        if (size == 0)
+        {
+            return;
+        }
+
+        FormatStringLegacy(dest, size, format, args);
+
+        std::string upperString = String::toUpper(dest);
+
+        if (upperString.size() + 1 >= size)
+        {
+            upperString.resize(size - 1);
+            dest[size - 1] = '\0';
+            LOG_WARNING("Truncating formatted string \"%s\" to %d bytes.", dest, size);
+        }
+
+        upperString.copy(dest, upperString.size());
+        dest[upperString.size()] = '\0';
+    }
+} // namespace OpenRCT2

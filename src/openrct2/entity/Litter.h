@@ -1,0 +1,50 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#pragma once
+
+#include "../localisation/StringIdType.h"
+#include "EntityBase.h"
+
+struct CoordsXYZ;
+struct CoordsXYZD;
+struct PaintSession;
+
+namespace OpenRCT2
+{
+    class DataSerialiser;
+
+    struct Litter : EntityBase
+    {
+        enum class Type : uint8_t
+        {
+            vomit,
+            vomitAlt,
+            emptyCan,
+            rubbish,
+            burgerBox,
+            emptyCup,
+            emptyBox,
+            emptyBottle,
+            emptyBowlRed,
+            emptyDrinkCarton,
+            emptyJuiceCup,
+            emptyBowlBlue,
+        };
+
+        static constexpr auto cEntityType = EntityType::litter;
+        Type subType;
+        uint32_t creationTick;
+        static void Create(const CoordsXYZD& litterPos, Type type);
+        static void RemoveAt(const CoordsXYZ& litterPos);
+        void serialise(DataSerialiser& stream);
+        StringId getName() const;
+        uint32_t getAge() const;
+    };
+} // namespace OpenRCT2

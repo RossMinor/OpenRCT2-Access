@@ -1,0 +1,170 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#include <algorithm>
+#include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/windows/Windows.h>
+#include <openrct2/Context.h>
+#include <openrct2/Diagnostic.h>
+#include <openrct2/Input.h>
+#include <openrct2/OpenRCT2.h>
+#include <openrct2/audio/Audio.h>
+#include <openrct2/drawing/Drawing.String.h>
+#include <openrct2/drawing/Drawing.h>
+#include <openrct2/drawing/Font.h>
+#include <openrct2/interface/Screenshot.h>
+#include <openrct2/localisation/Formatting.h>
+#include <openrct2/ui/WindowManager.h>
+
+namespace OpenRCT2::Ui::Windows
+{
+    enum WindowErrorWidgetIdx : WidgetIndex
+    {
+        WIDX_BACKGROUND,
+    };
+
+    static constexpr auto kMinWidth = 70;
+    static constexpr auto kMaxWidth = 250;
+    static constexpr auto kPadding = 4;
+
+    static constexpr Widget window_error_widgets[] = {
+        makeWidget({ 0, 0 }, { 200, 42 }, WidgetType::frame, WindowColour::primary),
+    };
+
+    class ErrorWindow final : public Window
+    {
+    private:
+        std::string _text;
+        uint16_t _numLines;
+        uint8_t _staleCount;
+        bool _autoClose;
+
+    public:
+        ErrorWindow(std::string text, uint16_t numLines, bool autoClose)
+            : _text(std::move(text))
+            , _numLines(numLines)
+            , _autoClose(autoClose)
+        {
+        }
+
+        void onOpen() override
+        {
+            setWidgets(window_error_widgets);
+
+            widgets[WIDX_BACKGROUND].right = width - 1;
+            widgets[WIDX_BACKGROUND].bottom = height - 1;
+
+            _staleCount = 0;
+
+            if (!gDisableErrorWindowSound)
+            {
+                Audio::Play(Audio::SoundId::error, 0, windowPos.x + (width / 2));
+            }
+        }
+
+        void onDraw(Drawing::RenderTarget& rt) override
+        {
+            WindowDrawWidgets(*this, rt);
+
+            auto screenCoords = windowPos + ScreenCoordsXY{ (width + 1) / 2 - 1, kPadding - 1 };
+            drawStringCentredRaw(rt, screenCoords, _numLines, _text.data(), FontStyle::medium);
+        }
+
+        void onPeriodicUpdate() override
+        {
+            // Close the window after 8 seconds of showing
+            _staleCount++;
+            if (_staleCount >= 8)
+            {
+                close();
+            }
+        }
+
+        void onUpdate() override
+        {
+            // Automatically close previous screenshot messages before new screenshot is taken
+            if (_autoClose && gScreenshotCountdown > 0)
+            {
+                close();
+            }
+        }
+    };
+
+    WindowBase* ErrorOpen(std::string_view title, std::string_view message, bool autoClose)
+    {
+        std::string buffer = "{WINDOW_COLOUR_1}";
+        buffer.append(title);
+
+        // Format the message
+        if (!message.empty())
+        {
+            buffer.push_back('\n');
+            buffer.append(message);
+        }
+
+        LOG_VERBOSE("show error, %s", buffer.c_str());
+
+        // Don't do unnecessary work in headless. Also saves checking if cursor state is null.
+        if (gOpenRCT2Headless)
+        {
+            return nullptr;
+        }
+
+        // Check if there is any text to display
+        if (buffer.size() <= 1)
+        {
+            return nullptr;
+        }
+
+        // Read the error aloud for screen-reader users.
+        {
+            std::string spoken(title);
+            if (!message.empty())
+            {
+                spoken += ". ";
+                spoken += message;
+            }
+            Accessibility::ScreenReaderSpeak(spoken);
+            Accessibility::LogAnnouncement(spoken);
+        }
+
+        // Close any existing error windows if they exist.
+        auto* windowMgr = GetWindowManager();
+        windowMgr->CloseByClass(WindowClass::error);
+
+        // How wide is the error string?
+        int32_t width = Drawing::getStringWidthNewlined(buffer.data(), FontStyle::medium);
+        width = std::clamp(width + 2 * kPadding, kMinWidth, kMaxWidth);
+
+        // How high is the error string?
+        int32_t numLines{};
+        Drawing::wrapString(buffer, width + 1, FontStyle::medium, &buffer, &numLines);
+        int32_t height = (numLines + 1) * FontGetLineHeight(FontStyle::medium) + (2 * kPadding);
+
+        // Position error message around the cursor
+        const CursorState* state = ContextGetCursorState();
+        ScreenCoordsXY windowPosition = state->position - ScreenCoordsXY(width / 2, -26);
+        windowPosition.x = std::clamp(windowPosition.x, 0, ContextGetWidth() - width - 40);
+        windowPosition.y = std::clamp(windowPosition.y, 22, ContextGetHeight() - height - 40);
+
+        auto errorWindow = std::make_unique<ErrorWindow>(std::move(buffer), numLines, autoClose);
+
+        return windowMgr->Create(
+            std::move(errorWindow), WindowClass::error, windowPosition, { width, height },
+            { WindowFlag::stickToFront, WindowFlag::transparent, WindowFlag::noTitleBar });
+    }
+
+    WindowBase* ErrorOpen(StringId title, StringId message, const Formatter& args, bool autoClose)
+    {
+        auto titlez = FormatStringIDLegacy(title, args.Data());
+        auto messagez = FormatStringIDLegacy(message, args.Data());
+        return ErrorOpen(titlez, messagez, autoClose);
+    }
+} // namespace OpenRCT2::Ui::Windows

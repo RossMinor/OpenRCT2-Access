@@ -1,0 +1,182 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#pragma once
+
+#ifdef ENABLE_SCRIPTING
+
+    #include "../interface/Window.h"
+
+    #include <cstdint>
+    #include <memory>
+    #include <openrct2/scripting/ScriptEngine.h>
+    #include <optional>
+    #include <string>
+    #include <vector>
+
+namespace OpenRCT2::Ui::Windows
+{
+    using namespace OpenRCT2::Scripting;
+
+    enum class ScrollbarType
+    {
+        None,
+        Horizontal,
+        Vertical,
+        Both
+    };
+
+    enum class ColumnSortOrder
+    {
+        None,
+        Ascending,
+        Descending,
+    };
+
+    struct ListViewColumn
+    {
+        bool CanSort{};
+        ColumnSortOrder SortOrder{};
+        std::string Header;
+        std::string HeaderTooltip;
+        std::optional<int32_t> RatioWidth{};
+        std::optional<int32_t> MinWidth{};
+        std::optional<int32_t> MaxWidth{};
+        int32_t Width{};
+    };
+
+    struct ListViewItem
+    {
+        bool IsSeparator{};
+        std::vector<std::string> Cells;
+
+        ListViewItem() = default;
+        explicit ListViewItem(std::string_view text)
+        {
+            Cells.emplace_back(text);
+        }
+        explicit ListViewItem(std::vector<std::string>&& cells)
+            : Cells(std::move(cells))
+        {
+        }
+    };
+
+    struct RowColumn
+    {
+        int32_t Row{};
+        int32_t Column{};
+
+        RowColumn() = default;
+        RowColumn(int32_t row, int32_t column)
+            : Row(row)
+            , Column(column)
+        {
+        }
+
+        bool operator==(const RowColumn& other) const
+        {
+            return Row == other.Row && Column == other.Column;
+        }
+
+        bool operator!=(const RowColumn& other) const
+        {
+            return !(*this == other);
+        }
+    };
+
+    class CustomListView
+    {
+    private:
+        static constexpr int32_t kHeaderRow = -1;
+
+        WindowBase* ParentWindow{};
+        size_t ScrollIndex{};
+        std::vector<ListViewColumn> Columns;
+        std::vector<ListViewItem> Items;
+        ScrollbarType Scrollbars = ScrollbarType::Vertical;
+
+    public:
+        std::shared_ptr<Plugin> Owner;
+        std::vector<size_t> SortedItems;
+        std::optional<RowColumn> HighlightedCell;
+        std::optional<RowColumn> LastHighlightedCell;
+        std::optional<RowColumn> SelectedCell;
+        std::optional<int32_t> ColumnHeaderPressed;
+        bool ColumnHeaderPressedCurrentState{};
+        bool ShowColumnHeaders{};
+        bool IsStriped{};
+        ScreenSize LastKnownSize;
+        ColumnSortOrder CurrentSortOrder{};
+        int32_t CurrentSortColumn{};
+        bool LastIsMouseDown{};
+        bool IsMouseDown{};
+        bool CanSelect{};
+
+        JSCallback OnClick;
+        JSCallback OnHighlight;
+
+        CustomListView(WindowBase* parent, size_t scrollIndex);
+        ScrollbarType GetScrollbars() const;
+        void SetScrollbars(ScrollbarType value, bool initialising = false);
+        const std::vector<ListViewColumn>& GetColumns() const;
+        void SetColumns(const std::vector<ListViewColumn>& columns, bool initialising = false);
+        const std::vector<ListViewItem>& GetItems() const;
+        void SetItems(const std::vector<ListViewItem>& items, bool initialising = false);
+        void SetItems(std::vector<ListViewItem>&& items, bool initialising = false);
+        bool SortItem(size_t indexA, size_t indexB, int32_t column);
+        void SortItems(int32_t column);
+        void SortItems(int32_t column, ColumnSortOrder order);
+        void Resize(const ScreenSize& size);
+        ScreenSize GetSize();
+        void MouseOver(const ScreenCoordsXY& pos, bool isMouseDown);
+        void MouseDown(const ScreenCoordsXY& pos);
+        void MouseUp(const ScreenCoordsXY& pos);
+        void Paint(WindowBase* w, Drawing::RenderTarget& rt, const ScrollArea* scroll) const;
+
+    private:
+        void PaintHeading(
+            WindowBase* w, Drawing::RenderTarget& rt, const ScreenCoordsXY& pos, const ScreenSize& size,
+            const std::string& text, ColumnSortOrder sortOrder, bool isPressed) const;
+        void PaintSeparator(
+            Drawing::RenderTarget& rt, const ScreenCoordsXY& pos, const ScreenSize& size, const char* text) const;
+        void PaintCell(
+            Drawing::RenderTarget& rt, const ScreenCoordsXY& pos, const ScreenSize& size, const char* text,
+            bool isHighlighted) const;
+        std::optional<RowColumn> GetItemIndexAt(const ScreenCoordsXY& pos);
+        Widget* GetWidget() const;
+        void Invalidate();
+    };
+} // namespace OpenRCT2::Ui::Windows
+
+namespace OpenRCT2::Scripting
+{
+    using namespace OpenRCT2::Ui::Windows;
+
+    ColumnSortOrder ColumnSortOrderFromJS(JSContext* ctx, JSValue d);
+
+    ListViewColumn ListViewColumnFromJS(JSContext* ctx, JSValue d);
+
+    ListViewItem ListViewItemFromJS(JSContext* ctx, JSValue d);
+
+    std::vector<ListViewColumn> ListViewColumnVecFromJS(JSContext* ctx, JSValue d);
+
+    std::vector<ListViewItem> ListViewItemVecFromJS(JSContext* ctx, JSValue d);
+
+    std::optional<RowColumn> RowColumnFromJS(JSContext* ctx, JSValue d);
+
+    JSValue RowColumnToJS(JSContext* ctx, RowColumn value);
+
+    JSValue ListViewColumnToJS(JSContext* ctx, const ListViewColumn& value);
+
+    ScrollbarType ScrollbarTypeFromJS(JSContext* ctx, JSValue d);
+
+    JSValue ScrollbarTypeToJS(JSContext* ctx, ScrollbarType value);
+} // namespace OpenRCT2::Scripting
+
+#endif

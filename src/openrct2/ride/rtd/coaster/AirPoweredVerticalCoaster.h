@@ -1,0 +1,79 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#pragma once
+
+#include "../../../SpriteIds.h"
+#include "../../RideData.h"
+#include "../../ShopItem.h"
+
+// clang-format off
+namespace OpenRCT2
+{
+constexpr RideTypeDescriptor AirPoweredVerticalCoasterRTD =
+{
+    .Category = RideCategory::rollerCoaster,
+    .StartTrackPiece = TrackElemType::endStation,
+    .TrackPaintFunctions = TrackDrawerDescriptor({
+        .trackStyle = TrackStyle::airPoweredVerticalCoaster,
+        .supportType = WoodenSupportType::truss,
+        .enabledTrackGroups = {TrackGroup::straight, TrackGroup::stationEnd, TrackGroup::liftHillSteep, TrackGroup::liftHillCurve, TrackGroup::flatRollBanking, TrackGroup::curve, TrackGroup::brakes, TrackGroup::reverseFreefall, TrackGroup::slopeToFlat, TrackGroup::onridePhoto},
+        .extraTrackGroups = {TrackGroup::booster},
+    }),
+    .InvertedTrackPaintFunctions = {},
+    .flags = kRtdFlagsHasThreeColours | kRtdFlagsCommonCoaster | kRtdFlagsCommonCoasterNonAlt | RtdFlags(RtdFlag::checkGForces),
+    .RideModes = EnumsToFlags(RideMode::poweredLaunchPasstrough, RideMode::poweredLaunch),
+    .DefaultMode = RideMode::poweredLaunchPasstrough,
+    .OperatingSettings = { 30, 50 },
+    .TrackSpeedSettings = { 60, 60 },
+    .BoosterSettings = { 40, 40, 13 },
+    .LegacyBoosterSettings = { 40, 40 },
+    .Naming = { STR_RIDE_NAME_AIR_POWERED_VERTICAL_COASTER, STR_RIDE_DESCRIPTION_AIR_POWERED_VERTICAL_COASTER },
+    .NameConvention = { RideComponentType::Train, RideComponentType::Track, RideComponentType::Station },
+    .availableBreakdowns = { Breakdown::safetyCutOut, Breakdown::restraintsStuckClosed, Breakdown::restraintsStuckOpen, Breakdown::vehicleMalfunction },
+    .Heights = { 255, 32, 4, 7, },
+    .MaxMass = 255,
+    .LiftData = { Audio::SoundId::null, 5, 5 },
+    .RatingsMultipliers = { 44, 66, 10 },
+    .UpkeepCosts = { 90, 20, 0, 0, 0, 10 },
+    .BuildCosts = { 100.00_GBP, 0.00_GBP, 45, },
+    .DefaultPrices = { 20, 20 },
+    .DefaultMusic = kMusicObjectRock2,
+    .PhotoItem = ShopItem::photo,
+    .BonusValue = 70,
+    .ColourPresets = TRACK_COLOUR_PRESETS(
+        { Drawing::Colour::white, Drawing::Colour::brightRed, Drawing::Colour::darkBrown },
+        { Drawing::Colour::brightRed, Drawing::Colour::lightBlue, Drawing::Colour::white },
+        { Drawing::Colour::lightOrange, Drawing::Colour::brightRed, Drawing::Colour::brightYellow },
+    ),
+    .ColourPreview = { SPR_RIDE_DESIGN_PREVIEW_AIR_POWERED_VERTICAL_COASTER_TRACK, SPR_RIDE_DESIGN_PREVIEW_AIR_POWERED_VERTICAL_COASTER_SUPPORTS },
+    .ColourKey = RideColourKey::Ride,
+    .Name = "air_powered_vertical_rc",
+    .RatingsData = 
+    {
+        RatingsCalculationType::Normal,
+        { RideRating::make(4, 13), RideRating::make(2, 50), RideRating::make(2, 80) },
+        28,
+        kDynamicRideShelterRating,
+        false,
+        {
+            { RatingsModifierType::BonusLength,           6000,             327, 0, 0 },
+            { RatingsModifierType::BonusSynchronisation,  0,                RideRating::make(0, 60), RideRating::make(0, 05), 0 },
+            { RatingsModifierType::BonusMaxSpeed,         0,                509724, 364088, 320398 },
+            { RatingsModifierType::BonusGForces,          0,                24576, 35746, 59578 },
+            { RatingsModifierType::BonusSheltered,        0,                15420, 21845, 11702 },
+            { RatingsModifierType::BonusProximity,        0,                17893, 0, 0 },
+            { RatingsModifierType::BonusScenery,          0,                11155, 0, 0 },
+            { RatingsModifierType::RequirementDropHeight, 34,               4, 1, 1 },
+            { RatingsModifierType::PenaltyLateralGs,      0,                24576, 35746, 59578 },
+        },
+    },
+};
+} // namespace OpenRCT2
+// clang-format on

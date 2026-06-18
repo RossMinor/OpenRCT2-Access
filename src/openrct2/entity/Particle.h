@@ -1,0 +1,94 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#pragma once
+
+#include "EntityBase.h"
+
+struct CoordsXYZ;
+struct PaintSession;
+struct VehicleColour;
+
+namespace OpenRCT2::Drawing
+{
+    enum class Colour : uint8_t;
+}
+
+namespace OpenRCT2
+{
+    class DataSerialiser;
+
+    constexpr int32_t kCrashedVehicleParticleFrameToSprite = 256;
+    constexpr int32_t kCrashedVehicleParticleNumberSprites = 12;
+    constexpr int32_t kCrashedVehicleParticleNumberTypes = 5;
+    constexpr int32_t kCrashedVehicleParticleFrameIncrement = 85; // 1/3 of 256, rounded up
+
+    struct VehicleCrashParticle : EntityBase
+    {
+        static constexpr auto cEntityType = EntityType::crashedVehicleParticle;
+        uint16_t frame;
+        uint16_t time_to_live;
+        Drawing::Colour colour[2];
+        uint16_t crashed_sprite_base;
+        int16_t velocity_x;
+        int16_t velocity_y;
+        int16_t velocity_z;
+        int32_t acceleration_x;
+        int32_t acceleration_y;
+        int32_t acceleration_z;
+        static void Create(VehicleColour& colours, const CoordsXYZ& vehiclePos);
+        void SetSpriteData();
+        void Launch();
+        void Update();
+        void Serialise(DataSerialiser& stream);
+        void Paint(PaintSession& session, int32_t imageDirection) const;
+    };
+
+    struct CrashSplashParticle : EntityBase
+    {
+        static constexpr auto cEntityType = EntityType::crashSplash;
+        uint16_t frame;
+        static void Create(const CoordsXYZ& splashPos);
+        void Update();
+        void Serialise(DataSerialiser& stream);
+        void Paint(PaintSession& session, int32_t imageDirection) const;
+    };
+
+    struct ExplosionFlare : EntityBase
+    {
+        static constexpr auto cEntityType = EntityType::explosionFlare;
+        uint16_t frame;
+        static void Create(const CoordsXYZ& flarePos);
+        void Update();
+        void Serialise(DataSerialiser& stream);
+        void Paint(PaintSession& session, int32_t imageDirection) const;
+    };
+
+    struct ExplosionCloud : EntityBase
+    {
+        static constexpr auto cEntityType = EntityType::explosionCloud;
+        uint16_t frame;
+        static void Create(const CoordsXYZ& cloudPos);
+        void Update();
+        void Serialise(DataSerialiser& stream);
+        void Paint(PaintSession& session, int32_t imageDirection) const;
+    };
+
+    struct SteamParticle : EntityBase
+    {
+        static constexpr auto cEntityType = EntityType::steamParticle;
+        uint16_t frame;
+        uint16_t time_to_move;
+
+        static void Create(const CoordsXYZ& coords);
+        void Update();
+        void serialise(DataSerialiser& stream);
+        void Paint(PaintSession& session, int32_t imageDirection) const;
+    };
+} // namespace OpenRCT2

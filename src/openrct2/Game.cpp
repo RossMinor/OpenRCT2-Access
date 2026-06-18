@@ -1,0 +1,805 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#include "Game.h"
+
+#include "Cheats.h"
+#include "Context.h"
+#include "Diagnostic.h"
+#include "Editor.h"
+#include "FileClassifier.h"
+#include "GameState.h"
+#include "GameStateSnapshots.h"
+#include "Input.h"
+#include "OpenRCT2.h"
+#include "ParkImporter.h"
+#include "PlatformEnvironment.h"
+#include "ReplayManager.h"
+#include "actions/GameActionRunner.h"
+#include "actions/general/GameSetSpeedAction.h"
+#include "actions/general/LoadOrQuitAction.h"
+#include "audio/Audio.h"
+#include "config/Config.h"
+#include "core/Console.hpp"
+#include "core/File.h"
+#include "core/FileScanner.h"
+#include "core/Money.hpp"
+#include "core/Path.hpp"
+#include "core/String.hpp"
+#include "drawing/Drawing.h"
+#include "drawing/ScrollingText.h"
+#include "entity/EntityList.h"
+#include "entity/EntityRegistry.h"
+#include "entity/PatrolArea.h"
+#include "entity/Peep.h"
+#include "entity/Staff.h"
+#include "interface/Screenshot.h"
+#include "interface/Viewport.h"
+#include "interface/Window.h"
+#include "management/Finance.h"
+#include "management/Marketing.h"
+#include "management/Research.h"
+#include "network/Network.h"
+#include "object/Object.h"
+#include "object/ObjectEntryManager.h"
+#include "object/ObjectList.h"
+#include "object/WaterEntry.h"
+#include "platform/Platform.h"
+#include "rct12/CSStringConverter.h"
+#include "ride/Ride.h"
+#include "ride/RideRatings.h"
+#include "ride/Station.h"
+#include "ride/TrackDesign.h"
+#include "ride/Vehicle.h"
+#include "sawyer_coding/SawyerCoding.h"
+#include "scenario/Scenario.h"
+#include "scenes/SceneManager.h"
+#include "scenes/title/TitleScene.h"
+#include "scripting/ScriptEngine.h"
+#include "ui/UiContext.h"
+#include "ui/WindowManager.h"
+#include "windows/Intent.h"
+#include "world/Banner.h"
+#include "world/Entrance.h"
+#include "world/Footpath.h"
+#include "world/Map.h"
+#include "world/MapAnimation.h"
+#include "world/Park.h"
+#include "world/Scenery.h"
+#include "world/Weather.h"
+#include "world/tile_element/SurfaceElement.h"
+
+#include <cstdio>
+#include <iterator>
+#include <memory>
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+extern void EmscriptenSaveGame(bool isTrackDesign, bool isAutosave, LoadSaveType type);
+extern void EmscriptenResetAutosave();
+}
+#endif
+
+using namespace OpenRCT2;
+
+uint16_t gCurrentDeltaTime;
+uint8_t gGamePaused = 0;
+uint8_t gGameSpeed = 1;
+bool gDoSingleUpdate = false;
+float gDayNightCycle = 0;
+bool gInUpdateCode = false;
+bool gInMapInitCode = false;
+std::string gCurrentLoadedPath;
+bool gIsAutosave = false;
+bool gIsAutosaveLoaded = false;
+
+bool gLoadKeepWindowsOpen = false;
+
+uint32_t gCurrentRealTimeTicks;
+
+#ifdef ENABLE_SCRIPTING
+static bool _mapChangedExpected;
+#endif
+
+using namespace OpenRCT2;
+
+void GameResetSpeed()
+{
+    auto setSpeedAction = GameActions::GameSetSpeedAction(1);
+    GameActions::Execute(&setSpeedAction, getGameState());
+}
+
+void GameIncreaseGameSpeed()
+{
+    auto newSpeed = std::min(Config::Get().general.debuggingTools ? 5 : 4, gGameSpeed + 1);
+    if (newSpeed == 5)
+        newSpeed = 8;
+
+    auto setSpeedAction = GameActions::GameSetSpeedAction(newSpeed);
+    GameActions::Execute(&setSpeedAction, getGameState());
+}
+
+void GameReduceGameSpeed()
+{
+    auto newSpeed = std::max(1, gGameSpeed - 1);
+    if (newSpeed == 7)
+        newSpeed = 4;
+
+    auto setSpeedAction = GameActions::GameSetSpeedAction(newSpeed);
+    GameActions::Execute(&setSpeedAction, getGameState());
+}
+
+/**
+ *
+ *  rct2: 0x0066B5C0 (part of 0x0066B3E8)
+ */
+void GameCreateWindows()
+{
+    ContextOpenWindow(WindowClass::mainWindow);
+    ContextOpenWindow(WindowClass::topToolbar);
+    ContextOpenWindow(WindowClass::bottomToolbar);
+    WindowResizeGui(ContextGetWidth(), ContextGetHeight());
+}
+
+void PauseToggle()
+{
+    gGamePaused ^= GAME_PAUSED_NORMAL;
+
+    auto* windowMgr = Ui::GetWindowManager();
+    windowMgr->InvalidateByClass(WindowClass::topToolbar);
+
+    if (gGamePaused & GAME_PAUSED_NORMAL)
+    {
+        Audio::StopAll();
+    }
+}
+
+bool GameIsPaused()
+{
+    return gGamePaused != 0;
+}
+
+bool GameIsNotPaused()
+{
+    return gGamePaused == 0;
+}
+
+/**
+ *
+ *  rct2: 0x0066DC0F
+ */
+static void LoadLandscape()
+{
+    auto intent = Intent(WindowClass::loadsave);
+    intent.PutEnumExtra<LoadSaveAction>(INTENT_EXTRA_LOADSAVE_ACTION, LoadSaveAction::load);
+    intent.PutEnumExtra<LoadSaveType>(INTENT_EXTRA_LOADSAVE_TYPE, LoadSaveType::landscape);
+    ContextOpenIntent(&intent);
+}
+
+void RCT2StringToUTF8Self(char* buffer, size_t length)
+{
+    if (length > 0)
+    {
+        auto temp = RCT2StringToUTF8(buffer, RCT2LanguageId::englishUK);
+        String::safeUtf8Copy(buffer, temp.data(), length);
+    }
+}
+
+static void FixGuestsHeadingToParkCount()
+{
+    uint32_t guestsHeadingToPark = 0;
+
+    for (auto* peep : EntityList<Guest>())
+    {
+        if (peep->outsideOfPark && peep->State != PeepState::leavingPark)
+        {
+            guestsHeadingToPark++;
+        }
+    }
+
+    auto& park = getGameState().park;
+    if (park.numGuestsHeadingForPark != guestsHeadingToPark)
+    {
+        LOG_VERBOSE(
+            "Corrected bad amount of guests heading to park: %u -> %u", park.numGuestsHeadingForPark, guestsHeadingToPark);
+    }
+
+    park.numGuestsHeadingForPark = guestsHeadingToPark;
+}
+
+static void FixGuestCount()
+{
+    // Recalculates peep count after loading a save to fix corrupted files
+    uint32_t guestCount = 0;
+
+    for (auto guest : EntityList<Guest>())
+    {
+        if (!guest->outsideOfPark)
+        {
+            guestCount++;
+        }
+    }
+
+    auto& park = getGameState().park;
+    if (park.numGuestsInPark != guestCount)
+    {
+        LOG_VERBOSE("Corrected bad amount of guests in park: %u -> %u", park.numGuestsInPark, guestCount);
+    }
+
+    park.numGuestsInPark = guestCount;
+}
+
+static void FixPeepsWithInvalidRideReference()
+{
+    // Peeps to remove have to be cached here, as removing them from within the loop breaks iteration
+    std::vector<Peep*> peepsToRemove;
+
+    // Fix possibly invalid field values
+    for (auto peep : EntityList<Guest>())
+    {
+        if (peep->CurrentRideStation.ToUnderlying() >= Limits::kMaxStationsPerRide)
+        {
+            const auto srcStation = peep->CurrentRideStation;
+            const auto rideIdx = peep->CurrentRide;
+            if (rideIdx.IsNull())
+            {
+                continue;
+            }
+            Ride* ride = GetRide(rideIdx);
+            if (ride == nullptr)
+            {
+                LOG_WARNING("Couldn't find ride %u, resetting ride on peep %u", rideIdx, peep->id);
+                peep->CurrentRide = RideId::GetNull();
+                continue;
+            }
+            auto curName = peep->GetName();
+            LOG_WARNING(
+                "Peep %u (%s) has invalid ride station = %u for ride %u.", peep->id, curName.c_str(), srcStation.ToUnderlying(),
+                rideIdx);
+            auto station = RideGetFirstValidStationExit(*ride);
+            if (station.IsNull())
+            {
+                LOG_WARNING("Couldn't find station, removing peep %u", peep->id);
+                peepsToRemove.push_back(peep);
+            }
+            else
+            {
+                LOG_WARNING("Amending ride station to %u.", station);
+                peep->CurrentRideStation = station;
+            }
+        }
+    }
+
+    if (!peepsToRemove.empty())
+    {
+        // Some broken saves have broken spatial indexes
+        getGameState().entities.ResetEntitySpatialIndices();
+    }
+
+    for (auto ptr : peepsToRemove)
+    {
+        ptr->Remove();
+    }
+}
+
+static void FixInvalidSurfaces()
+{
+    // Fixes broken saves where a surface element could be null
+    // and broken saves with incorrect invisible map border tiles
+
+    for (int32_t y = 0; y < kMaximumMapSizeTechnical; y++)
+    {
+        for (int32_t x = 0; x < kMaximumMapSizeTechnical; x++)
+        {
+            auto* surfaceElement = MapGetSurfaceElementAt(TileCoordsXY{ x, y });
+
+            if (surfaceElement == nullptr)
+            {
+                LOG_ERROR("Null map element at x = %d and y = %d. Fixing...", x, y);
+                surfaceElement = TileElementInsert<SurfaceElement>(TileCoordsXYZ{ x, y, 14 }.ToCoordsXYZ(), 0b0000);
+                if (surfaceElement == nullptr)
+                {
+                    LOG_ERROR("Unable to fix: Map element limit reached.");
+                    return;
+                }
+            }
+
+            // Fix the invisible border tiles.
+            // At this point, we can be sure that surfaceElement is not NULL.
+            auto& gameState = getGameState();
+            if (x == 0 || x == gameState.mapSize.x - 1 || y == 0 || y == gameState.mapSize.y - 1)
+            {
+                surfaceElement->setBaseZ(kMinimumLandZ);
+                surfaceElement->setClearanceZ(kMinimumLandZ);
+                surfaceElement->SetSlope(0);
+                surfaceElement->SetWaterHeight(0);
+            }
+        }
+    }
+}
+
+// OpenRCT2 workaround to recalculate some values which are saved redundantly in the save to fix corrupted files.
+// For example recalculate guest count by looking at all the guests instead of trusting the value in the file.
+void GameFixSaveVars()
+{
+    FixGuestsHeadingToParkCount();
+
+    FixGuestCount();
+
+    FixPeepsWithInvalidRideReference();
+
+    FixInvalidSurfaces();
+
+    ResearchFix();
+
+    // Fix banners which share their index
+    BannerApplyFixes();
+
+    // Fix invalid vehicle sprite sizes, thus preventing visual corruption of sprites
+    FixInvalidVehicleSpriteSizes();
+
+    // Fix gParkEntrance locations for which the tile_element no longer exists
+    ParkEntranceFixLocations();
+
+    UpdateConsolidatedPatrolAreas();
+
+    MapCountRemainingLandRights();
+
+    // Update sprite bounds, rather than relying on stored data
+    PeepUpdateAllBoundingBoxes();
+}
+
+void GameLoadInit()
+{
+    auto* context = GetContext();
+
+    IGameStateSnapshots* snapshots = context->GetGameStateSnapshots();
+    snapshots->Reset();
+
+    auto* sceneMgr = context->GetSceneManager();
+    sceneMgr->setActiveScene(sceneMgr->getGameScene());
+
+    // Invalidate scrolling text cache to prevent stale text from previous park
+    // being displayed due to pointer value reuse in the cache matching logic
+    Drawing::ScrollingText::invalidate();
+
+    if (!gLoadKeepWindowsOpen)
+    {
+        ContextResetSubsystems();
+        GameCreateWindows();
+    }
+    else
+    {
+        auto* mainWindow = WindowGetMain();
+        WindowUnfollowSprite(*mainWindow);
+    }
+
+    auto windowManager = context->GetUiContext().GetWindowManager();
+    auto& gameState = getGameState();
+    windowManager->SetMainView(gameState.savedView, gameState.savedViewZoom, gameState.savedViewRotation);
+
+    if (Network::GetMode() != Network::Mode::client)
+    {
+        GameActions::ClearQueue();
+    }
+    getGameState().entities.ResetEntitySpatialIndices();
+    ResetAllSpriteQuadrantPlacements();
+
+    gWindowUpdateTicks = 0;
+    gCurrentRealTimeTicks = 0;
+
+    LoadPalette();
+
+    if (!gOpenRCT2Headless)
+    {
+        windowManager->BroadcastIntent(Intent(INTENT_ACTION_SET_DEFAULT_SCENERY_CONFIG));
+        windowManager->BroadcastIntent(Intent(INTENT_ACTION_REFRESH_NEW_RIDES));
+        windowManager->BroadcastIntent(Intent(INTENT_ACTION_CLEAR_TILE_INSPECTOR_CLIPBOARD));
+    }
+
+    gGameSpeed = 1;
+}
+
+void GameLoadScripts()
+{
+#ifdef ENABLE_SCRIPTING
+    GetContext()->GetScriptEngine().LoadTransientPlugins();
+#endif
+}
+
+void GameUnloadScripts()
+{
+#ifdef ENABLE_SCRIPTING
+    GetContext()->GetScriptEngine().UnloadTransientPlugins();
+#endif
+}
+
+void GameNotifyMapChange()
+{
+#ifdef ENABLE_SCRIPTING
+    // Ensure we don't get a two lots of change events
+    if (_mapChangedExpected)
+        return;
+
+    using namespace OpenRCT2::Scripting;
+
+    auto& scriptEngine = GetContext()->GetScriptEngine();
+    auto& hookEngine = scriptEngine.GetHookEngine();
+    hookEngine.Call(HookType::mapChange, false);
+    _mapChangedExpected = true;
+#endif
+}
+
+void GameNotifyMapChanged()
+{
+#ifdef ENABLE_SCRIPTING
+    using namespace OpenRCT2::Scripting;
+
+    auto& scriptEngine = GetContext()->GetScriptEngine();
+    auto& hookEngine = scriptEngine.GetHookEngine();
+    hookEngine.Call(HookType::mapChanged, false);
+    _mapChangedExpected = false;
+#endif
+}
+
+/**
+ *
+ *  rct2: 0x0069E9A7
+ * Call after a rotation or loading of a save to reset sprite quadrants
+ */
+void ResetAllSpriteQuadrantPlacements()
+{
+    for (EntityId::UnderlyingType i = 0; i < kMaxEntities; i++)
+    {
+        auto* spr = getGameState().entities.GetEntity(EntityId::FromUnderlying(i));
+        if (spr != nullptr && spr->type != EntityType::null)
+        {
+            spr->moveTo(spr->getLocation());
+        }
+    }
+}
+
+void SaveGame()
+{
+    if (!gFirstTimeSaving && !gIsAutosaveLoaded)
+    {
+#ifndef __EMSCRIPTEN__
+        const auto savePath = Path::WithExtension(gScenarioSavePath, ".park");
+        SaveGameWithName(savePath);
+#else
+        const auto savePath = Path::WithExtension("save", ".park");
+        SaveGameWithName(savePath);
+        EmscriptenSaveGame(false, false, LoadSaveType::park);
+#endif
+    }
+    else
+    {
+        SaveGameAs();
+    }
+}
+
+void SaveGameCmd(u8string_view name /* = {} */)
+{
+    if (name.empty())
+    {
+        const auto savePath = Path::WithExtension(gScenarioSavePath, ".park");
+
+        SaveGameWithName(savePath);
+    }
+    else
+    {
+        auto& env = GetContext()->GetPlatformEnvironment();
+        auto savePath = Path::Combine(env.GetDirectoryPath(DirBase::user, DirId::saves), u8string(name) + u8".park");
+        SaveGameWithName(savePath);
+    }
+}
+
+void SaveGameWithName(u8string_view name)
+{
+    LOG_VERBOSE("Saving to %s", u8string(name).c_str());
+
+    auto& gameState = getGameState();
+    if (ScenarioSave(gameState, name, Config::Get().general.savePluginData ? 1 : 0))
+    {
+        LOG_VERBOSE("Saved to %s", u8string(name).c_str());
+        gCurrentLoadedPath = name;
+        gIsAutosaveLoaded = false;
+        gScreenAge = 0;
+    }
+}
+
+std::unique_ptr<Intent> CreateSaveGameAsIntent()
+{
+    auto name = Path::GetFileNameWithoutExtension(gScenarioSavePath);
+
+    auto intent = std::make_unique<Intent>(WindowClass::loadsave);
+    intent->PutEnumExtra<LoadSaveAction>(INTENT_EXTRA_LOADSAVE_ACTION, LoadSaveAction::save);
+    intent->PutEnumExtra<LoadSaveType>(INTENT_EXTRA_LOADSAVE_TYPE, LoadSaveType::park);
+    intent->PutExtra(INTENT_EXTRA_PATH, name);
+
+    return intent;
+}
+
+void SaveGameAs()
+{
+#ifdef __EMSCRIPTEN__
+    EmscriptenResetAutosave();
+#endif
+    auto intent = CreateSaveGameAsIntent();
+    ContextOpenIntent(intent.get());
+}
+
+#ifndef __EMSCRIPTEN__
+static void LimitAutosaveCount(const size_t numberOfFilesToKeep, bool processLandscapeFolder)
+{
+    size_t autosavesCount = 0;
+    size_t numAutosavesToDelete = 0;
+
+    auto& environment = GetContext()->GetPlatformEnvironment();
+    auto folderDirectory = environment.GetDirectoryPath(DirBase::user, DirId::saves);
+    char const* fileFilter = "autosave_*.park";
+    if (processLandscapeFolder)
+    {
+        folderDirectory = environment.GetDirectoryPath(DirBase::user, DirId::landscapes);
+        fileFilter = "autosave_*.park";
+    }
+
+    const u8string filter = Path::Combine(folderDirectory, "autosave", fileFilter);
+
+    // At first, count how many autosaves there are
+    {
+        auto scanner = Path::ScanDirectory(filter, false);
+        while (scanner->Next())
+        {
+            autosavesCount++;
+        }
+    }
+
+    // If there are fewer autosaves than the number of files to keep we don't need to delete anything
+    if (autosavesCount <= numberOfFilesToKeep)
+    {
+        return;
+    }
+
+    std::vector<u8string> autosaveFiles;
+    {
+        auto scanner = Path::ScanDirectory(filter, false);
+        for (size_t i = 0; i < autosavesCount; i++)
+        {
+            if (scanner->Next())
+            {
+                autosaveFiles.emplace_back(Path::Combine(folderDirectory, "autosave", scanner->GetPathRelative()));
+            }
+        }
+    }
+
+    std::sort(autosaveFiles.begin(), autosaveFiles.end(), [](const auto& saveFile0, const auto& saveFile1) {
+        return saveFile0.compare(saveFile1) < 0;
+    });
+
+    // Calculate how many saves we need to delete.
+    numAutosavesToDelete = autosaveFiles.size() - numberOfFilesToKeep;
+
+    for (size_t i = 0; numAutosavesToDelete > 0; i++, numAutosavesToDelete--)
+    {
+        if (!File::Delete(autosaveFiles[i]))
+        {
+            LOG_WARNING("Failed to delete autosave file: %s", autosaveFiles[i].data());
+        }
+    }
+}
+
+void GameAutosave()
+{
+    auto subDirectory = DirId::saves;
+    const char* fileExtension = ".park";
+    uint32_t saveFlags = 0x80000000;
+    if (isInEditorMode())
+    {
+        subDirectory = DirId::landscapes;
+        fileExtension = ".park";
+        saveFlags |= 2;
+    }
+
+    // Retrieve current time
+    auto currentDate = Platform::GetDateLocal();
+    auto currentTime = Platform::GetTimeLocal();
+
+    utf8 timeName[44];
+    snprintf(
+        timeName, sizeof(timeName), "autosave_%04u-%02u-%02u_%02u-%02u-%02u%s", currentDate.year, currentDate.month,
+        currentDate.day, currentTime.hour, currentTime.minute, currentTime.second, fileExtension);
+
+    int32_t autosavesToKeep = Config::Get().general.autosaveAmount;
+    LimitAutosaveCount(autosavesToKeep - 1, isInEditorMode());
+
+    auto& env = GetContext()->GetPlatformEnvironment();
+    auto autosaveDir = Path::Combine(env.GetDirectoryPath(DirBase::user, subDirectory), u8"autosave");
+    Path::CreateDirectory(autosaveDir);
+
+    auto path = Path::Combine(autosaveDir, timeName);
+    auto backupFileName = u8string(u8"autosave") + fileExtension + u8".bak";
+    auto backupPath = Path::Combine(autosaveDir, backupFileName);
+
+    if (File::Exists(path))
+    {
+        File::Copy(path, backupPath, true);
+    }
+
+    auto& gameState = getGameState();
+
+    if (!ScenarioSave(gameState, path, saveFlags))
+        Console::Error::WriteLine("Could not autosave the scenario. Is the save folder writeable?");
+}
+#else
+void GameAutosave()
+{
+    const auto savePath = Path::WithExtension("save", ".park");
+    SaveGameWithName(savePath);
+    EmscriptenSaveGame(false, true, LoadSaveType::park);
+}
+#endif // __EMSCRIPTEN__
+
+static void GameLoadOrQuitNoSavePromptCallback(ModalResult result, const utf8* path)
+{
+    if (result == ModalResult::ok)
+    {
+        GameNotifyMapChange();
+        GameUnloadScripts();
+
+        auto* windowMgr = Ui::GetWindowManager();
+        windowMgr->CloseByClass(WindowClass::editorObjectSelection);
+
+        GameLoadScripts();
+        GameNotifyMapChanged();
+        gIsAutosaveLoaded = gIsAutosave;
+        gFirstTimeSaving = false;
+    }
+}
+
+static void NewGameWindowCallback(const utf8* path)
+{
+    // Closing this will cause a Ride window to pop up, so we have to do this to ensure that
+    // no windows are open (besides the toolbars and LoadSave window).
+    auto* windowMgr = Ui::GetWindowManager();
+    windowMgr->CloseByClass(WindowClass::rideConstruction);
+    windowMgr->CloseAllExceptClass(WindowClass::loadsave);
+
+    GameNotifyMapChange();
+    GetContext()->LoadParkFromFile(path, false, true);
+    GameLoadScripts();
+    GameNotifyMapChanged();
+#ifdef __EMSCRIPTEN__
+    EmscriptenResetAutosave();
+#endif
+}
+
+/**
+ *
+ *  rct2: 0x0066DB79
+ */
+void GameLoadOrQuitNoSavePrompt()
+{
+    auto& gameState = getGameState();
+
+    switch (gSavePromptMode)
+    {
+        case PromptMode::saveBeforeLoad:
+        {
+            auto loadOrQuitAction = GameActions::LoadOrQuitAction(GameActions::LoadOrQuitModes::closeSavePrompt);
+            GameActions::Execute(&loadOrQuitAction, gameState);
+            ToolCancel();
+            if (gLegacyScene == LegacyScene::scenarioEditor)
+            {
+                LoadLandscape();
+            }
+            else
+            {
+                auto intent = Intent(WindowClass::loadsave);
+                intent.PutEnumExtra<LoadSaveAction>(INTENT_EXTRA_LOADSAVE_ACTION, LoadSaveAction::load);
+                intent.PutEnumExtra<LoadSaveType>(INTENT_EXTRA_LOADSAVE_TYPE, LoadSaveType::park);
+                intent.PutExtra(INTENT_EXTRA_CALLBACK, reinterpret_cast<CloseCallback>(GameLoadOrQuitNoSavePromptCallback));
+                ContextOpenIntent(&intent);
+            }
+            break;
+        }
+        case PromptMode::saveBeforeQuit:
+        {
+            auto loadOrQuitAction = GameActions::LoadOrQuitAction(GameActions::LoadOrQuitModes::closeSavePrompt);
+            GameActions::Execute(&loadOrQuitAction, gameState);
+            ToolCancel();
+            if (gInputFlags.has(InputFlag::rightMousePressed))
+            {
+                gInputFlags.unset(InputFlag::rightMousePressed);
+            }
+            GameResetSpeed();
+            gFirstTimeSaving = true;
+            GameNotifyMapChange();
+            GameUnloadScripts();
+#ifdef __EMSCRIPTEN__
+            EmscriptenResetAutosave();
+#endif
+
+            auto* sceneMgr = GetContext()->GetSceneManager();
+            sceneMgr->setActiveScene(sceneMgr->getTitleScene());
+            break;
+        }
+        case PromptMode::saveBeforeNewGame:
+        {
+            auto loadOrQuitAction = GameActions::LoadOrQuitAction(GameActions::LoadOrQuitModes::closeSavePrompt);
+            GameActions::Execute(&loadOrQuitAction, gameState);
+            ToolCancel();
+            auto intent = Intent(WindowClass::scenarioSelect);
+            intent.PutExtra(INTENT_EXTRA_CALLBACK, reinterpret_cast<CloseCallback>(NewGameWindowCallback));
+            ContextOpenIntent(&intent);
+            break;
+        }
+        default:
+            GameUnloadScripts();
+            getGameState().entities.ResetAllEntities();
+            GetContext()->Finish();
+            break;
+    }
+}
+
+void StartSilentRecord()
+{
+    std::string name = Path::Combine(
+        GetContext()->GetPlatformEnvironment().GetDirectoryPath(DirBase::user), u8"debug_replay.parkrep");
+    auto* replayManager = GetContext()->GetReplayManager();
+    if (replayManager->StartRecording(name, k_MaxReplayTicks, IReplayManager::RecordType::SILENT))
+    {
+        ReplayRecordInfo info;
+        replayManager->GetCurrentReplayInfo(info);
+        gSilentRecordingName = info.FilePath;
+
+        const char* logFmt = "Silent replay recording started: (%s) %s\n";
+        Console::WriteLine(logFmt, info.Name.c_str(), info.FilePath.c_str());
+    }
+}
+
+bool StopSilentRecord()
+{
+    auto* replayManager = GetContext()->GetReplayManager();
+    if (!replayManager->IsRecording() && !replayManager->IsNormalising())
+    {
+        return false;
+    }
+
+    ReplayRecordInfo info;
+    replayManager->GetCurrentReplayInfo(info);
+
+    if (replayManager->StopRecording())
+    {
+        const char* logFmt = "Replay recording stopped: (%s) %s\n"
+                             "  Ticks: %u\n"
+                             "  Commands: %u\n"
+                             "  Checksums: %u";
+
+        Console::WriteLine(logFmt, info.Name.c_str(), info.FilePath.c_str(), info.Ticks, info.NumCommands, info.NumChecksums);
+
+        return true;
+    }
+
+    return false;
+}
+
+void PrepareMapForSave()
+{
+    ViewportSetSavedView();
+
+#ifdef ENABLE_SCRIPTING
+    auto& scriptEngine = GetContext()->GetScriptEngine();
+    auto& hookEngine = scriptEngine.GetHookEngine();
+    if (hookEngine.HasSubscriptions(Scripting::HookType::mapSave))
+    {
+        hookEngine.Call(Scripting::HookType::mapSave, false);
+    }
+#endif
+}

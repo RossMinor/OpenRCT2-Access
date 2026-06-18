@@ -1,0 +1,655 @@
+[
+    {
+        "path": "empty.png"
+    },
+    {
+        "path": "placeholder.png"
+    },
+    {
+        "path": "logo.png"
+    },
+    {
+        "path": "logo_text.png"
+    },
+    {
+        "path": "icons/fast_forward.png"
+    },
+    {
+        "path": "icons/game_speed_indicator.png"
+    },
+    {
+        "path": "icons/game_speed_indicator_double.png"
+    },
+    {
+        "path": "icons/map_gen_land.png"
+    },
+    {
+        "path": "icons/zoom_in.png"
+    },
+    {
+        "path": "icons/zoom_in_background.png"
+    },
+    {
+        "path": "icons/zoom_out.png"
+    },
+    {
+        "path": "icons/zoom_out_background.png"
+    },
+    {
+        "path": "icons/map_gen_trees.png"
+    },
+    {
+        "path": "icons/map_gen_noise.png"
+    },
+    {
+        "path": "icons/large_scenery.png"
+    },
+    {
+        "path": "icons/small_scenery.png"
+    },
+    {
+        "path": "icons/paths.png"
+    },
+    {
+        "path": "icons/rct1_close_off.png"
+    },
+    {
+        "path": "icons/rct1_close_off_pressed.png"
+    },
+    {
+        "path": "icons/rct1_close_on.png"
+    },
+    {
+        "path": "icons/rct1_close_on_pressed.png"
+    },
+    {
+        "path": "icons/rct1_test_off.png"
+    },
+    {
+        "path": "icons/rct1_test_off_pressed.png"
+    },
+    {
+        "path": "icons/rct1_test_on.png"
+    },
+    {
+        "path": "icons/rct1_test_on_pressed.png"
+    },
+    {
+        "path": "icons/rct1_open_off.png"
+    },
+    {
+        "path": "icons/rct1_open_off_pressed.png"
+    },
+    {
+        "path": "icons/rct1_open_on.png"
+    },
+    {
+        "path": "icons/rct1_open_on_pressed.png"
+    },
+    {
+        "path": "icons/title_restart.png"
+    },
+    {
+        "path": "icons/title_stop.png"
+    },
+    {
+        "path": "icons/title_play.png"
+    },
+    {
+        "path": "icons/title_skip.png"
+    },
+    {
+        "path": "icons/cheats.png"
+    },
+    {
+        "path": "icons/news_messages.png"
+    },
+    {
+        "path": "icons/server_password.png"
+    },
+    {
+        "path": "icons/multiplayer.png"
+    },
+    {
+        "path": "icons/sort.png"
+    },
+    {
+        "path": "icons/copy.png"
+    },
+    {
+        "path": "icons/paste.png"
+    },
+    {
+        "path": "icons/mute.png"
+    },
+    {
+        "path": "icons/mute_pressed.png"
+    },
+    {
+        "path": "icons/unmute.png"
+    },
+    {
+        "path": "icons/unmute_pressed.png"
+    },
+    {
+        "path": "icons/search.png"
+    },
+    {
+        "path": "icons/eyedropper.png",
+        "x": 5,
+        "y": 5
+    },
+    {
+        "path": "icons/chat.png",
+        "x": 2,
+        "y": 1
+    },
+    {
+        "path": "icons/map_north.png"
+    },
+    {
+        "path": "icons/map_north_pressed.png"
+    },
+    {
+        "path": "icons/map_west.png"
+    },
+    {
+        "path": "icons/map_west_pressed.png"
+    },
+    {
+        "path": "icons/map_south.png"
+    },
+    {
+        "path": "icons/map_south_pressed.png"
+    },
+    {
+        "path": "icons/map_east.png"
+    },
+    {
+        "path": "icons/map_east_pressed.png"
+    },
+    {
+        "path": "icons/multiplayer_toolbar.png"
+    },
+    {
+        "path": "icons/multiplayer_toolbar_pressed.png"
+    },
+    {
+        "path": "icons/multiplayer_sync.png"
+    },
+    {
+        "path": "icons/multiplayer_desync.png"
+    },
+    {
+        "path": "icons/simulate.png",
+        "x": 2,
+        "y": 2
+    },
+    {
+        "path": "icons/rct1_simulate_off.png"
+    },
+    {
+        "path": "icons/rct1_simulate_off_pressed.png"
+    },
+    {
+        "path": "icons/rct1_simulate_on.png"
+    },
+    {
+        "path": "icons/rct1_simulate_on_pressed.png"
+    },
+    {
+        "path": "icons/infinity.png",
+        "palette": "keep",
+        "x": 2,
+        "y": 6
+    },
+    {
+        "path": "tool/normal_selection_6x6.png",
+        "x": 1,
+        "y": 4
+    },
+    {
+        "path": "tool/mountain_tool_even.png",
+        "x": 1,
+        "y": 4
+    },
+    {
+        "path": "tool/mountain_tool_odd.png",
+        "x": 1,
+        "y": 5
+    },
+    {
+        "path": "tool/scenery_scatter_low.png"
+    },
+    {
+        "path": "tool/scenery_scatter_medium.png"
+    },
+    {
+        "path": "tool/scenery_scatter_high.png"
+    },
+    {
+        "path": "icons/view.png"
+    },
+    {
+        "path": "icons/path_railings.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/legacy_paths.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/path_surfaces.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/ride_stations.png",
+        "x": 5,
+        "y": 1
+    },
+    {
+        "path": "icons/terrain_edges.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/hide_vegetation.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/hide_scenery.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/hide_vehicles.png"
+    },
+    {
+        "path": "icons/hide_supports.png"
+    },
+    {
+        "path": "icons/hide_partial.png",
+        "x": 4,
+        "y": 2
+    },
+    {
+        "path": "icons/hide_full.png",
+        "x": 4,
+        "y": 2
+    },
+    {
+        "path": "icons/link_chain.png",
+        "x": 2,
+        "y": 2
+    },
+    {
+        "path": "sideways-tab.png"
+    },
+    {
+        "path": "sideways-tab-active.png"
+    },
+    {
+        "path": "icons/arrow_up.png",
+        "x": 5,
+        "y": 5
+    },
+    {
+        "path": "icons/arrow_down.png",
+        "x": 5,
+        "y": 5
+    },
+    {
+        "path": "icons/reload.png",
+        "x": 2,
+        "y": 2
+    },
+    {
+        "path": "icons/map_gen_terrain_tab.png",
+        "x": 1,
+        "y": 10
+    },
+    {
+        "path": "icons/map_gen_button.png"
+    },
+    {
+        "path": "icons/peep_spawn.png"
+    },
+    {
+        "path": "icons/colour_invisible.png"
+    },
+    {
+        "path": "icons/colour_invisible_pressed.png"
+    },
+    {
+        "path": "icons/colour_large.png"
+    },
+    {
+        "path": "icons/colour_pressed_large.png"
+    },
+    {
+        "path": "icons/colour_invisible_large.png"
+    },
+    {
+        "path": "icons/colour_invisible_pressed_large.png"
+    },
+    {
+        "path": "icons/folder.png"
+    },
+    {
+        "path": "icons/folder_new.png",
+        "x": 2
+    },
+    {
+        "path": "icons/folder_parent.png",
+        "x": 2,
+        "y": 2
+    },
+    {
+        "path": "icons/folder_default.png",
+        "x": 2,
+        "y": 1
+    },
+    {
+        "path": "icons/system_browser.png",
+        "x": 1,
+        "y": 2
+    },
+    {
+        "path": "icons/peep_animations.png",
+        "x": 2,
+        "y": 1
+    },
+    {
+        "path": "icons/weather_sun_small.png",
+        "x": 3
+    },
+    {
+        "path": "icons/weather_sun_cloud_small.png",
+        "x": 0
+    },
+    {
+        "path": "icons/weather_cloud_small.png",
+        "x": 0
+    },
+    {
+        "path": "icons/weather_light_rain_small.png",
+        "x": 3
+    },
+    {
+        "path": "icons/weather_heavy_rain_small.png",
+        "x": 2
+    },
+    {
+        "path": "icons/weather_storm_small.png",
+        "x": 3
+    },
+    {
+        "path": "icons/weather_snow.png",
+        "x": 3
+    },
+    {
+        "path": "icons/weather_snow_small.png",
+        "x": 3
+    },
+    {
+        "path": "icons/weather_heavy_snow.png",
+        "x": 1
+    },
+    {
+        "path": "icons/weather_heavy_snow_small.png",
+        "x": 3
+    },
+    {
+        "path": "icons/weather_blizzard.png",
+        "x": 1
+    },
+    {
+        "path": "icons/weather_blizzard_small.png",
+        "x": 2
+    },
+    {
+        "path": "icons/monitor_0.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_1.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_2.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_3.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_4.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_5.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_6.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_7.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_8.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_9.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_10.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_11.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_12.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_13.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_14.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/monitor_15.png",
+        "x": 3,
+        "y": 3
+    },
+    {
+        "path": "icons/controls_0.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/controls_1.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/controls_2.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/controls_3.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/controls_4.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/controls_5.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/controls_6.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "icons/controls_7.png",
+        "x": 1,
+        "y": 1
+    },
+    {
+        "path": "logo_mono_dithered.png"
+    },
+    {
+        "path": "loader/loader_hybrid_supports.png",
+        "y": 10
+    },
+    {
+        "path": "loader/loader_hybrid_track.png",
+        "y": 15
+    },
+    {
+        "path": "loader/loader_hybrid_vehicle.png"
+    },
+    {
+        "path": "loader/loader_steel_supports.png",
+        "y": 27
+    },
+    {
+        "path": "loader/loader_steel_track.png",
+        "y": 16
+    },
+    {
+        "path": "loader/loader_steel_vehicle.png"
+    },
+    {
+        "path": "loader/loader_wooden_supports.png",
+        "y": 3
+    },
+    {
+        "path": "loader/loader_wooden_track.png",
+        "y": 3
+    },
+    {
+        "path": "loader/loader_wooden_vehicle.png"
+    },
+    {
+        "path": "loader/loader_gokarts_supports.png",
+        "y": 5
+    },
+    {
+        "path": "loader/loader_gokarts_track.png",
+        "y": 9
+    },
+    {
+        "path": "loader/loader_gokarts_vehicles.png"
+    },
+    {
+        "path": "surface/glassy_recolourable.png",
+        "x": -32,
+        "y": -1,
+        "palette": "keep"
+    },
+    {
+        "path": "surface/selection_edge_nw.png",
+        "x": -32,
+        "y": -1
+    },
+    {
+        "path": "surface/selection_edge_ne.png",
+        "x": 0,
+        "y": -1
+    },
+    {
+        "path": "surface/selection_edge_sw.png",
+        "x": -32,
+        "y": 15
+    },
+    {
+        "path": "surface/selection_edge_se.png",
+        "x": 0,
+        "y": 15
+    },
+    {
+        "path": "surface/opaque_water_overlay_1.png",
+        "x": -32,
+        "y": 0,
+        "palette": "keep"
+    },
+    {
+        "path": "surface/opaque_water_overlay_2.png",
+        "x": -32,
+        "y": 0,
+        "palette": "keep"
+    },
+    {
+        "path": "surface/opaque_water_overlay_3.png",
+        "x": 0,
+        "y": 0,
+        "palette": "keep"
+    },
+    {
+        "path": "surface/opaque_water_overlay_4.png",
+        "x": -32,
+        "y": 0,
+        "palette": "keep"
+    },
+    {
+        "path": "surface/opaque_water_overlay_5.png",
+        "x": -32,
+        "y": 15,
+        "palette": "keep"
+    },
+    {
+        "path": "icons/medium-curve-left.png",
+        "x": 2,
+        "y": 6
+    },
+    {
+        "path": "icons/medium-curve-right.png",
+        "x": 1,
+        "y": 6
+    },
+    {
+        "path": "icons/rotate_view_anti-clockwise.png"
+    },
+    {
+        "path": "tool/path_drag_tool.png",
+        "x": 1,
+        "y": 2
+    }
+]

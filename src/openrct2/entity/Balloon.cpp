@@ -1,0 +1,168 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#include "Balloon.h"
+
+#include "../Game.h"
+#include "../GameState.h"
+#include "../audio/Audio.h"
+#include "../core/DataSerialiser.h"
+#include "../network/Network.h"
+#include "../profiling/Profiling.h"
+#include "../ride/RideData.h"
+#include "../scenario/Scenario.h"
+#include "../world/Map.h"
+#include "../world/tile_element/TrackElement.h"
+#include "EntityRegistry.h"
+
+namespace OpenRCT2
+{
+    template<>
+    bool EntityBase::is<Balloon>() const
+    {
+        return type == EntityType::balloon;
+    }
+
+    void Balloon::Update()
+    {
+        invalidate();
+        if (popped == 1)
+        {
+            frame++;
+            if (frame >= 5)
+            {
+                getGameState().entities.EntityRemove(this);
+            }
+        }
+        else
+        {
+            time_to_move++;
+            if (time_to_move >= 3)
+            {
+                time_to_move = 0;
+                frame++;
+                // NOTE: To keep S6 Compatibility this field needs to roll over after 1 byte
+                if (frame == 256)
+                {
+                    frame = 0;
+                }
+
+                if (Collides())
+                {
+                    Pop(false);
+                    return;
+                }
+
+                moveTo({ x, y, z + 1 });
+
+                int32_t maxZ = 1967 - ((x ^ y) & 31);
+                if (z >= maxZ)
+                {
+                    Pop(true);
+                }
+            }
+        }
+    }
+
+    void Balloon::Press()
+    {
+        if (popped != 1)
+        {
+            // There is a random chance that pressing the balloon will not pop it
+            // and instead shift it slightly
+            uint32_t random = ScenarioRand();
+            if ((id.ToUnderlying() & 7) || (random & 0xFFFF) < 0x2000)
+            {
+                Pop(true);
+            }
+            else
+            {
+                int16_t shift = ((random & 0x80000000) ? -6 : 6);
+                moveTo({ x + shift, y, z });
+            }
+        }
+    }
+
+    void Balloon::Pop(bool playSound)
+    {
+        popped = 1;
+        frame = 0;
+        if (playSound)
+        {
+            Audio::Play3D(Audio::SoundId::balloonPop, { x, y, z });
+        }
+    }
+
+    void Balloon::Create(const CoordsXYZ& balloonPos, Drawing::Colour colour, bool isPopped)
+    {
+        auto* balloon = getGameState().entities.CreateEntity<Balloon>();
+        if (balloon == nullptr)
+            return;
+
+        balloon->spriteData.width = 13;
+        balloon->spriteData.heightMin = 22;
+        balloon->spriteData.heightMax = 11;
+        balloon->moveTo(balloonPos);
+        balloon->time_to_move = 0;
+        balloon->frame = 0;
+        balloon->colour = colour;
+        balloon->popped = (isPopped ? 1 : 0);
+    }
+
+    void Balloon::serialise(DataSerialiser& stream)
+    {
+        EntityBase::serialise(stream);
+        stream << frame;
+        stream << popped;
+        stream << time_to_move;
+        stream << colour;
+    }
+
+    bool Balloon::Collides() const
+    {
+        const TileElement* tileElement = MapGetFirstElementAt(CoordsXY({ x, y }));
+        if (tileElement == nullptr)
+            return false;
+        do
+        {
+            // the balloon has height so we add some padding to prevent it clipping through things.
+            int32_t balloon_top = z + kCoordsZStep * 2;
+            if (balloon_top == tileElement->getBaseZ())
+            {
+                return true;
+            }
+
+            // check for situations where guests can drop a balloon inside a covered building
+            bool check_ceiling = tileElement->getType() == TileElementType::Entrance;
+            if (tileElement->getType() == TileElementType::Track)
+            {
+                const TrackElement* trackElement = tileElement->asTrack();
+                const auto* ride = GetRide(trackElement->GetRideIndex());
+                if (ride != nullptr && ride->getRideTypeDescriptor().flags.has(RtdFlag::hasRoofOverWholeRide))
+                {
+                    check_ceiling = true;
+                }
+                else
+                {
+                    check_ceiling = (ride != nullptr) ? RideHasStationShelter(*ride) : false;
+                }
+            }
+
+            if (check_ceiling)
+            {
+                if (balloon_top > tileElement->getBaseZ() && z < tileElement->getClearanceZ())
+                {
+                    return true;
+                }
+            }
+
+        } while (!(tileElement++)->isLastForTile());
+        return false;
+    }
+} // namespace OpenRCT2

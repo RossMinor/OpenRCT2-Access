@@ -1,0 +1,145 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#include "Wall.h"
+
+#include "Map.h"
+#include "tile_element/TileElement.h"
+#include "tile_element/WallElement.h"
+
+using namespace OpenRCT2;
+
+/**
+ *
+ *  rct2: 0x006E588E
+ */
+void WallRemoveAt(const CoordsXYRangedZ& wallPos)
+{
+    for (auto wallElement = MapGetWallElementAt(wallPos); wallElement != nullptr; wallElement = MapGetWallElementAt(wallPos))
+    {
+        reinterpret_cast<TileElement*>(wallElement)->RemoveBannerEntry();
+        MapInvalidateTileZoom1({ wallPos, wallElement->getBaseZ(), wallElement->getBaseZ() + 72 });
+        TileElementRemove(reinterpret_cast<TileElement*>(wallElement));
+    }
+}
+
+/**
+ *
+ *  rct2: 0x006E57E6
+ */
+void WallRemoveAtZ(const CoordsXYZ& wallPos)
+{
+    WallRemoveAt({ wallPos, wallPos.z, wallPos.z + 48 });
+}
+
+/**
+ *
+ *  rct2: 0x006E5935
+ */
+void WallRemoveIntersectingWalls(const CoordsXYRangedZ& wallPos, Direction direction)
+{
+    TileElement* tileElement = MapGetFirstElementAt(wallPos);
+    if (tileElement == nullptr)
+        return;
+    do
+    {
+        if (tileElement->getType() != TileElementType::Wall)
+            continue;
+
+        if (tileElement->getClearanceZ() <= wallPos.baseZ || tileElement->getBaseZ() >= wallPos.clearanceZ)
+            continue;
+
+        if (direction != tileElement->getDirection())
+            continue;
+
+        tileElement->RemoveBannerEntry();
+        MapInvalidateTileZoom1({ wallPos, tileElement->getBaseZ(), tileElement->getBaseZ() + 72 });
+        TileElementRemove(tileElement);
+        tileElement--;
+    } while (!(tileElement++)->isLastForTile());
+}
+
+#pragma region Edge Slopes Table
+
+// clang-format off
+// rct2: 0x009A3FEC
+constexpr static uint8_t kLandSlopeToWallSlope[][kNumOrthogonalDirections] = {
+    //  Top right                        Bottom right                   Bottom left                       Top left
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_DOWNWARDS,          0                             },
+    { 0,                             0,                             EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_DOWNWARDS          },
+    { 0,                             EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_DOWNWARDS          },
+    { EDGE_SLOPE_DOWNWARDS,          0,                             0,                             EDGE_SLOPE_UPWARDS            },
+    { EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS            },
+    { EDGE_SLOPE_DOWNWARDS,          0,                             EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_ELEVATED           },
+    { EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_ELEVATED           },
+    { EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_DOWNWARDS,          0,                             0                             },
+    { EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_DOWNWARDS,          0                             },
+    { EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_DOWNWARDS          },
+    { EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_DOWNWARDS          },
+    { EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_DOWNWARDS,          0,                             EDGE_SLOPE_UPWARDS            },
+    { EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS            },
+    { EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_ELEVATED           },
+    { EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_ELEVATED,           EDGE_SLOPE_ELEVATED           },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_UPWARDS_ELEVATED,   EDGE_SLOPE_DOWNWARDS_ELEVATED },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { 0,                             0,                             0,                             0                             },
+    { EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_UPWARDS_ELEVATED,   EDGE_SLOPE_DOWNWARDS_ELEVATED, EDGE_SLOPE_DOWNWARDS          },
+    { 0,                             0,                             0,                             0                             },
+    { EDGE_SLOPE_UPWARDS_ELEVATED,   EDGE_SLOPE_DOWNWARDS_ELEVATED, EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS            },
+    { EDGE_SLOPE_DOWNWARDS_ELEVATED, EDGE_SLOPE_DOWNWARDS,          EDGE_SLOPE_UPWARDS,            EDGE_SLOPE_UPWARDS_ELEVATED   },
+    { 0,                             0,                             0,                             0                             },
+};
+// clang-format on
+
+#pragma endregion
+
+uint8_t GetWallSlopeFromEdgeSlope(uint8_t Slope, uint8_t Edge)
+{
+    return kLandSlopeToWallSlope[Slope][Edge];
+}
+
+/**
+ * Returns true if the edge of tile x, y specified by direction is occupied by a fence
+ * between heights z0 and z1.
+ *
+ * Note that there may still be a fence on the opposing tile.
+ *
+ *  rct2: 0x006E59DC
+ */
+bool WallInTheWay(const CoordsXYRangedZ& fencePos, int32_t direction)
+{
+    TileElement* tileElement = MapGetFirstElementAt(fencePos);
+    if (tileElement == nullptr)
+        return false;
+    do
+    {
+        if (tileElement->getType() != TileElementType::Wall)
+            continue;
+        if (tileElement->isGhost())
+            continue;
+        if (fencePos.baseZ >= tileElement->getClearanceZ())
+            continue;
+        if (fencePos.clearanceZ <= tileElement->getBaseZ())
+            continue;
+        if ((tileElement->getDirection()) != direction)
+            continue;
+
+        return true;
+    } while (!(tileElement++)->isLastForTile());
+    return false;
+}

@@ -1,0 +1,80 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#pragma once
+
+#include "../Identifiers.h"
+#include "../core/FlagHolder.hpp"
+#include "../drawing/TextColour.h"
+#include "../ride/RideTypes.h"
+#include "Location.hpp"
+
+#include <string>
+
+namespace OpenRCT2
+{
+    class Formatter;
+    struct GameState_t;
+    struct TileElement;
+    struct WallElement;
+} // namespace OpenRCT2
+
+namespace OpenRCT2::Drawing
+{
+    enum class Colour : uint8_t;
+}
+
+constexpr OpenRCT2::ObjectEntryIndex kBannerNull = OpenRCT2::kObjectEntryIndexNull;
+constexpr size_t kMaxBanners = 8192;
+
+enum class BannerFlag : uint8_t
+{
+    noEntry = 0,
+    isLargeScenery = 1,
+    linkedToRide = 2,
+    isWall = 3,
+};
+using BannerFlags = FlagHolder<uint8_t, BannerFlag>;
+
+struct Banner
+{
+    BannerIndex id = BannerIndex::GetNull();
+    OpenRCT2::ObjectEntryIndex type = kBannerNull;
+    BannerFlags flags{};
+    std::string text;
+    OpenRCT2::Drawing::Colour colour{};
+    RideId rideIndex{};
+    OpenRCT2::Drawing::TextColour textColour{};
+    TileCoordsXY position;
+
+    bool isNull() const
+    {
+        return type == kBannerNull;
+    }
+
+    std::string getTextWithColour() const;
+    std::string getText() const;
+    void formatTextWithColourTo(OpenRCT2::Formatter&) const;
+    void formatTextTo(OpenRCT2::Formatter&) const;
+};
+
+void BannerInit(OpenRCT2::GameState_t& gameState);
+OpenRCT2::TileElement* BannerGetTileElement(BannerIndex bannerIndex);
+OpenRCT2::WallElement* BannerGetScrollingWallTileElement(BannerIndex bannerIndex);
+RideId BannerGetClosestRideIndex(const CoordsXYZ& mapPos);
+void BannerApplyFixes();
+void UnlinkAllRideBanners();
+void UnlinkAllBannersForRide(RideId rideId);
+Banner* GetBanner(BannerIndex id);
+Banner* GetOrCreateBanner(BannerIndex id);
+Banner* CreateBanner();
+void DeleteBanner(BannerIndex id);
+void TrimBanners();
+size_t GetNumBanners();
+bool HasReachedBannerLimit();

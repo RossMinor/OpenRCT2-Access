@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Main msbuild project for OpenRCT2 -->
+<!-- Inputs (/p: or environment variables)
+       - OPENRCT2_BUILD_SERVER
+       - OPENRCT2_BRANCH
+       - OPENRCT2_SHA1
+       - OPENRCT2_SHA1_SHORT
+       - OPENRCT2_DESCRIBE
+  -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)'==''">Debug</Configuration>
+    <Platform Condition="'$(Platform)'==''">x64</Platform>
+
+    <!-- Set dynamic OpenRCT2 #defines -->
+    <OPENRCT2_CL_ADDITIONALOPTIONS Condition="'$(OPENRCT2_BUILD_SERVER)'!=''">/D "OPENRCT2_BUILD_SERVER=\"$(OPENRCT2_BUILD_SERVER)\"" $(OPENRCT2_CL_ADDITIONALOPTIONS)</OPENRCT2_CL_ADDITIONALOPTIONS>
+    <OPENRCT2_CL_ADDITIONALOPTIONS Condition="'$(OPENRCT2_BRANCH)'!=''">/D "OPENRCT2_BRANCH=\"$(OPENRCT2_BRANCH)\"" $(OPENRCT2_CL_ADDITIONALOPTIONS)</OPENRCT2_CL_ADDITIONALOPTIONS>
+    <OPENRCT2_CL_ADDITIONALOPTIONS Condition="'$(OPENRCT2_SHA1)'!=''">/D "OPENRCT2_COMMIT_SHA1=\"$(OPENRCT2_SHA1)\"" $(OPENRCT2_CL_ADDITIONALOPTIONS)</OPENRCT2_CL_ADDITIONALOPTIONS>
+    <OPENRCT2_CL_ADDITIONALOPTIONS Condition="'$(OPENRCT2_SHA1_SHORT)'!=''">/D "OPENRCT2_COMMIT_SHA1_SHORT=\"$(OPENRCT2_SHA1_SHORT)\"" $(OPENRCT2_CL_ADDITIONALOPTIONS)</OPENRCT2_CL_ADDITIONALOPTIONS>
+    <OPENRCT2_CL_ADDITIONALOPTIONS Condition="'$(OPENRCT2_DESCRIBE)'!=''">/D "OPENRCT2_VERSION_TAG=\"$(OPENRCT2_DESCRIBE)\"" $(OPENRCT2_CL_ADDITIONALOPTIONS)</OPENRCT2_CL_ADDITIONALOPTIONS>
+    <OPENRCT2_CL_ADDITIONALOPTIONS Condition="'$(Breakpad)'=='true' and ('$(Platform)'=='Win32' or '$(Platform)'=='x64')">/D "USE_BREAKPAD" $(OPENRCT2_CL_ADDITIONALOPTIONS)</OPENRCT2_CL_ADDITIONALOPTIONS>
+
+    <RootDir>$(MsBuildThisFileDirectory)</RootDir>
+    <TargetDir>$(RootDir)bin\</TargetDir>
+
+    <OutputExe>$(TargetDir)openrct2.exe</OutputExe>
+
+    <!-- Set openrct2.sln properties -->
+    <SlnProperties>$(SlnProperties);Platform=$(Platform)</SlnProperties>
+    <SlnProperties Condition="'$(OPENRCT2_BUILD_SERVER)'!=''">$(SlnProperties);OPENRCT2_CL_ADDITIONALOPTIONS=$(OPENRCT2_CL_ADDITIONALOPTIONS)</SlnProperties>
+  </PropertyGroup>
+
+  <Target Name="Clean">
+    <PropertyGroup>
+      <SlnProperties>$(SlnProperties);Configuration=$(Configuration)</SlnProperties>
+    </PropertyGroup>
+    <Delete Files="@(CleanItems)" />
+    <Delete Files="$(DependenciesCheckFile)" />
+    <RemoveDir Directories="$(TargetDir)data" />
+    <MSBuild Projects="openrct2.sln" Targets="Clean" Properties="$(SlnProperties);IsSolutionBuild=true" />
+  </Target>
+
+  <Target Name="BeforeBuild" BeforeTargets="Build;Rebuild" DependsOnTargets="DownloadAllDependencies">
+    <PropertyGroup>
+      <BuildString Condition="'$(OPENRCT2_SHA1_SHORT)'!=''">$(OPENRCT2_SHA1_SHORT)</BuildString>
+      <BuildString Condition="'$(OPENRCT2_BRANCH)'!=''">$(BuildString) ($(OPENRCT2_BRANCH))</BuildString>
+      <BuildString Condition="'$(OPENRCT2_DESCRIBE)'!=''">$(BuildString) ($(OPENRCT2_DESCRIBE))</BuildString>
+    </PropertyGroup>
+    <Message Condition="'$(BuildString)'!=''" Text="Building $(BuildString)" Importance="high" />
+  </Target>
+
+  <Target Name="Build">
+    <PropertyGroup>
+      <SlnProperties>$(SlnProperties);Configuration=$(Configuration)</SlnProperties>
+    </PropertyGroup>
+    <Message Text="SlnProperties: $(SlnProperties)" />
+    <MSBuild Projects="openrct2.sln" Targets="Build" Properties="$(SlnProperties);IsSolutionBuild=true" />
+  </Target>
+  <Target Name="Rebuild">
+    <PropertyGroup>
+      <SlnProperties>$(SlnProperties);Configuration=$(Configuration)</SlnProperties>
+    </PropertyGroup>
+    <Message Text="SlnProperties: $(SlnProperties)" />
+    <MSBuild Projects="openrct2.sln" Targets="Rebuild" Properties="$(SlnProperties);IsSolutionBuild=true" />
+  </Target>
+    
+  <!-- Import custom build tasks -->
+  <Import Project="openrct2.deps.targets" />
+  <Import Project="openrct2.targets" />
+  
+</Project>

@@ -1,0 +1,113 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#pragma once
+
+#include "../core/FlagHolder.hpp"
+#include "../core/Money.hpp"
+#include "../localisation/StringIdType.h"
+#include "../world/Location.hpp"
+#include "ObjectTypes.h"
+
+#include <span>
+#include <string_view>
+
+enum class CursorID : uint8_t;
+
+namespace OpenRCT2
+{
+    struct LargeSceneryText;
+
+    struct LargeSceneryTile
+    {
+        CoordsXYZ offset;
+        int32_t zClearance; // BigZ
+        bool hasSupports;
+        bool allowSupportsAbove;
+        uint8_t corners; // occupied corners of the tile
+        uint8_t walls;   // sides that walls can be placed on
+        uint8_t index;   // Purely to save having to look this up all the time
+    };
+
+    struct LargeSceneryTextGlyph
+    {
+        uint8_t image_offset;
+        uint8_t width;
+        uint8_t height;
+        uint8_t Pad3;
+    };
+
+    enum class LargeSceneryTextFlag : uint8_t
+    {
+        isVertical,
+        isTwoLine,
+    };
+    using LargeSceneryTextFlags = FlagHolder<uint8_t, LargeSceneryTextFlag>;
+
+    // TODO: Remove not required
+    struct RCTLargeSceneryText
+    {
+        struct
+        {
+            int16_t x, y;
+        } offset[2];                       // 0x0
+        uint16_t maxWidth;                 // 0x8
+        uint16_t PadA;                     // 0xA
+        LargeSceneryTextFlags flags;       // 0xC
+        uint8_t num_images;                // 0xD
+        LargeSceneryTextGlyph glyphs[256]; // 0xE
+    };
+
+    enum class LargeSceneryFlag : uint8_t
+    {
+        hasPrimaryColour,
+        hasSecondaryColour,
+        is3DText,
+        isAnimated,
+        isPhotogenic,
+        isTree,
+        hasTertiaryColour,
+        hidePrimaryRemapButton,
+        hideSecondaryRemapButton,
+    };
+    using LargeSceneryFlags = FlagHolder<uint16_t, LargeSceneryFlag>;
+
+    struct LargeSceneryEntry
+    {
+        static constexpr auto kObjectType = ObjectType::largeScenery;
+
+        StringId name;
+        uint32_t image;
+        CursorID tool_id;
+        LargeSceneryFlags flags;
+        money64 price;
+        money64 removal_price;
+        std::span<const LargeSceneryTile> tiles;
+        ObjectEntryIndex scenery_tab_id;
+        uint8_t scrolling_mode;
+        LargeSceneryText* text;
+        uint32_t text_image;
+    };
+
+    struct LargeSceneryText
+    {
+        CoordsXY offset[2];
+        uint16_t maxWidth;
+        LargeSceneryTextFlags flags;
+        uint16_t num_images;
+        LargeSceneryTextGlyph glyphs[256];
+
+        LargeSceneryText() = default;
+        explicit LargeSceneryText(const RCTLargeSceneryText& original);
+        const LargeSceneryTextGlyph* GetGlyph(char32_t codepoint) const;
+        const LargeSceneryTextGlyph& GetGlyph(char32_t codepoint, char32_t defaultCodepoint) const;
+        int32_t MeasureWidth(std::string_view text) const;
+        int32_t MeasureHeight(std::string_view text) const;
+    };
+} // namespace OpenRCT2

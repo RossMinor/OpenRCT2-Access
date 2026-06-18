@@ -1,0 +1,185 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+#include "../../../GameState.h"
+#include "../../../entity/EntityRegistry.h"
+#include "../../../interface/Viewport.h"
+#include "../../../ride/Ride.h"
+#include "../../../ride/RideEntry.h"
+#include "../../../ride/TrackPaint.h"
+#include "../../../ride/Vehicle.h"
+#include "../../../world/tile_element/TrackElement.h"
+#include "../../Boundbox.h"
+#include "../../Paint.h"
+#include "../../support/WoodenSupports.h"
+#include "../../tile_element/Segment.h"
+#include "../../track/Segment.h"
+
+using namespace OpenRCT2;
+using namespace OpenRCT2::Numerics;
+
+static void PaintEnterpriseRiders(
+    PaintSession& session, const RideObjectEntry& rideEntry, Vehicle& vehicle, uint32_t imageOffset, const CoordsXYZ& offset,
+    const BoundBoxXYZ& bb)
+{
+    if (session.rt.zoom_level > ZoomLevel{ 0 })
+        return;
+    if (imageOffset >= 12)
+        return;
+
+    auto baseImageIndex = rideEntry.Cars[0].base_image_id;
+    for (int32_t i = 0; i < 15; i++)
+    {
+        if (vehicle.num_peeps <= i)
+            break;
+
+        auto frameOffset1 = ((imageOffset % 4) * 4 + (i * 4) % 15) & 0x0F;
+        auto frameOffset2 = floor2(imageOffset, 4) * 4;
+        auto imageTemplate = ImageId(0, vehicle.peep_tshirt_colours[i]);
+        auto imageId = imageTemplate.WithIndex(baseImageIndex + 196 + frameOffset1 + frameOffset2);
+        PaintAddImageAsChild(session, imageId, offset, bb);
+    }
+}
+
+static void PaintEnterpriseStructure(
+    PaintSession& session, const Ride& ride, int8_t xOffset, int8_t yOffset, uint16_t height, const TrackElement& trackElement)
+{
+    const auto* rideEntry = GetRideEntryByIndex(ride.subtype);
+    if (rideEntry == nullptr)
+        return;
+
+    Vehicle* vehicle = nullptr;
+    if (ride.flags.has(RideFlag::onTrack))
+    {
+        vehicle = getGameState().entities.GetEntity<Vehicle>(ride.vehicles[0]);
+        if (vehicle != nullptr)
+        {
+            session.InteractionType = ViewportInteractionItem::entity;
+            session.CurrentlyDrawnEntity = vehicle;
+        }
+    }
+
+    CoordsXYZ offset(xOffset, yOffset, height + 7);
+    BoundBoxXYZ bb = { { 0, 0, height + 7 }, { 24, 24, 48 } };
+
+    uint32_t imageOffset = trackElement.getDirectionWithOffset(session.CurrentRotation);
+    if (vehicle != nullptr)
+    {
+        imageOffset = (vehicle->flatRideAnimationFrame << 2) + (((vehicle->orientation >> 3) + session.CurrentRotation) % 4);
+    }
+
+    auto imageTemplate = ImageId(0, ride.vehicleColours[0].Body, ride.vehicleColours[0].Trim);
+    auto imageFlags = GetStationColourScheme(session, trackElement);
+    if (imageFlags != TrackStationColour)
+    {
+        imageTemplate = imageFlags;
+    }
+    auto imageId = imageTemplate.WithIndex(rideEntry->Cars[0].base_image_id + imageOffset);
+    PaintAddImageAsParent(session, imageId, offset, bb);
+
+    if (vehicle != nullptr)
+    {
+        PaintEnterpriseRiders(session, *rideEntry, *vehicle, imageOffset, offset, bb);
+    }
+
+    session.CurrentlyDrawnEntity = nullptr;
+    session.InteractionType = ViewportInteractionItem::ride;
+}
+
+static void PaintEnterprise(
+    PaintSession& session, const Ride& ride, uint8_t trackSequence, uint8_t direction, int32_t height,
+    const TrackElement& trackElement, SupportType supportType)
+{
+    trackSequence = kTrackMap4x4[direction][trackSequence];
+
+    int32_t edges = kEdges4x4[trackSequence];
+
+    WoodenASupportsPaintSetupRotated(
+        session, WoodenSupportType::truss, WoodenSupportSubType::neSw, direction, height,
+        GetStationColourScheme(session, trackElement));
+
+    const StationObject* stationObject = ride.getStationObject();
+    TrackPaintUtilPaintFloor(session, edges, session.TrackColours, height, kFloorSpritesMulch, stationObject);
+
+    TrackPaintUtilPaintFences(
+        session, edges, session.MapPosition, trackElement, ride, session.TrackColours, height, kFenceSpritesRope,
+        session.CurrentRotation);
+
+    switch (trackSequence)
+    {
+        case 5:
+            PaintEnterpriseStructure(session, ride, 16, 16, height, trackElement);
+            break;
+        case 6:
+            PaintEnterpriseStructure(session, ride, 16, -16, height, trackElement);
+            break;
+        case 10:
+            PaintEnterpriseStructure(session, ride, -16, -16, height, trackElement);
+            break;
+        case 9:
+            PaintEnterpriseStructure(session, ride, -16, 16, height, trackElement);
+            break;
+
+        case 0:
+            PaintEnterpriseStructure(session, ride, 48, 48, height, trackElement);
+            break;
+        case 3:
+            PaintEnterpriseStructure(session, ride, 48, -48, height, trackElement);
+            break;
+        case 15:
+            PaintEnterpriseStructure(session, ride, -48, -48, height, trackElement);
+            break;
+        case 12:
+            PaintEnterpriseStructure(session, ride, -48, 48, height, trackElement);
+            break;
+
+        case 7:
+            PaintEnterpriseStructure(session, ride, 16, -48, height, trackElement);
+            break;
+        case 11:
+            PaintEnterpriseStructure(session, ride, -16, -48, height, trackElement);
+            break;
+        case 14:
+            PaintEnterpriseStructure(session, ride, -48, -16, height, trackElement);
+            break;
+        case 13:
+            PaintEnterpriseStructure(session, ride, -48, 16, height, trackElement);
+            break;
+    }
+
+    int32_t cornerSegments = 0;
+    switch (trackSequence)
+    {
+        case 0:
+            cornerSegments = EnumsToFlags(PaintSegment::top, PaintSegment::topLeft, PaintSegment::topRight);
+            break;
+        case 3:
+            cornerSegments = EnumsToFlags(PaintSegment::topRight, PaintSegment::right, PaintSegment::bottomRight);
+            break;
+        case 12:
+            cornerSegments = EnumsToFlags(PaintSegment::topLeft, PaintSegment::left, PaintSegment::bottomLeft);
+            break;
+        case 15:
+            cornerSegments = EnumsToFlags(PaintSegment::bottomLeft, PaintSegment::bottom, PaintSegment::bottomRight);
+            break;
+    }
+    PaintUtilSetSegmentSupportHeight(session, cornerSegments, height + 2, 0x20);
+    PaintUtilSetSegmentSupportHeight(session, kSegmentsAll & ~cornerSegments, 0xFFFF, 0);
+    PaintUtilSetGeneralSupportHeight(session, height + 160);
+}
+
+TrackPaintFunction GetTrackPaintFunctionEnterprise(TrackElemType trackType)
+{
+    if (trackType != TrackElemType::flatTrack4x4)
+    {
+        return TrackPaintFunctionDummy;
+    }
+
+    return PaintEnterprise;
+}

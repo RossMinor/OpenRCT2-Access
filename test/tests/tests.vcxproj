@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <SolutionDir Condition="'$(SolutionDir)'==''">..\..\</SolutionDir>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseLTCG|arm64">
+      <Configuration>ReleaseLTCG</Configuration>
+      <Platform>arm64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseLTCG|Win32">
+      <Configuration>ReleaseLTCG</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseLTCG|x64">
+      <Configuration>ReleaseLTCG</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|arm64">
+      <Configuration>Debug</Configuration>
+      <Platform>arm64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|arm64">
+      <Configuration>Release</Configuration>
+      <Platform>arm64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{62B020FA-E4FB-4C6E-B32A-DC999470F155}</ProjectGuid>
+    <RootNamespace>tests</RootNamespace>
+    <ProjectName>tests</ProjectName>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="..\..\openrct2.common.props" />
+  <PropertyGroup>
+    <OutDir>$(SolutionDir)bin\</OutDir>
+    <LibraryPath>$(SolutionDir)bin;$(LibraryPath)</LibraryPath>
+    <LibraryPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)lib\$(Platform)\debug\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath Condition="'$(Configuration)'!='Debug'">$(SolutionDir)lib\$(Platform)\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>GTEST_LANG_CXX11;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PrecompiledHeader Condition="'$(UsePCH)'=='true'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(UsePCH)'=='true'">tests_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles Condition="'$(UsePCH)'=='true'">tests_pch.h</ForcedIncludeFiles>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>libopenrct2.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)'=='Debug'">gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)'!='Debug'">gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <PostBuildEvent>
+      <Command>xcopy /EIY "$(ProjectDir)testdata" "$(OutputPath)testdata"</Command>
+      <Message>Copies test data to output directory.</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- Files -->
+  <ItemGroup>
+    <ClInclude Include="AssertHelpers.hpp" />
+    <ClInclude Include="helpers\StringHelpers.hpp" />
+    <ClInclude Include="TestData.h" />
+    <ClInclude Include="tests_pch.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="BitSetTests.cpp" />
+    <ClCompile Include="CircularBuffer.cpp" />
+    <ClCompile Include="CLITests.cpp" />
+    <ClCompile Include="CryptTests.cpp" />
+    <ClCompile Include="Endianness.cpp" />
+    <ClCompile Include="EnumMapTest.cpp" />
+    <ClCompile Include="FormattingTests.cpp" />
+    <ClCompile Include="LanguagePackTest.cpp" />
+    <ClCompile Include="ImageImporterTests.cpp" />
+    <ClCompile Include="IniReaderTest.cpp" />
+    <ClCompile Include="IniWriterTest.cpp" />
+    <ClCompile Include="LocalisationTest.cpp" />
+    <ClCompile Include="MultiLaunch.cpp" />
+    <ClCompile Include="NetworkTests.cpp" />
+    <ClCompile Include="ReplayTests.cpp" />
+    <ClCompile Include="PlayTests.cpp" />
+    <ClCompile Include="Pathfinding.cpp" />
+    <ClCompile Include="RideRatings.cpp" />
+    <ClCompile Include="EntityImportTests.cpp" />
+    <ClCompile Include="S6ImportExportTests.cpp" />
+    <ClCompile Include="SawyerCodingTest.cpp" />
+    <ClCompile Include="ScenarioPatcherTests.cpp" />
+    <ClCompile Include="ScriptingTests.cpp" />
+    <ClCompile Include="TestData.cpp" />
+    <ClCompile Include="tests.cpp" />
+    <ClCompile Include="StringTest.cpp" />
+    <ClCompile Include="tests_pch.cpp" Condition="'$(UsePCH)'=='true'">
+      <PrecompiledHeader>Create</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="TileElements.cpp" />
+    <ClCompile Include="TileElementsView.cpp" />
+    <ClCompile Include="WidgetStateTests.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="testdata\sprites\badManifest.json" />
+    <None Include="testdata\sprites\example.dat" />
+    <None Include="testdata\sprites\manifest.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\openrct2-deps\openrct2-deps.vcxproj">
+      <Project>{c453da76-44b3-4ac8-aaa2-2b64a76993a5}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\openrct2\libopenrct2.vcxproj">
+      <Project>{d24d94f6-2a74-480c-b512-629c306ce92f}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
+
