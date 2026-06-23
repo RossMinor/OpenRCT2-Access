@@ -355,6 +355,11 @@ namespace OpenRCT2::Ui::Windows
     WindowBase* TrackPlaceOpen(const struct TrackDesignFileRef* tdFileRef);
     void TrackPlaceClearProvisionalTemporarily();
     void TrackPlaceRestoreProvisional();
+    // Accessibility bridge: drive the placement window from the keyboard map cursor.
+    bool WindowTrackPlaceIsActive();
+    void WindowTrackPlaceRotate();
+    void WindowTrackPlaceAtTile(const CoordsXY& mapCoords);
+    void WindowTrackPlaceCancel();
 
     // TrackDesignManage
     WindowBase* TrackManageOpen(struct TrackDesignFileRef* tdFileRef);

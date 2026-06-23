@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/ride/Construction.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -245,6 +246,9 @@ namespace OpenRCT2::Ui::Windows
 
             _loadedTrackDesign = nullptr;
             _loadedTrackDesignIndex = kTrackDesignIndexUnloaded;
+
+            // Read out the first row so a screen-reader user knows the design list has opened.
+            announceFocusedDesign();
         }
 
         void reopenTrackManager()
@@ -326,6 +330,113 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
         }
+
+#pragma region Accessibility
+
+        // Number of selectable rows: the track designs, plus the leading "Build custom design"
+        // entry outside the track manager.
+        int32_t accessibleItemCount() const
+        {
+            int32_t count = static_cast<int32_t>(_filteredTrackIds.size());
+            if (gLegacyScene != LegacyScene::trackDesignsManager)
+                count++;
+            return count;
+        }
+
+        // Speaks the focused row: the "build custom design" entry, or a design's name followed
+        // by its excitement, intensity and nausea ratings, plus its position in the list.
+        void announceFocusedDesign()
+        {
+            const int32_t count = accessibleItemCount();
+            if (count <= 0 || selectedListItem < 0 || selectedListItem >= count)
+            {
+                Accessibility::ScreenReaderSpeak("No designs available");
+                return;
+            }
+
+            const bool customFirst = (gLegacyScene != LegacyScene::trackDesignsManager);
+            if (customFirst && selectedListItem == 0)
+            {
+                Accessibility::ScreenReaderSpeakItem("Build custom design", selectedListItem, count);
+                return;
+            }
+
+            const int32_t listIndex = customFirst ? selectedListItem - 1 : selectedListItem;
+            if (listIndex < 0 || static_cast<size_t>(listIndex) >= _filteredTrackIds.size())
+                return;
+            const uint16_t trackIndex = _filteredTrackIds[listIndex];
+
+            std::string text = _trackDesigns[trackIndex].name;
+
+            // Pull the ratings straight from the design file so the player can compare designs.
+            auto design = TrackDesignImport(_trackDesigns[trackIndex].path.c_str());
+            if (design != nullptr)
+            {
+                Formatter ft;
+                ft.Add<fixed32_2dp>(design->statistics.ratings.excitement);
+                text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_EXCITEMENT_RATING, ft.Data());
+
+                ft = Formatter();
+                ft.Add<fixed32_2dp>(design->statistics.ratings.intensity);
+                text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_INTENSITY_RATING, ft.Data());
+
+                ft = Formatter();
+                ft.Add<fixed32_2dp>(design->statistics.ratings.nausea);
+                text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_NAUSEA_RATING, ft.Data());
+            }
+
+            Accessibility::ScreenReaderSpeakItem(text, selectedListItem, count);
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            const int32_t count = accessibleItemCount();
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                case AccessibilityAction::moveLeft:
+                case AccessibilityAction::moveDown:
+                case AccessibilityAction::moveRight:
+                {
+                    if (count <= 0)
+                    {
+                        Accessibility::ScreenReaderSpeak("No designs available");
+                        return true;
+                    }
+                    const bool forward = (action == AccessibilityAction::moveDown
+                                          || action == AccessibilityAction::moveRight);
+                    if (selectedListItem < 0 || selectedListItem >= count)
+                        selectedListItem = forward ? 0 : count - 1;
+                    else if (forward)
+                        selectedListItem = (selectedListItem + 1) % count;
+                    else
+                        selectedListItem = (selectedListItem - 1 + count) % count;
+                    invalidate();
+                    announceFocusedDesign();
+                    return true;
+                }
+
+                case AccessibilityAction::activate:
+                    if (!_selectedItemIsBeingUpdated && selectedListItem >= 0 && selectedListItem < count)
+                        selectFromList(selectedListItem);
+                    return true;
+
+                case AccessibilityAction::cancel:
+                    close();
+                    if (gLegacyScene != LegacyScene::trackDesignsManager)
+                        ContextOpenWindow(WindowClass::constructRide);
+                    return true;
+
+                case AccessibilityAction::announce:
+                    announceFocusedDesign();
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+#pragma endregion
 
         ScreenSize onScrollGetSize(const int32_t scrollIndex) override
         {

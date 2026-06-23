@@ -62,10 +62,22 @@ over time.
 | M | Read your current cash |
 | E | Jump the cursor to the park entrance |
 | F | Report the direction the camera is facing |
-| Space | Build a flat footpath on the current tile |
+| Space | Build a footpath on the current tile (auto-slopes to follow the terrain) |
 | D | Remove the path on the current tile |
+| P | Cycle to the next footpath type (announces its name) |
+| Q | Toggle between building normal paths and queue paths |
+| X | Clear scenery (trees, bushes, etc.) over the brush area |
+| Page Up / Page Down | Raise / lower the land over the brush area (one step) |
+| B | Cycle the clear/terraform brush size (1x1, 3x3, 5x5, 7x7) |
 | `[` / `]` | Step back / forward through recent announcements |
 | Tab | Enter the top toolbar menu |
+| Ctrl + Space | Toggle between keyboard-cursor mode and free-mouse mode |
+
+By default the game is in **keyboard mode**: the arrow keys drive the tile cursor, the
+camera follows it, and the mouse is ignored by the camera. Pressing **Ctrl + Space**
+switches to **mouse mode**, where the arrow-key cursor is disabled and the mouse controls
+the game normally (scrolling, clicking). In both modes, moving the mouse reads aloud
+whatever tile it is hovering over.
 
 **In menus and windows:**
 

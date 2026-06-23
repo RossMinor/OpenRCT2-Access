@@ -63,12 +63,20 @@ namespace OpenRCT2::Ui::Accessibility
         if (windowMgr == nullptr)
             return nullptr;
 
+        // While placing a pre-built ride, the keyboard map cursor positions it, so no window
+        // should capture the arrow keys.
+        if (windowMgr->FindByClass(WindowClass::trackDesignPlace) != nullptr)
+            return nullptr;
+
         // Modal prompts sit in front and must take focus while open.
         if (auto* w = windowMgr->FindByClass(WindowClass::savePrompt))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::serverList))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::scenarioSelect))
+            return w;
+        // Pre-built ride (track design) selection list.
+        if (auto* w = windowMgr->FindByClass(WindowClass::trackDesignList))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::titleMenu))
             return w;

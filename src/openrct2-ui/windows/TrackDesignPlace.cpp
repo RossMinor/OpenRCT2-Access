@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/ViewportInteraction.h>
@@ -426,6 +427,100 @@ namespace OpenRCT2::Ui::Windows
         void init(std::unique_ptr<TrackDesign>&& trackDesign)
         {
             _trackDesign = std::move(trackDesign);
+
+            // Tell a screen-reader user the placement controls (the keyboard map cursor
+            // positions the ride; these keys rotate, build, and cancel).
+            Accessibility::ScreenReaderSpeak(
+                "Placing " + std::string(_trackDesign->gameStateData.name)
+                + ". Move the cursor to position the ride, R to rotate, Enter to build, Escape to cancel.");
+        }
+
+        // ---- Accessibility: driven from the keyboard map cursor via the free functions below.
+
+        void rotateForAccessibility()
+        {
+            clearProvisional();
+            _currentTrackPieceDirection = (_currentTrackPieceDirection + 1) & 3;
+            invalidate();
+            _placementLoc.SetNull();
+            DrawMiniPreview(*_trackDesign);
+
+            static constexpr const char* kDirections[] = { "North", "East", "South", "West" };
+            Accessibility::ScreenReaderSpeak(
+                std::string("Rotated, facing ") + kDirections[(_currentTrackPieceDirection + GetCurrentRotation()) & 3]);
+        }
+
+        void placeAtTile(const CoordsXY& mapCoords)
+        {
+            if (_trackDesign == nullptr)
+                return;
+
+            auto* surface = MapGetSurfaceElementAt(mapCoords);
+            if (surface == nullptr)
+            {
+                Accessibility::ScreenReaderSpeak("Cannot build here");
+                return;
+            }
+
+            clearProvisional();
+
+            int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
+            if (surface->GetWaterHeight() > 0)
+                baseZ = std::max<int32_t>(baseZ, surface->GetWaterHeight());
+
+            CoordsXYZ trackLoc = { mapCoords, baseZ };
+            auto res = findValidTrackDesignPlaceHeight(trackLoc, {});
+            if (res.error != GameActions::Status::ok)
+            {
+                // The error window is announced automatically by the screen reader layer.
+                Audio::Play3D(Audio::SoundId::error, trackLoc);
+                auto windowManager = GetWindowManager();
+                windowManager->ShowError(res.getErrorTitle(), res.getErrorMessage());
+                return;
+            }
+
+            _placingTrackDesign = true;
+            auto tdAction = GameActions::TrackDesignAction(
+                { trackLoc, _currentTrackPieceDirection }, *_trackDesign, !gTrackDesignSceneryToggle,
+                Config::Get().general.defaultInspectionInterval);
+            tdAction.SetCallback([&, trackLoc](const GameActions::GameAction*, const GameActions::Result* result) {
+                if (result->error != GameActions::Status::ok)
+                {
+                    Audio::Play3D(Audio::SoundId::error, result->position);
+                    _placingTrackDesign = false;
+                    return;
+                }
+
+                rideId = result->getData<RideId>();
+                auto getRide = GetRide(rideId);
+                if (getRide != nullptr)
+                {
+                    auto* windowMgr = GetWindowManager();
+                    windowMgr->CloseByClass(WindowClass::error);
+                    Audio::Play3D(Audio::SoundId::placeItem, trackLoc);
+                    _currentRideIndex = rideId;
+                    Accessibility::ScreenReaderSpeak("Ride placed");
+
+                    if (TrackDesignAreEntranceAndExitPlaced())
+                    {
+                        auto intent = Intent(WindowClass::ride);
+                        intent.PutExtra(INTENT_EXTRA_RIDE_ID, rideId.ToUnderlying());
+                        ContextOpenIntent(&intent);
+                        auto* wnd = windowMgr->FindByClass(WindowClass::trackDesignPlace);
+                        if (wnd != nullptr)
+                            windowMgr->Close(*wnd);
+                    }
+                    else
+                    {
+                        RideInitialiseConstructionWindow(*getRide);
+                        auto* wnd = windowMgr->FindByClass(WindowClass::rideConstruction);
+                        if (wnd != nullptr)
+                            wnd->onMouseUp(WC_RIDE_CONSTRUCTION__WIDX_ENTRANCE);
+                    }
+                }
+                _placingTrackDesign = false;
+            });
+            GameActions::Execute(&tdAction, getGameState());
         }
 
         void DrawMiniPreview(const TrackDesign& td)
@@ -815,5 +910,34 @@ namespace OpenRCT2::Ui::Windows
         {
             trackPlaceWnd->RestoreProvisional();
         }
+    }
+
+    static TrackDesignPlaceWindow* GetTrackPlaceWindow()
+    {
+        auto* windowMgr = GetWindowManager();
+        return static_cast<TrackDesignPlaceWindow*>(windowMgr->FindByClass(WindowClass::trackDesignPlace));
+    }
+
+    bool WindowTrackPlaceIsActive()
+    {
+        return GetTrackPlaceWindow() != nullptr;
+    }
+
+    void WindowTrackPlaceRotate()
+    {
+        if (auto* w = GetTrackPlaceWindow(); w != nullptr)
+            w->rotateForAccessibility();
+    }
+
+    void WindowTrackPlaceAtTile(const CoordsXY& mapCoords)
+    {
+        if (auto* w = GetTrackPlaceWindow(); w != nullptr)
+            w->placeAtTile(mapCoords);
+    }
+
+    void WindowTrackPlaceCancel()
+    {
+        if (auto* w = GetTrackPlaceWindow(); w != nullptr)
+            w->close();
     }
 } // namespace OpenRCT2::Ui::Windows

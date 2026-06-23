@@ -286,6 +286,9 @@ namespace OpenRCT2::Ui::Windows
         int32_t _accessibilityIndex = -1; // focus position within the accessible toolbar items
         bool _accessibilityDropdownOpen = false; // navigating an open dropdown sub-menu
         WidgetIndex _accessibilityDropdownParent = 0; // toolbar button that opened the dropdown
+        // Set while the keyboard accessibility path drives onMouseDown/onMouseUp synthetically,
+        // so those handlers don't also announce (the keyboard path does its own announcing).
+        bool _suppressClickAnnounce = false;
         // Reopen the File menu on the next frame after an in-place action, so any dialog the
         // action opens (possibly deferred to next tick) is reliably detected first.
         bool _pendingFileMenuReopen = false;
@@ -916,6 +919,16 @@ namespace OpenRCT2::Ui::Windows
                     initNetworkMenu(widget);
                     break;
             }
+
+            // Announce the toolbar item when a real mouse click presses it. Hovering stays
+            // silent (to avoid spam); only the click speaks. The keyboard navigation path
+            // sets _suppressClickAnnounce so it can do its own, richer announcements.
+            if (!_suppressClickAnnounce)
+            {
+                const char* name = getToolbarItemName(widgetIndex);
+                if (name[0] != '\0')
+                    Accessibility::ScreenReaderSpeak(name);
+            }
         }
 
         // Builds the list of toolbar buttons that are currently shown, in the toolbar's
@@ -1059,8 +1072,11 @@ namespace OpenRCT2::Ui::Windows
 
                         // onMouseDown opens dropdown buttons; onMouseUp handles toggles and
                         // window-opening buttons. Exactly one acts for any given button.
+                        // Suppress their click-announce: this keyboard path announces itself.
+                        _suppressClickAnnounce = true;
                         onMouseDown(widgetIndex);
                         onMouseUp(widgetIndex);
+                        _suppressClickAnnounce = false;
 
                         auto* windowMgr = GetWindowManager();
                         if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::dropdown) != nullptr)

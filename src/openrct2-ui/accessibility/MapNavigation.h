@@ -31,4 +31,13 @@ namespace OpenRCT2::Ui::Accessibility
     // If the in-game toolbar menu is active, re-speak its focused item. Used when a child
     // window closes and focus returns to the toolbar.
     void ReannounceToolbarItemIfMenuMode();
+
+    // Returns true when the map cursor owns the arrow keys (gameplay scene, not in menu
+    // mode). Use this to suppress competing view-scroll shortcuts on those keys.
+    bool IsMapCursorActive();
+
+    // Polled once per frame. When the map cursor is active and the player moves the mouse,
+    // moves the focus to the tile under the pointer and reads it. Keyboard-driven warps are
+    // ignored so the two input methods share a single focus without fighting.
+    void UpdateMapCursorFromMouse();
 } // namespace OpenRCT2::Ui::Accessibility

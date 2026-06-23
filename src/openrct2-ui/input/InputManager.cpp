@@ -207,6 +207,10 @@ void InputManager::process()
     processEvents();
     processHoldEvents();
     handleViewScrolling();
+
+    // Keep the accessible map cursor in sync with mouse movement (no-op unless the cursor
+    // is active and the mouse actually moved).
+    Accessibility::UpdateMapCursorFromMouse();
 }
 
 void InputManager::handleViewScrolling()
@@ -264,8 +268,10 @@ void InputManager::handleViewScrolling()
         InputScrollViewport(keyboardScroll);
     }
 
-    // Mouse edge scrolling
-    if (Config::Get().general.edgeScrolling)
+    // Mouse edge scrolling. Suppressed while the keyboard map cursor is active (keyboard mode)
+    // so the camera follows the keyboard cursor and never reacts to the mouse position. In
+    // mouse mode IsMapCursorActive() is false, so edge scrolling works normally.
+    if (Config::Get().general.edgeScrolling && !Accessibility::IsMapCursorActive())
     {
         if (InputGetState() != InputState::normal)
             return;
@@ -479,7 +485,7 @@ void InputManager::processHoldEvents()
     if (!hasTextInputFocus())
     {
         auto& shortcutManager = GetShortcutManager();
-        if (!shortcutManager.isPendingShortcutChange())
+        if (!shortcutManager.isPendingShortcutChange() && !Accessibility::IsMapCursorActive())
         {
             processViewScrollEvent(ShortcutId::kViewScrollUp, { 0, -1 });
             processViewScrollEvent(ShortcutId::kViewScrollDown, { 0, 1 });
