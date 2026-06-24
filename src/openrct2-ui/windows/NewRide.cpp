@@ -11,6 +11,7 @@
 #include <iterator>
 #include <limits>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/RidePlacement.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/ride/Construction.h>
@@ -603,12 +604,41 @@ namespace OpenRCT2::Ui::Windows
             return OpenRCT2::FormatStringID(rideNaming.Name);
         }
 
+        // Footprint size in tiles ("W by H") for rides with a fixed footprint - flat rides and
+        // shops/stalls, the ones placed whole. Computed from the bounding box of the ride's start
+        // piece. Returns empty for tracked rides, whose size depends on the track the player lays.
+        std::string getRideFootprintText(RideSelection item)
+        {
+            const auto& rtd = GetRideTypeDescriptor(item.Type);
+            if (!rtd.flags.has(RtdFlag::isFlatRide) && !rtd.flags.has(RtdFlag::isShopOrFacility))
+                return {};
+
+            const auto& ted = GetTrackElementDescriptor(rtd.StartTrackPiece);
+            int32_t minX = 0, maxX = 0, minY = 0, maxY = 0;
+            for (size_t i = 0; i < ted.sequenceData.numSequences; i++)
+            {
+                const auto& clearance = ted.sequenceData.sequences[i].clearance;
+                minX = std::min<int32_t>(minX, clearance.x);
+                maxX = std::max<int32_t>(maxX, clearance.x);
+                minY = std::min<int32_t>(minY, clearance.y);
+                maxY = std::max<int32_t>(maxY, clearance.y);
+            }
+            const int32_t w = (maxX - minX) / kCoordsXYStep + 1;
+            const int32_t h = (maxY - minY) / kCoordsXYStep + 1;
+            return std::to_string(w) + " by " + std::to_string(h);
+        }
+
         std::string getRideListItemText(RideSelection item)
         {
             auto& objMgr = GetContext()->GetObjectManager();
             const auto* rideObj = objMgr.GetLoadedObject<RideObject>(item.EntryIndex);
 
             std::string text = getRideName(item);
+
+            // Footprint dimensions, so the player knows the size of what they're about to build.
+            const std::string footprint = getRideFootprintText(item);
+            if (!footprint.empty())
+                text += ", " + footprint;
 
             // Cost, right after the name.
             if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
@@ -712,6 +742,32 @@ namespace OpenRCT2::Ui::Windows
             RideSelect();
         }
 
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            if (_currentTab >= RESEARCH_TAB)
+                return true;
+            const auto count = getRideListCount();
+            if (count == 0)
+                return true;
+            const char target = static_cast<char>(key); // SDLK_a..z are ASCII 'a'..'z'
+            const int32_t start = (_accessRideCursor < 0) ? 0 : _accessRideCursor;
+            for (int32_t i = 1; i <= count; i++)
+            {
+                const int32_t idx = (start + i) % count;
+                const std::string name = getRideName(_windowNewRideListItems[idx]);
+                char first = name.empty() ? '\0' : name[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessRideCursor = idx;
+                    announceRideItem();
+                    return true;
+                }
+            }
+            return true; // consume the key even when nothing matches
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // The Research tab is read-only info duplicated by the Research window; only the
@@ -771,6 +827,14 @@ namespace OpenRCT2::Ui::Windows
                 intent.PutExtra(INTENT_EXTRA_RIDE_TYPE, item.Type);
                 intent.PutExtra(INTENT_EXTRA_RIDE_ENTRY_INDEX, item.EntryIndex);
                 ContextOpenIntent(&intent);
+                return;
+            }
+
+            // Shops and stalls have no prebuilt designs and need no entrance/exit, so place them
+            // with the keyboard map cursor instead of the mouse-only construction window.
+            if (Accessibility::AccessibleRidePlacementSupported(item))
+            {
+                Accessibility::BeginAccessibleRidePlacement(item);
                 return;
             }
 

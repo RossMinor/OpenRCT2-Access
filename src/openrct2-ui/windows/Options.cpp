@@ -13,6 +13,7 @@
  */
 
 #include <cmath>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -51,6 +52,7 @@
 #include <openrct2/scenario/Scenario.h>
 #include <openrct2/scenes/title/TitleScene.h>
 #include <openrct2/scenes/title/TitleSequenceManager.h>
+#include <openrct2/ui/WindowManager.h>
 #include <openrct2/ui/UiContext.h>
 #include <openrct2/ui/WindowManager.h>
 
@@ -500,6 +502,10 @@ namespace OpenRCT2::Ui::Windows
         void onOpen() override
         {
             setPage(WINDOW_OPTIONS_PAGE_DISPLAY);
+            _accessIndex = 0;
+            Accessibility::ScreenReaderSpeak(
+                "Options. Up and down move through settings, left and right change the value or switch tabs, "
+                "Enter toggles or opens, Escape closes.");
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override
@@ -600,6 +606,448 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
         }
+
+#pragma region Accessibility
+
+        // Screen-reader navigation. _accessIndex 0 = the tab selector; 1..n = the page's controls.
+        // Up/Down move through them, Left/Right change tabs (on the selector) or adjust the focused
+        // control's value, Enter toggles/activates/opens.
+        int32_t _accessIndex = 0;
+        bool _accessDropdownOpen = false;
+        WidgetIndex _accessDropdownChevron = 0;
+
+        enum class AccessControlKind
+        {
+            skip,
+            checkbox,
+            dropdown,
+            slider,
+            spinner,
+            button,
+        };
+
+        AccessControlKind classifyAccessControl(WidgetIndex w) const
+        {
+            switch (widgets[w].type)
+            {
+                case WidgetType::checkbox:
+                    return AccessControlKind::checkbox;
+                case WidgetType::scroll:
+                    return AccessControlKind::slider;
+                case WidgetType::dropdownMenu:
+                    return AccessControlKind::dropdown;
+                case WidgetType::spinner:
+                    return AccessControlKind::spinner;
+                case WidgetType::button:
+                case WidgetType::flatBtn:
+                case WidgetType::imgBtn:
+                    if (widgets[w].text == STR_DROPDOWN_GLYPH)
+                        return AccessControlKind::skip; // dropdown chevron, paired with its value widget
+                    if (w >= WIDX_PAGE_START + 1 && widgets[w - 1].type == WidgetType::spinner)
+                        return AccessControlKind::skip; // spinner up arrow
+                    if (w >= WIDX_PAGE_START + 2 && widgets[w - 2].type == WidgetType::spinner)
+                        return AccessControlKind::skip; // spinner down arrow
+                    return AccessControlKind::button;
+                default:
+                    return AccessControlKind::skip; // labels, group boxes, backgrounds
+            }
+        }
+
+        std::vector<WidgetIndex> getAccessControls() const
+        {
+            std::vector<WidgetIndex> controls;
+            for (WidgetIndex w = WIDX_PAGE_START; w < static_cast<WidgetIndex>(widgets.size()); w++)
+            {
+                if (widgets[w].type == WidgetType::empty)
+                    continue;
+                if (classifyAccessControl(w) != AccessControlKind::skip)
+                    controls.push_back(w);
+            }
+            return controls;
+        }
+
+        // Index into the page's scroll widgets, since GetScrollPercentage needs the scroll slot.
+        int32_t accessSliderScrollIndex(WidgetIndex w) const
+        {
+            int32_t idx = 0;
+            for (WidgetIndex i = WIDX_PAGE_START; i < w; i++)
+                if (widgets[i].type == WidgetType::scroll)
+                    idx++;
+            return idx;
+        }
+
+        // Slider widget indices overlap across pages (each page reuses WIDX_PAGE_START), so the
+        // label has to be resolved per page.
+        const char* accessSliderLabel(WidgetIndex w) const
+        {
+            if (page == WINDOW_OPTIONS_PAGE_AUDIO)
+            {
+                if (w == WIDX_MASTER_VOLUME)
+                    return "Master volume";
+                if (w == WIDX_SOUND_VOLUME)
+                    return "Sound effect volume";
+                if (w == WIDX_MUSIC_VOLUME)
+                    return "Music volume";
+            }
+            else if (page == WINDOW_OPTIONS_PAGE_CONTROLS)
+            {
+                if (w == WIDX_GAMEPAD_DEADZONE)
+                    return "Gamepad deadzone";
+                if (w == WIDX_GAMEPAD_SENSITIVITY)
+                    return "Gamepad sensitivity";
+            }
+            return "Slider";
+        }
+
+        std::string accessControlLabel(WidgetIndex w, AccessControlKind kind) const
+        {
+            switch (kind)
+            {
+                case AccessControlKind::checkbox:
+                    return OpenRCT2::FormatStringID(widgets[w].text);
+                case AccessControlKind::slider:
+                    return accessSliderLabel(w);
+                case AccessControlKind::dropdown:
+                case AccessControlKind::spinner:
+                    if (w > WIDX_PAGE_START && widgets[w - 1].type == WidgetType::label)
+                        return OpenRCT2::FormatStringID(widgets[w - 1].text);
+                    return "Setting";
+                case AccessControlKind::button:
+                    if (widgets[w].text != kStringIdNone && widgets[w].text != kStringIdEmpty)
+                        return OpenRCT2::FormatStringID(widgets[w].text);
+                    if (w > WIDX_PAGE_START && widgets[w - 1].type == WidgetType::label)
+                        return OpenRCT2::FormatStringID(widgets[w - 1].text);
+                    return "Button";
+                default:
+                    return "";
+            }
+        }
+
+        std::string accessControlValue(WidgetIndex w, AccessControlKind kind)
+        {
+            switch (kind)
+            {
+                case AccessControlKind::checkbox:
+                    return widgetIsPressed(*this, w) ? "checked" : "unchecked";
+                case AccessControlKind::slider:
+                    return std::to_string(GetScrollPercentage(widgets[w], scrolls[accessSliderScrollIndex(w)]))
+                        + " percent";
+                case AccessControlKind::spinner:
+                    // The scale spinner draws its value in onDraw rather than storing it, so read
+                    // it from config (shown as a percentage).
+                    if (page == WINDOW_OPTIONS_PAGE_DISPLAY && w == WIDX_SCALE)
+                        return std::to_string(static_cast<int32_t>(Config::Get().general.windowScale * 100))
+                            + " percent";
+                    [[fallthrough]];
+                case AccessControlKind::dropdown:
+                {
+                    // The current value is either a StringId in .text or, for combo boxes that build
+                    // their caption at runtime (resolution, language, audio device, etc.), a literal
+                    // string set via setString and flagged textIsString.
+                    const auto& wd = widgets[w];
+                    if (wd.flags.has(WidgetFlag::textIsString))
+                        return wd.string != nullptr ? std::string(wd.string) : std::string();
+                    if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
+                        return OpenRCT2::FormatStringID(wd.text);
+                    return "";
+                }
+                case AccessControlKind::button:
+                    return widgetIsPressed(*this, w) ? "on" : "";
+                default:
+                    return "";
+            }
+        }
+
+        static const char* accessKindWord(AccessControlKind kind)
+        {
+            switch (kind)
+            {
+                case AccessControlKind::checkbox:
+                    return "checkbox";
+                case AccessControlKind::slider:
+                    return "slider";
+                case AccessControlKind::dropdown:
+                    return "combo box";
+                case AccessControlKind::spinner:
+                    return "slider";
+                case AccessControlKind::button:
+                    return "button";
+                default:
+                    return "";
+            }
+        }
+
+        static const char* getAccessPageName(int32_t p)
+        {
+            static const char* kNames[] = { "Display",   "Rendering", "Culture",       "Audio",
+                                            "Interface", "Controls",  "Miscellaneous", "Advanced" };
+            return (p >= 0 && p < WINDOW_OPTIONS_PAGE_COUNT) ? kNames[p] : "Options";
+        }
+
+        void announceAccessFocus()
+        {
+            if (_accessDropdownOpen)
+                return;
+            onPrepareDraw(); // refresh dropdown value text before reading it
+
+            if (_accessIndex <= 0)
+            {
+                Accessibility::ScreenReaderSpeakItem(
+                    std::string(getAccessPageName(page)) + " tab", page, WINDOW_OPTIONS_PAGE_COUNT);
+                return;
+            }
+            const auto controls = getAccessControls();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                return;
+            const WidgetIndex w = controls[ci];
+            const auto kind = classifyAccessControl(w);
+            std::string text = accessControlLabel(w, kind) + ", " + accessKindWord(kind);
+            const std::string value = accessControlValue(w, kind);
+            if (!value.empty())
+                text += ", " + value;
+            Accessibility::ScreenReaderSpeakItem(text, ci, static_cast<int32_t>(controls.size()));
+        }
+
+        void accessChangeTab(int32_t delta)
+        {
+            const int32_t p = (page + delta + WINDOW_OPTIONS_PAGE_COUNT) % WINDOW_OPTIONS_PAGE_COUNT;
+            setPage(p);
+            _accessIndex = 0;
+            announceAccessFocus();
+        }
+
+        void accessMove(int32_t delta)
+        {
+            const int32_t total = static_cast<int32_t>(getAccessControls().size()) + 1; // +1 for the tab selector
+            _accessIndex = (_accessIndex + delta + total) % total;
+            announceAccessFocus();
+        }
+
+        void accessCloseDropdown()
+        {
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->CloseByClass(WindowClass::dropdown);
+            _accessDropdownOpen = false;
+        }
+
+        void accessMoveDropdown(int32_t delta)
+        {
+            const int32_t n = gDropdown.numItems;
+            if (n <= 0)
+                return;
+            int32_t idx = std::max(0, gDropdown.highlightedIndex);
+            for (int32_t steps = 0; steps <= n; steps++)
+            {
+                idx = (idx + delta + n) % n;
+                if (!gDropdown.items[idx].isSeparator())
+                    break;
+                if (delta == 0)
+                    delta = 1; // first focus: step forward off a separator
+            }
+            if (gDropdown.items[idx].isSeparator())
+                return;
+            gDropdown.highlightedIndex = idx;
+
+            std::string text = gDropdown.items[idx].text;
+            if (gDropdown.items[idx].isChecked())
+                text += ", selected";
+            if (gDropdown.items[idx].isDisabled())
+                text += ", unavailable";
+            int32_t total = 0, pos = 0;
+            for (int32_t j = 0; j < gDropdown.numItems; j++)
+            {
+                if (gDropdown.items[j].isSeparator())
+                    continue;
+                if (j == idx)
+                    pos = total;
+                total++;
+            }
+            Accessibility::ScreenReaderSpeakItem(text, pos, total);
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+
+        void accessOpenDropdown(WidgetIndex chevronWidx)
+        {
+            onMouseDown(chevronWidx); // populates and shows gDropdown
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+                return;
+            _accessDropdownOpen = true;
+            _accessDropdownChevron = chevronWidx;
+            accessMoveDropdown(0); // announce the current item
+        }
+
+        void accessCommitDropdown()
+        {
+            const int32_t idx = gDropdown.highlightedIndex;
+            const WidgetIndex chevron = _accessDropdownChevron;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            accessCloseDropdown();
+            if (valid)
+                onDropdown(chevron, idx);
+            announceAccessFocus();
+        }
+
+        void accessActivate()
+        {
+            if (_accessIndex <= 0)
+                return; // tab selector uses Left/Right
+            const auto controls = getAccessControls();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                return;
+            const WidgetIndex w = controls[ci];
+            switch (classifyAccessControl(w))
+            {
+                case AccessControlKind::checkbox:
+                    onMouseUp(w); // toggle and save
+                    // Just the new state, no label/type repeated.
+                    Accessibility::ScreenReaderSpeak(widgetIsPressed(*this, w) ? "checked" : "unchecked");
+                    break;
+                case AccessControlKind::dropdown:
+                    accessOpenDropdown(static_cast<WidgetIndex>(w + 1)); // chevron follows the value widget
+                    break;
+                case AccessControlKind::button:
+                    onMouseUp(w);
+                    break;
+                default:
+                    break; // sliders/spinners use Left/Right
+            }
+        }
+
+        void accessAdjust(int32_t delta)
+        {
+            if (_accessIndex <= 0)
+            {
+                accessChangeTab(delta);
+                return;
+            }
+            const auto controls = getAccessControls();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                return;
+            const WidgetIndex w = controls[ci];
+            switch (classifyAccessControl(w))
+            {
+                case AccessControlKind::checkbox:
+                    // Checkboxes are toggled with Enter only; Left/Right just re-read them.
+                    announceAccessFocus();
+                    break;
+                case AccessControlKind::slider:
+                {
+                    const int32_t si = accessSliderScrollIndex(w);
+                    int32_t pct = GetScrollPercentage(widgets[w], scrolls[si]);
+                    pct = std::clamp(pct + delta * 10, 0, 100);
+                    initialiseScrollPosition(w, si, pct);
+                    invalidate();
+                    announceAccessFocus();
+                    break;
+                }
+                case AccessControlKind::spinner:
+                    onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (w + 1) : (w + 2))); // up : down
+                    announceAccessFocus();
+                    break;
+                case AccessControlKind::dropdown:
+                    accessOpenDropdown(static_cast<WidgetIndex>(w + 1));
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            if (_accessDropdownOpen)
+                return true; // ignore while a combo box is open
+            const auto controls = getAccessControls();
+            const int32_t count = static_cast<int32_t>(controls.size());
+            if (count == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t startCtrl = (_accessIndex >= 1) ? (_accessIndex - 1) : 0;
+            for (int32_t i = 1; i <= count; i++)
+            {
+                const int32_t ci = (startCtrl + i) % count;
+                const WidgetIndex w = controls[ci];
+                const std::string label = accessControlLabel(w, classifyAccessControl(w));
+                char first = label.empty() ? '\0' : label[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessIndex = ci + 1;
+                    announceAccessFocus();
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            // While a dropdown sub-menu is open, route everything to it.
+            if (_accessDropdownOpen)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveLeft:
+                        accessMoveDropdown(-1);
+                        return true;
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::moveRight:
+                        accessMoveDropdown(1);
+                        return true;
+                    case AccessibilityAction::activate:
+                        accessCommitDropdown();
+                        return true;
+                    case AccessibilityAction::cancel:
+                        accessCloseDropdown();
+                        announceAccessFocus();
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    accessMove(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    accessMove(1);
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    accessAdjust(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    accessAdjust(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    accessActivate();
+                    return true;
+                case AccessibilityAction::nextTab:
+                    accessChangeTab(1);
+                    return true;
+                case AccessibilityAction::prevTab:
+                    accessChangeTab(-1);
+                    return true;
+                case AccessibilityAction::announce:
+                    announceAccessFocus();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+#pragma endregion
 
         void onPrepareDraw() override
         {

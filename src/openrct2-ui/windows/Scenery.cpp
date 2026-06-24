@@ -9,6 +9,8 @@
 
 #include <deque>
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/SceneryPlacement.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -41,6 +43,7 @@
 #include <openrct2/drawing/Rectangle.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/management/Research.h>
 #include <openrct2/network/Network.h>
 #include <openrct2/object/BannerSceneryEntry.h>
@@ -222,6 +225,7 @@ namespace OpenRCT2::Ui::Windows
         int32_t _requiredWidth;
         int32_t _actualMinHeight;
         ScenerySelection _selectedScenery;
+        int32_t _accessObjectIndex = -1; // screen-reader cursor into the active tab's entries
         int16_t _hoverCounter;
         SceneryTabInfo _filteredSceneryTab;
 
@@ -1583,6 +1587,168 @@ namespace OpenRCT2::Ui::Windows
             money64 price = gSceneryPlaceCost != kMoney64Undefined ? gSceneryPlaceCost : kMoney64Undefined;
             return { name, price };
         }
+
+#pragma region Accessibility
+
+        static const char* getSceneryTypeWord(uint8_t sceneryType)
+        {
+            switch (sceneryType)
+            {
+                case SCENERY_TYPE_SMALL:
+                    return "scenery";
+                case SCENERY_TYPE_PATH_ITEM:
+                    return "path item";
+                case SCENERY_TYPE_WALL:
+                    return "wall";
+                case SCENERY_TYPE_LARGE:
+                    return "large scenery";
+                case SCENERY_TYPE_BANNER:
+                    return "banner";
+                default:
+                    return "object";
+            }
+        }
+
+        std::string getAccessTabName(size_t tabIndex) const
+        {
+            const auto& tab = _tabEntries[tabIndex];
+            if (tab.IsAll())
+                return "All scenery";
+            if (tab.IsMisc())
+                return "Miscellaneous";
+            if (const auto* group = tab.GetSceneryGroupEntry(); group != nullptr)
+                return OpenRCT2::FormatStringID(group->name);
+            return "Scenery group";
+        }
+
+        void announceAccessObject()
+        {
+            if (_activeTabIndex >= _tabEntries.size())
+                return;
+            const auto& entries = _tabEntries[_activeTabIndex].Entries;
+            const int32_t count = static_cast<int32_t>(entries.size());
+            if (_accessObjectIndex < 0 || _accessObjectIndex >= count)
+                return;
+
+            const auto sel = entries[_accessObjectIndex];
+            auto [nameId, price] = GetNameAndPrice(sel);
+            std::string text = OpenRCT2::FormatStringID(nameId);
+            text += std::string(", ") + getSceneryTypeWord(sel.SceneryType);
+            Accessibility::ScreenReaderSpeakItem(text, _accessObjectIndex, count);
+        }
+
+        void changeAccessTab(int32_t delta)
+        {
+            const int32_t n = static_cast<int32_t>(_tabEntries.size());
+            if (n == 0)
+                return;
+            const int32_t tab = (static_cast<int32_t>(_activeTabIndex) + delta + n) % n;
+            onMouseDown(static_cast<WidgetIndex>(WIDX_SCENERY_TAB_1 + tab)); // switches and refreshes
+            _accessObjectIndex = -1;
+
+            const auto& entries = _tabEntries[tab].Entries;
+            std::string text = getAccessTabName(tab) + ", "
+                + std::to_string(entries.size()) + (entries.size() == 1 ? " item" : " items");
+            Accessibility::ScreenReaderSpeakItem(text, tab, n);
+        }
+
+        void moveAccessObject(int32_t delta)
+        {
+            if (_activeTabIndex >= _tabEntries.size())
+                return;
+            const auto& entries = _tabEntries[_activeTabIndex].Entries;
+            const int32_t count = static_cast<int32_t>(entries.size());
+            if (count == 0)
+            {
+                Accessibility::ScreenReaderSpeak("No scenery in this group");
+                return;
+            }
+            if (_accessObjectIndex < 0)
+                _accessObjectIndex = (delta > 0) ? 0 : count - 1;
+            else
+                _accessObjectIndex = (_accessObjectIndex + delta + count) % count;
+
+            _selectedScenery = entries[_accessObjectIndex];
+            invalidate();
+            announceAccessObject();
+        }
+
+        void activateAccessObject()
+        {
+            if (_activeTabIndex >= _tabEntries.size())
+                return;
+            const auto& entries = _tabEntries[_activeTabIndex].Entries;
+            const int32_t count = static_cast<int32_t>(entries.size());
+            if (_accessObjectIndex < 0 || _accessObjectIndex >= count)
+                return;
+
+            const auto sel = entries[_accessObjectIndex];
+            const std::string name = OpenRCT2::FormatStringID(GetNameAndPrice(sel).first);
+            // The map cursor drives placement, so close this window (its mouse tool would compete).
+            close();
+            Accessibility::BeginAccessibleSceneryPlacement(sel, name);
+        }
+
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            if (_activeTabIndex >= _tabEntries.size())
+                return true;
+            const auto& entries = _tabEntries[_activeTabIndex].Entries;
+            const int32_t count = static_cast<int32_t>(entries.size());
+            if (count == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t start = (_accessObjectIndex < 0) ? 0 : _accessObjectIndex;
+            for (int32_t i = 1; i <= count; i++)
+            {
+                const int32_t idx = (start + i) % count;
+                const std::string name = OpenRCT2::FormatStringID(GetNameAndPrice(entries[idx]).first);
+                char first = name.empty() ? '\0' : name[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessObjectIndex = idx;
+                    _selectedScenery = entries[idx];
+                    invalidate();
+                    announceAccessObject();
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveLeft:
+                    changeAccessTab(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    changeAccessTab(1);
+                    return true;
+                case AccessibilityAction::moveUp:
+                    moveAccessObject(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    moveAccessObject(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    activateAccessObject();
+                    return true;
+                case AccessibilityAction::announce:
+                    announceAccessObject();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+#pragma endregion
 
         void DrawTabs(RenderTarget& rt, const ScreenCoordsXY& offset)
         {

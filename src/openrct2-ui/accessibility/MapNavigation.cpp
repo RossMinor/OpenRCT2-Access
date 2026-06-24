@@ -9,11 +9,16 @@
 
 #include "MapNavigation.h"
 
+#include "RidePlacement.h"
+#include "SceneryPlacement.h"
 #include "ScreenReader.h"
 
 #include <SDL.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <limits>
+#include <memory>
 #include <openrct2-ui/UiStringIds.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
@@ -23,6 +28,12 @@
 #include <openrct2/actions/terraform/ClearAction.h>
 #include <openrct2/actions/terraform/LandLowerAction.h>
 #include <openrct2/actions/terraform/LandRaiseAction.h>
+#include <openrct2/actions/terraform/WaterLowerAction.h>
+#include <openrct2/actions/terraform/WaterRaiseAction.h>
+#include <openrct2/audio/Audio.h>
+#include <openrct2/audio/AudioContext.h>
+#include <openrct2/audio/AudioMixer.h>
+#include <openrct2/core/MemoryStream.h>
 #include <openrct2/Date.h>
 #include <openrct2/Game.h>
 #include <openrct2/GameState.h>
@@ -99,6 +110,29 @@ namespace OpenRCT2::Ui::Accessibility
     // Edge length (in tiles) of the square brush used for clearing scenery and terraforming.
     // Cycles 1, 3, 5, 7. Larger brushes carve out flat pads for big rides in one keypress.
     static int32_t _brushSize = 1;
+
+    // Elevation tone: a short sine beep whose pitch rises with terrain height. It plays only
+    // when the cursor moves onto a tile at a different elevation, so scanning flat ground stays
+    // silent. The sine sample is synthesised once and cached; pitch is set per play via the
+    // mixer's playback rate.
+    static int32_t _lastElevation = -1; // surface->baseHeight/2 of the previous tile; -1 = none yet
+
+    // Read-only Z-axis probe. _scanHeight is a tile-element baseHeight; plain Page Up/Down step it
+    // to the next element above/below on the cursor's tile to report what is stacked there. Reset
+    // to the surface whenever the cursor moves to a new tile.
+    static int32_t _scanHeight = 0;
+
+    // Pitch range mapped across elevation. Capped at 1 kHz so the highest terrain never gets
+    // piercing; kElevToneRange is how many elevation steps span the full min..max sweep.
+    static constexpr double kElevToneMinFreq = 220.0;
+    static constexpr double kElevToneMaxFreq = 1000.0;
+    static constexpr int32_t kElevToneRange = 50;
+
+    // One synthesised sine source per (clamped) elevation step, generated lazily and cached for
+    // the session. Each is rendered at its exact target frequency and played at rate 1.0, which
+    // bypasses the mixer's resampler - a crude linear interpolator that adds a faint buzz to any
+    // pitch-shifted tone. Index = clamped elevation in [0, kElevToneRange].
+    static Audio::IAudioSource* _elevationToneSources[kElevToneRange + 1] = {};
 
     static bool IsTileOwned(const TileCoordsXY& tile)
     {
@@ -301,6 +335,7 @@ namespace OpenRCT2::Ui::Accessibility
     {
         _initialised = true;
         _lastTileDescription.clear();
+        _lastElevation = -1;
 
         const auto mapSize = getGameState().mapSize;
         _origin = TileCoordsXY{ 1, 1 };
@@ -336,6 +371,92 @@ namespace OpenRCT2::Ui::Accessibility
         WindowScrollToLocation(*w, loc);
     }
 
+    // Builds a mono 16-bit PCM WAV in memory holding a sine wave at the given frequency, with
+    // short fade in/out so the beep starts and ends without an audible click. Returns the raw
+    // bytes of a complete .wav file, ready to hand to CreateStreamFromWAV.
+    static std::vector<uint8_t> BuildSineWav(double freq, int32_t sampleRate, double seconds, double amplitude)
+    {
+        const int32_t numSamples = static_cast<int32_t>(sampleRate * seconds);
+        const uint16_t numChannels = 1;
+        const uint16_t bitsPerSample = 16;
+        const uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+        const uint32_t byteRate = static_cast<uint32_t>(sampleRate) * blockAlign;
+        const uint32_t dataSize = static_cast<uint32_t>(numSamples) * blockAlign;
+
+        std::vector<uint8_t> buf;
+        buf.reserve(44 + dataSize);
+        const auto put16 = [&](uint16_t v) {
+            buf.push_back(v & 0xFF);
+            buf.push_back((v >> 8) & 0xFF);
+        };
+        const auto put32 = [&](uint32_t v) {
+            buf.push_back(v & 0xFF);
+            buf.push_back((v >> 8) & 0xFF);
+            buf.push_back((v >> 16) & 0xFF);
+            buf.push_back((v >> 24) & 0xFF);
+        };
+        const auto putTag = [&](const char* s) {
+            for (int32_t i = 0; i < 4; i++)
+                buf.push_back(static_cast<uint8_t>(s[i]));
+        };
+
+        putTag("RIFF");
+        put32(36 + dataSize);
+        putTag("WAVE");
+        putTag("fmt ");
+        put32(16);  // PCM fmt chunk size
+        put16(1);   // audio format = PCM
+        put16(numChannels);
+        put32(static_cast<uint32_t>(sampleRate));
+        put32(byteRate);
+        put16(blockAlign);
+        put16(bitsPerSample);
+        putTag("data");
+        put32(dataSize);
+
+        constexpr double kPi = 3.14159265358979323846;
+        const double step = 2.0 * kPi * freq / sampleRate;
+        const int32_t attack = std::max(1, sampleRate / 100); // ~10 ms fade-in
+        const int32_t release = std::max(1, sampleRate / 50);  // ~20 ms fade-out
+        for (int32_t i = 0; i < numSamples; i++)
+        {
+            double env = 1.0;
+            if (i < attack)
+                env = static_cast<double>(i) / attack;
+            else if (i >= numSamples - release)
+                env = static_cast<double>(numSamples - i) / release;
+            const double sample = std::sin(step * i) * amplitude * env;
+            put16(static_cast<uint16_t>(static_cast<int16_t>(std::lround(sample * 32767.0))));
+        }
+        return buf;
+    }
+
+    // Plays the elevation beep at a pitch encoding the given elevation (surface baseHeight/2).
+    // The sine for each elevation step is synthesised at its exact target frequency on first use
+    // and cached, then played at rate 1.0 so the mixer never resamples it. Higher elevation ->
+    // higher pitch, clamped to the cap.
+    static void PlayElevationTone(int32_t elevation)
+    {
+        if (!Audio::IsAvailable())
+            return;
+
+        const int32_t clamped = std::clamp(elevation, 0, kElevToneRange);
+        Audio::IAudioSource*& source = _elevationToneSources[clamped];
+        if (source == nullptr)
+        {
+            const double frac = static_cast<double>(clamped) / kElevToneRange;
+            // Sweep pitch geometrically (log-frequency) so each elevation step sounds evenly spaced.
+            const double freq = kElevToneMinFreq * std::pow(kElevToneMaxFreq / kElevToneMinFreq, frac);
+            auto wav = BuildSineWav(freq, 44100, 0.12, 0.35);
+            auto stream = std::make_unique<MemoryStream>(wav);
+            source = GetContext()->GetAudioContext().CreateStreamFromWAV(std::move(stream));
+        }
+        if (source == nullptr)
+            return;
+
+        Audio::CreateAudioChannel(source, Audio::MixerGroup::Sound, false, Audio::kMixerVolumeMax, 0.5f, 1.0, true);
+    }
+
     static void Move(int32_t dx, int32_t dy, const char* directionName)
     {
         const auto mapSize = getGameState().mapSize;
@@ -350,6 +471,19 @@ namespace OpenRCT2::Ui::Accessibility
 
         _cursor = target;
         CentreViewportOnCursor();
+
+        // Elevation tone: beep only when the new tile's height differs from the last one, so
+        // moving across flat ground stays silent. Pitch rises with elevation.
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            const int32_t elevation = surface->baseHeight / 2;
+            if (elevation != _lastElevation)
+            {
+                PlayElevationTone(elevation);
+                _lastElevation = elevation;
+            }
+            _scanHeight = surface->baseHeight; // the Z-axis probe starts from ground on each move
+        }
 
         // Announce the tile only when its description changes from the previous tile.
         std::string description = GetTileDescription(_cursor);
@@ -629,6 +763,92 @@ namespace OpenRCT2::Ui::Accessibility
     }
 
     // Raises or lowers the whole brush area by one step, keeping tiles flat (full-tile mode).
+    // One-line description of a single tile element for the Z-axis scan: its kind, and a name
+    // for paths, rides and scenery. Mirrors the per-element classification in GetTileDescription.
+    static std::string DescribeScanElement(TileElement* el)
+    {
+        if (auto* track = el->asTrack(); track != nullptr)
+        {
+            auto* ride = GetRide(track->GetRideIndex());
+            return ride != nullptr ? std::string(ride->getName()) : std::string("Ride track");
+        }
+        if (auto* entrance = el->asEntrance(); entrance != nullptr)
+        {
+            switch (entrance->GetEntranceType())
+            {
+                case ENTRANCE_TYPE_PARK_ENTRANCE:
+                    return "Park entrance";
+                case ENTRANCE_TYPE_RIDE_ENTRANCE:
+                    return "Ride entrance";
+                case ENTRANCE_TYPE_RIDE_EXIT:
+                    return "Ride exit";
+            }
+            return "Entrance";
+        }
+        if (auto* p = el->asPath(); p != nullptr)
+        {
+            std::string name = p->HasLegacyPathEntry() ? GetObjectName(ObjectType::paths, p->GetLegacyPathEntryIndex())
+                                                        : GetObjectName(ObjectType::footpathSurface, p->GetSurfaceEntryIndex());
+            if (p->IsQueue())
+                return name.empty() ? "Queue line" : name + " queue";
+            return name.empty() ? "Path" : name;
+        }
+        if (auto* w = el->asWall(); w != nullptr)
+        {
+            std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
+            return name.empty() ? "Fence" : name;
+        }
+        if (auto* ss = el->asSmallScenery(); ss != nullptr)
+        {
+            std::string name = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
+            return name.empty() ? "Scenery" : name;
+        }
+        if (auto* ls = el->asLargeScenery(); ls != nullptr)
+        {
+            std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
+            return name.empty() ? "Scenery" : name;
+        }
+        if (auto* surface = el->asSurface(); surface != nullptr)
+            return surface->GetWaterHeight() > 0 ? "Water surface" : "Ground";
+        return "Object";
+    }
+
+    // Read-only vertical scan: steps the probe to the next tile element above (dir > 0) or below
+    // (dir < 0) the current scan height on the cursor's tile, reporting its type and height. Plays
+    // the elevation tone at that height so the player can feel where it sits.
+    static void ScanZLevel(int32_t dir)
+    {
+        TileElement* best = nullptr;
+        int32_t bestHeight = (dir > 0) ? std::numeric_limits<int32_t>::max() : std::numeric_limits<int32_t>::min();
+        for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
+        {
+            const int32_t h = el->baseHeight;
+            if (dir > 0 && h > _scanHeight && h < bestHeight)
+            {
+                bestHeight = h;
+                best = el;
+            }
+            else if (dir < 0 && h < _scanHeight && h > bestHeight)
+            {
+                bestHeight = h;
+                best = el;
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+
+        if (best == nullptr)
+        {
+            ScreenReaderSpeak(dir > 0 ? "Nothing above" : "Nothing below");
+            return;
+        }
+
+        _scanHeight = bestHeight;
+        PlayElevationTone(bestHeight / 2);
+        ScreenReaderSpeak(DescribeScanElement(best) + ", height " + std::to_string(bestHeight / 2));
+    }
+
     static void ChangeLandHeight(bool raise)
     {
         int32_t ax, ay, bx, by;
@@ -636,24 +856,92 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t centreX = (ax + bx) / 2 + 16;
         const int32_t centreY = (ay + by) / 2 + 16;
 
-        GameActions::Result result;
+        // Re-read the cursor tile AFTER the change applies so the player hears the new height
+        // (and any water<->land change) without moving off the tile and back, plus the elevation
+        // tone at the new height. The land action is applied a tick later, so this must run in the
+        // game-action callback - reading immediately after Execute would report the old height.
+        const auto announceAfterChange = [](const GameActions::GameAction*, const GameActions::Result* result) {
+            if (result->error != GameActions::Status::ok)
+                return; // failures are spoken automatically via the error window
+
+            // Report the new elevation (and tone) every press, but only name the tile type when
+            // it actually changes, e.g. water <-> land - not "Water"/"Empty" on every press.
+            const std::string tileType = GetTileDescription(_cursor);
+            const bool typeChanged = (tileType != _lastTileDescription);
+            _lastTileDescription = tileType; // keep the move-time change baseline in sync
+
+            std::string spoken;
+            if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+            {
+                const int32_t elevation = surface->baseHeight / 2;
+                PlayElevationTone(elevation);
+                _lastElevation = elevation;
+                _scanHeight = surface->baseHeight; // keep the Z-axis probe at the new ground level
+                spoken = "elevation " + std::to_string(elevation);
+            }
+            if (typeChanged)
+                spoken = spoken.empty() ? tileType : (tileType + ", " + spoken);
+            if (!spoken.empty())
+                ScreenReaderSpeak(spoken);
+        };
+
         if (raise)
         {
             auto action = GameActions::LandRaiseAction({ centreX, centreY }, { ax, ay, bx, by }, MapSelectType::full);
-            result = GameActions::Execute(&action, getGameState());
+            action.SetCallback(announceAfterChange);
+            GameActions::Execute(&action, getGameState());
         }
         else
         {
             auto action = GameActions::LandLowerAction({ centreX, centreY }, { ax, ay, bx, by }, MapSelectType::full);
-            result = GameActions::Execute(&action, getGameState());
+            action.SetCallback(announceAfterChange);
+            GameActions::Execute(&action, getGameState());
         }
+    }
 
-        if (result.error == GameActions::Status::ok)
+    static void ChangeWaterHeight(bool raise)
+    {
+        int32_t ax, ay, bx, by;
+        GetBrushBounds(ax, ay, bx, by);
+
+        // Like land, the water action applies a tick later, so report the new level from the
+        // game-action callback rather than immediately after Execute.
+        const auto announceAfterChange = [](const GameActions::GameAction*, const GameActions::Result* result) {
+            if (result->error != GameActions::Status::ok)
+                return; // failures are spoken automatically via the error window
+
+            auto* surface = MapGetSurfaceElementAt(_cursor);
+            if (surface == nullptr)
+                return;
+
+            const int32_t waterHeight = surface->GetWaterHeight();
+            if (waterHeight > 0)
+            {
+                // The water surface sits one elevation step above the land it covers (water
+                // replaces the tile rather than stacking on it), so drop one step to report the
+                // water on the same scale the land would read at that spot.
+                const int32_t level = std::max(0, waterHeight / kWaterHeightStep - 1);
+                PlayElevationTone(level);
+                ScreenReaderSpeak("Water level " + std::to_string(level));
+            }
+            else
+            {
+                ScreenReaderSpeak("No water");
+            }
+        };
+
+        if (raise)
         {
-            _lastTileDescription.clear();
-            ScreenReaderSpeak(raise ? "Land raised" : "Land lowered");
+            auto action = GameActions::WaterRaiseAction({ ax, ay, bx, by });
+            action.SetCallback(announceAfterChange);
+            GameActions::Execute(&action, getGameState());
         }
-        // Failures are spoken automatically via the error window.
+        else
+        {
+            auto action = GameActions::WaterLowerAction({ ax, ay, bx, by });
+            action.SetCallback(announceAfterChange);
+            GameActions::Execute(&action, getGameState());
+        }
     }
 
     // Cycles the clear/terraform brush through 1x1, 3x3, 5x5, 7x7 and announces the new size.
@@ -727,7 +1015,7 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(std::string("Facing ") + kDirections[rotation]);
     }
 
-    static bool HandleMapCursorKey(uint32_t key)
+    static bool HandleMapCursorKey(uint32_t key, uint32_t modifiers)
     {
         // During pre-built ride placement, dedicated keys rotate / build / cancel the design.
         // Arrow keys and the rest fall through so the map cursor still positions the ride.
@@ -749,6 +1037,86 @@ namespace OpenRCT2::Ui::Accessibility
                 }
                 case SDLK_ESCAPE:
                     Windows::WindowTrackPlaceCancel();
+                    return true;
+            }
+        }
+
+        // Shop/stall placement uses the same scheme: cursor positions the footprint, R rotates,
+        // Enter builds, Escape cancels. Arrows fall through to move the cursor.
+        if (IsAccessibleRidePlacementActive())
+        {
+            switch (key)
+            {
+                case SDLK_r:
+                    AccessibleRidePlacementRotate();
+                    return true;
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER:
+                {
+                    if (!_initialised)
+                        InitialiseCursor();
+                    const auto world = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
+                    AccessibleRidePlacementAtTile(CoordsXY{ world.x, world.y });
+                    return true;
+                }
+                case SDLK_ESCAPE:
+                    AccessibleRidePlacementCancel();
+                    return true;
+            }
+        }
+
+        // Scenery placement: cursor positions the object, R rotates (small/large), Enter places,
+        // Escape finishes. Shift+W/A/S/D picks the tile edge (walls/banners) and Shift+Q/E/Z/C picks
+        // the corner (small scenery), as the player sees the tile - top/bottom/left/right. Plain
+        // arrows fall through to move the cursor.
+        if (IsAccessibleSceneryPlacementActive())
+        {
+            if (modifiers & KMOD_SHIFT)
+            {
+                switch (key)
+                {
+                    case SDLK_w:
+                        AccessibleSceneryPlacementSetEdge(0, "Top edge");
+                        return true;
+                    case SDLK_d:
+                        AccessibleSceneryPlacementSetEdge(1, "Right edge");
+                        return true;
+                    case SDLK_s:
+                        AccessibleSceneryPlacementSetEdge(2, "Bottom edge");
+                        return true;
+                    case SDLK_a:
+                        AccessibleSceneryPlacementSetEdge(3, "Left edge");
+                        return true;
+                    case SDLK_q:
+                        AccessibleSceneryPlacementSetCorner(0, "Top left corner");
+                        return true;
+                    case SDLK_e:
+                        AccessibleSceneryPlacementSetCorner(1, "Top right corner");
+                        return true;
+                    case SDLK_c:
+                        AccessibleSceneryPlacementSetCorner(2, "Bottom right corner");
+                        return true;
+                    case SDLK_z:
+                        AccessibleSceneryPlacementSetCorner(3, "Bottom left corner");
+                        return true;
+                }
+            }
+            switch (key)
+            {
+                case SDLK_r:
+                    AccessibleSceneryPlacementRotate();
+                    return true;
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER:
+                {
+                    if (!_initialised)
+                        InitialiseCursor();
+                    const auto world = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
+                    AccessibleSceneryPlacementAtTile(CoordsXY{ world.x, world.y });
+                    return true;
+                }
+                case SDLK_ESCAPE:
+                    AccessibleSceneryPlacementCancel();
                     return true;
             }
         }
@@ -792,10 +1160,21 @@ namespace OpenRCT2::Ui::Accessibility
                 ClearSceneryAtCursor();
                 break;
             case SDLK_PAGEUP:
-                ChangeLandHeight(true);
+                // Shift raises land, Ctrl raises water, no modifier scans up the Z axis.
+                if (modifiers & KMOD_SHIFT)
+                    ChangeLandHeight(true);
+                else if (modifiers & KMOD_CTRL)
+                    ChangeWaterHeight(true);
+                else
+                    ScanZLevel(1);
                 break;
             case SDLK_PAGEDOWN:
-                ChangeLandHeight(false);
+                if (modifiers & KMOD_SHIFT)
+                    ChangeLandHeight(false);
+                else if (modifiers & KMOD_CTRL)
+                    ChangeWaterHeight(false);
+                else
+                    ScanZLevel(-1);
                 break;
             case SDLK_b:
                 CycleBrushSize();
@@ -874,7 +1253,14 @@ namespace OpenRCT2::Ui::Accessibility
             return false;
         }
 
-        const bool handled = _menuMode ? HandleMenuModeKey(key) : HandleMapCursorKey(key);
+        // Cursor-driven ride placement owns the keyboard; make sure a toolbar menu left open
+        // from selecting the ride doesn't intercept the arrows used to position it.
+        if (_menuMode
+            && (Windows::WindowTrackPlaceIsActive() || IsAccessibleRidePlacementActive()
+                || IsAccessibleSceneryPlacementActive()))
+            _menuMode = false;
+
+        const bool handled = _menuMode ? HandleMenuModeKey(key) : HandleMapCursorKey(key, e.modifiers);
         _lastHandledKey = handled ? key : 0;
         return handled;
     }

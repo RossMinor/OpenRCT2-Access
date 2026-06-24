@@ -49,6 +49,8 @@ namespace OpenRCT2
         activate,
         cancel,
         announce, // re-speak the currently focused item without moving
+        nextTab,  // Tab: move to the next sub-section/category (windows that have tabs)
+        prevTab,  // Shift+Tab: move to the previous sub-section/category
     };
 
     // TODO: move to Viewport.h?
@@ -244,6 +246,14 @@ namespace OpenRCT2
         // users. Returns true if the action was handled. Default does nothing so windows
         // without a custom implementation fall back to generic widget navigation.
         virtual bool onAccessibilityAction(AccessibilityAction)
+        {
+            return false;
+        }
+
+        // First-letter navigation: jump focus to the next item whose label starts with the given
+        // letter key (an SDLK_a..SDLK_z keycode). Windows with item lists opt in. Return true if
+        // the key was consumed.
+        virtual bool onAccessibilityTypeahead(uint32_t /*letterKey*/)
         {
             return false;
         }

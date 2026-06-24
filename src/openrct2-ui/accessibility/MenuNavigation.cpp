@@ -33,7 +33,7 @@ namespace OpenRCT2::Ui::Accessibility
     // and not reach the shortcut manager.
     static uint32_t _lastHandledKey = 0;
 
-    static std::optional<AccessibilityAction> MapKeyToAction(uint32_t key)
+    static std::optional<AccessibilityAction> MapKeyToAction(uint32_t key, uint32_t modifiers)
     {
         switch (key)
         {
@@ -45,6 +45,10 @@ namespace OpenRCT2::Ui::Accessibility
                 return AccessibilityAction::moveLeft;
             case SDLK_RIGHT:
                 return AccessibilityAction::moveRight;
+            // Tab moves to the next sub-section/category, Shift+Tab the previous. Only windows
+            // with tabs (e.g. Options) act on these; elsewhere they are ignored.
+            case SDLK_TAB:
+                return (modifiers & KMOD_SHIFT) ? AccessibilityAction::prevTab : AccessibilityAction::nextTab;
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
                 return AccessibilityAction::activate;
@@ -82,6 +86,10 @@ namespace OpenRCT2::Ui::Accessibility
             return w;
         // In-game navigable windows take focus while open.
         if (auto* w = windowMgr->FindByClass(WindowClass::constructRide))
+            return w;
+        if (auto* w = windowMgr->FindByClass(WindowClass::scenery))
+            return w;
+        if (auto* w = windowMgr->FindByClass(WindowClass::options))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::rideList))
             return w;
@@ -246,9 +254,31 @@ namespace OpenRCT2::Ui::Accessibility
         if (e.deviceKind != InputDeviceKind::keyboard)
             return false;
 
-        const auto action = MapKeyToAction(e.button);
+        const auto action = MapKeyToAction(e.button, e.modifiers);
         if (!action.has_value())
+        {
+            // First-letter navigation: route a printable letter to the focused window so it can
+            // jump to the next item starting with that letter.
+            if (e.button >= SDLK_a && e.button <= SDLK_z)
+            {
+                if (e.state != InputEventState::down)
+                {
+                    if (e.button == _lastHandledKey)
+                    {
+                        _lastHandledKey = 0;
+                        return true;
+                    }
+                    return false;
+                }
+                auto* w = GetActiveAccessibleWindow();
+                if (w == nullptr)
+                    return false;
+                const bool handled = w->onAccessibilityTypeahead(e.button);
+                _lastHandledKey = handled ? e.button : 0;
+                return handled;
+            }
             return false;
+        }
 
         // On key-up, swallow the key we consumed on key-down (even if the target window
         // has since closed, e.g. Escape closing a window).

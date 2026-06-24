@@ -156,8 +156,10 @@ namespace OpenRCT2::Ui::Windows
             initialiseListItems();
             initScrollWidgets();
 
+            // Leave the selection unset; the window that opens us calls onAccessibilityAction
+            // (moveDown) to focus the first scenario. Auto-focusing here too would advance twice
+            // and land on the second scenario.
             _accessibilityIndex = -1;
-            MoveAccessibilitySelection(1); // default to the first scenario
         }
 
         void onLanguageChange() override
@@ -181,6 +183,37 @@ namespace OpenRCT2::Ui::Windows
             {
                 SelectTab(widgetIndex - WIDX_TAB1);
             }
+        }
+
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            const int32_t n = static_cast<int32_t>(_listItems.size());
+            if (n == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
+            for (int32_t i = 1; i <= n; i++)
+            {
+                const int32_t idx = (start + i) % n;
+                if (_listItems[idx].type != ListItemType::Scenario)
+                    continue;
+                const std::string name = _listItems[idx].scenario.scenario->Name;
+                char first = name.empty() ? '\0' : name[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessibilityIndex = idx;
+                    _showLockedInformation = _listItems[idx].scenario.is_locked;
+                    _highlightedScenario = _listItems[idx].scenario.is_locked ? nullptr
+                                                                              : _listItems[idx].scenario.scenario;
+                    LoadPreview();
+                    invalidate();
+                    SpeakCurrentScenario();
+                    return true;
+                }
+            }
+            return true;
         }
 
         bool onAccessibilityAction(AccessibilityAction action) override

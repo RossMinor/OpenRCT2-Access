@@ -42,8 +42,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="accessibility\AccessUpdate.h" />
     <ClInclude Include="accessibility\MapNavigation.h" />
     <ClInclude Include="accessibility\MenuNavigation.h" />
+    <ClInclude Include="accessibility\RidePlacement.h" />
+    <ClInclude Include="accessibility\SceneryPlacement.h" />
     <ClInclude Include="accessibility\ScreenReader.h" />
     <ClInclude Include="audio\AudioContext.h" />
     <ClInclude Include="audio\AudioFormat.h" />
@@ -111,8 +114,11 @@
     <ClInclude Include="windows\Windows.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="accessibility\AccessUpdate.cpp" />
     <ClCompile Include="accessibility\MapNavigation.cpp" />
     <ClCompile Include="accessibility\MenuNavigation.cpp" />
+    <ClCompile Include="accessibility\RidePlacement.cpp" />
+    <ClCompile Include="accessibility\SceneryPlacement.cpp" />
     <ClCompile Include="accessibility\ScreenReader.cpp" />
     <ClCompile Include="audio\AudioChannel.cpp" />
     <ClCompile Include="audio\AudioContext.cpp" />

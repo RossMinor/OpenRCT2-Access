@@ -954,6 +954,29 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
+        // For the build-tool buttons (which open mouse-only windows), the spoken guidance that
+        // explains the map-cursor controls doing the same job. Returns nullptr for other buttons.
+        static const char* getCursorToolGuidance(WidgetIndex widgetIndex)
+        {
+            switch (widgetIndex)
+            {
+                case WIDX_LAND:
+                    return "Land. From the map cursor, hold Shift and press Page Up or Page Down to "
+                           "raise or lower the land.";
+                case WIDX_WATER:
+                    return "Water. From the map cursor, hold Control and press Page Up or Page Down to "
+                           "raise or lower the water.";
+                case WIDX_PATH:
+                    return "Paths. From the map cursor, press Space to build a path, D to remove it, "
+                           "P to change the path type, and Q to toggle a queue line.";
+                case WIDX_CLEAR_SCENERY:
+                    return "Clear scenery. From the map cursor, press X to clear scenery, and B to "
+                           "change the brush size.";
+                default:
+                    return nullptr;
+            }
+        }
+
         static const char* getToolbarItemName(WidgetIndex widgetIndex)
         {
             switch (widgetIndex)
@@ -965,7 +988,7 @@ namespace OpenRCT2::Ui::Windows
                 case WIDX_FILE_MENU:
                     return "File menu";
                 case WIDX_MUTE:
-                    return "Mute sound";
+                    return Audio::gGameSoundsOff ? "Unmute sound" : "Mute sound";
                 case WIDX_NETWORK:
                     return "Network";
                 case WIDX_CHAT:
@@ -1024,6 +1047,8 @@ namespace OpenRCT2::Ui::Windows
             {
                 case WIDX_CONSTRUCT_RIDE:
                     return WindowClass::constructRide;
+                case WIDX_SCENERY:
+                    return WindowClass::scenery;
                 case WIDX_RIDES:
                     return WindowClass::rideList;
                 case WIDX_PARK:
@@ -1066,6 +1091,16 @@ namespace OpenRCT2::Ui::Windows
                     if (_accessibilityIndex >= 0 && _accessibilityIndex < count)
                     {
                         const auto widgetIndex = items[_accessibilityIndex];
+
+                        // The build-tool buttons open mouse-only tool windows. Rather than dump a
+                        // keyboard user into an unusable window, explain the map-cursor controls
+                        // that do the same job.
+                        if (const char* guidance = getCursorToolGuidance(widgetIndex); guidance != nullptr)
+                        {
+                            Accessibility::ScreenReaderSpeak(guidance);
+                            return true;
+                        }
+
                         // The pause toggle is applied asynchronously, so capture the state
                         // before activating and announce the intended new state.
                         const bool wasPausedBefore = GameIsPaused();
@@ -1089,6 +1124,11 @@ namespace OpenRCT2::Ui::Windows
                         else if (widgetIndex == WIDX_PAUSE)
                         {
                             Accessibility::ScreenReaderSpeak(wasPausedBefore ? "Game running" : "Game paused");
+                        }
+                        else if (widgetIndex == WIDX_MUTE)
+                        {
+                            // ToggleAllSounds applies immediately, so report the resulting state.
+                            Accessibility::ScreenReaderSpeak(Audio::gGameSoundsOff ? "Sound muted" : "Sound on");
                         }
                         else
                         {

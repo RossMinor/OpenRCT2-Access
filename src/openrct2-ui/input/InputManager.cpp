@@ -12,6 +12,7 @@
 #include "ShortcutIds.h"
 
 #include <SDL.h>
+#include <openrct2-ui/accessibility/AccessUpdate.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <SDL_gamecontroller.h>
@@ -211,6 +212,9 @@ void InputManager::process()
     // Keep the accessible map cursor in sync with mouse movement (no-op unless the cursor
     // is active and the mouse actually moved).
     Accessibility::UpdateMapCursorFromMouse();
+
+    // Check for an accessibility-mod update shortly after launch and announce it once.
+    Accessibility::TickAccessUpdate();
 }
 
 void InputManager::handleViewScrolling()
@@ -401,6 +405,12 @@ void InputManager::process(const InputEvent& e)
     // priority; if no menu consumes the key, the in-game map cursor gets a chance.
     if (e.deviceKind == InputDeviceKind::keyboard)
     {
+        // F5 starts the accessibility-mod self-update when one was found at launch.
+        if (e.state == InputEventState::down && e.button == SDLK_F5 && Accessibility::IsAccessUpdateAvailable())
+        {
+            Accessibility::StartAccessUpdateInstall();
+            return;
+        }
         if (Accessibility::HandleMenuNavigationKey(e))
             return;
         if (Accessibility::HandleMapNavigationKey(e))
