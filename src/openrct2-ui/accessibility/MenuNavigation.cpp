@@ -51,7 +51,8 @@ namespace OpenRCT2::Ui::Accessibility
                 return (modifiers & KMOD_SHIFT) ? AccessibilityAction::prevTab : AccessibilityAction::nextTab;
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
-                return AccessibilityAction::activate;
+                // Shift+Enter is a secondary activate (e.g. follow an NPC instead of opening it).
+                return (modifiers & KMOD_SHIFT) ? AccessibilityAction::activateAlt : AccessibilityAction::activate;
             case SDLK_ESCAPE:
                 return AccessibilityAction::cancel;
             default:

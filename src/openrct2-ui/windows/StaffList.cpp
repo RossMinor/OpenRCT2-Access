@@ -10,6 +10,7 @@
 #include <limits>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -248,6 +249,32 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            const int32_t n = static_cast<int32_t>(_staffList.size());
+            if (n == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
+            for (int32_t i = 1; i <= n; i++)
+            {
+                const int32_t idx = (start + i) % n;
+                const std::string& name = _staffList[idx].Name;
+                char first = name.empty() ? '\0' : name[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessibilityIndex = idx;
+                    _highlightedIndex = static_cast<size_t>(idx);
+                    invalidate();
+                    announceAccessibilityStaff(idx);
+                    return true;
+                }
+            }
+            return true;
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             switch (action)
@@ -267,6 +294,9 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::activate:
                     activateAccessibilitySelection();
                     return true;
+                case AccessibilityAction::activateAlt:
+                    followAccessibilityStaff();
+                    return true;
                 case AccessibilityAction::cancel:
                     close();
                     Accessibility::ReannounceToolbarItemIfMenuMode();
@@ -274,6 +304,19 @@ namespace OpenRCT2::Ui::Windows
                 default:
                     return false;
             }
+        }
+
+        void followAccessibilityStaff()
+        {
+            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_staffList.size()))
+                return;
+
+            // Shift+Enter: lock the main camera onto this staff member and follow them until Escape.
+            // Close the list so we're cleanly in follow mode.
+            const auto id = _staffList[_accessibilityIndex].Id;
+            const auto name = _staffList[_accessibilityIndex].Name;
+            Accessibility::StartFollowingEntity(id, name);
+            close();
         }
 
         void announceAccessibilityStaff(int32_t index)

@@ -42,6 +42,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="accessibility\AccessFollow.h" />
     <ClInclude Include="accessibility\AccessUpdate.h" />
     <ClInclude Include="accessibility\MapNavigation.h" />
     <ClInclude Include="accessibility\MenuNavigation.h" />
@@ -114,6 +115,7 @@
     <ClInclude Include="windows\Windows.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="accessibility\AccessFollow.cpp" />
     <ClCompile Include="accessibility\AccessUpdate.cpp" />
     <ClCompile Include="accessibility\MapNavigation.cpp" />
     <ClCompile Include="accessibility\MenuNavigation.cpp" />

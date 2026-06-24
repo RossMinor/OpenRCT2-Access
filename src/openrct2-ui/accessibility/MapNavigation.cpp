@@ -371,6 +371,27 @@ namespace OpenRCT2::Ui::Accessibility
         WindowScrollToLocation(*w, loc);
     }
 
+    void FollowCursorTo(const TileCoordsXY& tile)
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        const auto mapSize = getGameState().mapSize;
+        if (tile.x < 1 || tile.y < 1 || tile.x > mapSize.x - 2 || tile.y > mapSize.y - 2)
+            return;
+
+        _cursor = tile;
+        CentreViewportOnCursor();
+
+        // Keep the cursor's own bookkeeping coherent so it behaves normally once following ends.
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            _lastElevation = surface->baseHeight / 2;
+            _scanHeight = surface->baseHeight;
+        }
+        _lastTileDescription = GetTileDescription(_cursor);
+    }
+
     // Builds a mono 16-bit PCM WAV in memory holding a sine wave at the given frequency, with
     // short fade in/out so the beep starts and ends without an audible click. Returns the raw
     // bytes of a complete .wav file, ready to hand to CreateStreamFromWAV.
@@ -556,6 +577,15 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak("Menu closed");
     }
 
+    void LeaveMenuMode()
+    {
+        if (!_menuMode)
+            return;
+        if (auto* toolbar = GetToolbar(); toolbar != nullptr)
+            toolbar->onAccessibilityAction(AccessibilityAction::cancel);
+        _menuMode = false;
+    }
+
     static bool HandleMenuModeKey(uint32_t key)
     {
         auto* toolbar = GetToolbar();
@@ -593,9 +623,11 @@ namespace OpenRCT2::Ui::Accessibility
             case SDLK_KP_ENTER:
                 toolbar->onAccessibilityAction(AccessibilityAction::activate);
                 return true;
-            case SDLK_c:
-                return true; // swallow; coordinates are a map-cursor command
             default:
+                // First-letter navigation: jump to the next toolbar item starting with this
+                // letter. Also swallows other letters so they don't leak to the map cursor.
+                if (key >= SDLK_a && key <= SDLK_z)
+                    return toolbar->onAccessibilityTypeahead(key);
                 return false;
         }
     }
@@ -1315,6 +1347,11 @@ namespace OpenRCT2::Ui::Accessibility
     bool IsMapCursorActive()
     {
         return gLegacyScene == LegacyScene::playing && !_menuMode && !_mouseMode;
+    }
+
+    std::string DescribeTile(const TileCoordsXY& tile)
+    {
+        return GetTileDescription(tile);
     }
 
     void UpdateMapCursorFromMouse()

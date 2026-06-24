@@ -1068,6 +1068,33 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            if (_accessibilityDropdownOpen)
+                return true; // not inside an open dropdown
+            const auto items = getAccessibleToolbarItems();
+            const int32_t count = static_cast<int32_t>(items.size());
+            if (count == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
+            for (int32_t i = 1; i <= count; i++)
+            {
+                const int32_t idx = (start + i) % count;
+                const char* name = getToolbarItemName(items[idx]);
+                char first = (name != nullptr && name[0] != '\0') ? name[0] : '\0';
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessibilityIndex = idx;
+                    Accessibility::ScreenReaderSpeakItem(getToolbarItemName(items[idx]), idx, count);
+                    return true;
+                }
+            }
+            return true;
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // While a dropdown sub-menu is open, route everything to it.

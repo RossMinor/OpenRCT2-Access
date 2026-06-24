@@ -958,31 +958,11 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        bool onAccessibilityTypeahead(uint32_t key) override
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
         {
-            if (_accessDropdownOpen)
-                return true; // ignore while a combo box is open
-            const auto controls = getAccessControls();
-            const int32_t count = static_cast<int32_t>(controls.size());
-            if (count == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t startCtrl = (_accessIndex >= 1) ? (_accessIndex - 1) : 0;
-            for (int32_t i = 1; i <= count; i++)
-            {
-                const int32_t ci = (startCtrl + i) % count;
-                const WidgetIndex w = controls[ci];
-                const std::string label = accessControlLabel(w, classifyAccessControl(w));
-                char first = label.empty() ? '\0' : label[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessIndex = ci + 1;
-                    announceAccessFocus();
-                    return true;
-                }
-            }
+            // First-letter navigation is a menu feature; the Options window is a settings dialog of
+            // combo boxes and sliders, so letters do nothing here (but are swallowed so they don't
+            // leak to the toolbar behind the window).
             return true;
         }
 

@@ -12,6 +12,7 @@
 #include "ShortcutIds.h"
 
 #include <SDL.h>
+#include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/AccessUpdate.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
@@ -215,6 +216,9 @@ void InputManager::process()
 
     // Check for an accessibility-mod update shortly after launch and announce it once.
     Accessibility::TickAccessUpdate();
+
+    // Notice when a followed NPC has despawned so the follow state doesn't stick.
+    Accessibility::TickFollowEntity();
 }
 
 void InputManager::handleViewScrolling()
@@ -409,6 +413,12 @@ void InputManager::process(const InputEvent& e)
         if (e.state == InputEventState::down && e.button == SDLK_F5 && Accessibility::IsAccessUpdateAvailable())
         {
             Accessibility::StartAccessUpdateInstall();
+            return;
+        }
+        // Escape stops following an NPC (takes priority over other Escape handling while active).
+        if (e.state == InputEventState::down && e.button == SDLK_ESCAPE && Accessibility::IsFollowingEntity())
+        {
+            Accessibility::StopFollowingEntity();
             return;
         }
         if (Accessibility::HandleMenuNavigationKey(e))

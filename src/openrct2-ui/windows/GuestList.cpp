@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -638,6 +639,32 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            const int32_t n = static_cast<int32_t>(_guestList.size());
+            if (n == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
+            for (int32_t i = 1; i <= n; i++)
+            {
+                const int32_t idx = (start + i) % n;
+                const std::string& name = _guestList[idx].Name;
+                char first = name.empty() ? '\0' : name[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessibilityIndex = idx;
+                    _highlightedIndex = static_cast<size_t>(idx);
+                    invalidate();
+                    Accessibility::ScreenReaderSpeakItem(_guestList[idx].Name, idx, n);
+                    return true;
+                }
+            }
+            return true;
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // The opening action just initialises and announces the first category.
@@ -668,6 +695,9 @@ namespace OpenRCT2::Ui::Windows
                     return true;
                 case AccessibilityAction::activate:
                     activateAccessibilityGuest();
+                    return true;
+                case AccessibilityAction::activateAlt:
+                    followAccessibilityGuest();
                     return true;
                 case AccessibilityAction::cancel:
                     close();
@@ -751,6 +781,19 @@ namespace OpenRCT2::Ui::Windows
 
             GuestOpen(guest);
             Accessibility::ScreenReaderSpeak(_guestList[_accessibilityIndex].Name);
+        }
+
+        void followAccessibilityGuest()
+        {
+            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_guestList.size()))
+                return;
+
+            // Shift+Enter: lock the main camera onto this guest and follow them until Escape. Close
+            // the list so we're cleanly in follow mode (and not competing for the screen reader).
+            const auto id = _guestList[_accessibilityIndex].Id;
+            const auto name = _guestList[_accessibilityIndex].Name;
+            Accessibility::StartFollowingEntity(id, name);
+            close();
         }
 
     private:

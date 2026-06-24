@@ -11,6 +11,7 @@
 
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2/Identifiers.h>
+#include <openrct2/world/Location.hpp>
 #include <string>
 
 namespace OpenRCT2::Ui::Accessibility
@@ -35,6 +36,19 @@ namespace OpenRCT2::Ui::Accessibility
     // Returns true when the map cursor owns the arrow keys (gameplay scene, not in menu
     // mode). Use this to suppress competing view-scroll shortcuts on those keys.
     bool IsMapCursorActive();
+
+    // The spoken description of what is on a given map tile - the same text the map cursor
+    // announces as it moves (ride name, path, water, scenery, empty land, etc.).
+    std::string DescribeTile(const TileCoordsXY& tile);
+
+    // Moves the keyboard map cursor to the given tile and centres the view, silently (no
+    // announcement). The follow feature calls this each time the watched NPC changes tile so the
+    // cursor - and therefore 'C' coordinates and the camera - tracks them.
+    void FollowCursorTo(const TileCoordsXY& tile);
+
+    // Leaves the in-game toolbar menu mode (if active) silently, handing control back to the map
+    // cursor. Used when something else takes over the keyboard, e.g. starting to follow an NPC.
+    void LeaveMenuMode();
 
     // Polled once per frame. When the map cursor is active and the player moves the mouse,
     // moves the focus to the tile under the pointer and reads it. Keyboard-driven warps are

@@ -47,6 +47,7 @@ namespace OpenRCT2
         moveLeft,
         moveRight,
         activate,
+        activateAlt, // Shift+Enter: a secondary activate (e.g. follow an NPC vs open its window)
         cancel,
         announce, // re-speak the currently focused item without moving
         nextTab,  // Tab: move to the next sub-section/category (windows that have tabs)

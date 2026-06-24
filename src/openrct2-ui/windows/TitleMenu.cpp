@@ -327,6 +327,33 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            if (_accessDropdownOpen)
+                return true; // not inside the open dropdown
+            const auto items = getMenuItems();
+            const int32_t count = static_cast<int32_t>(items.size());
+            if (count == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t start = (_accessIndex < 0) ? 0 : _accessIndex;
+            for (int32_t i = 1; i <= count; i++)
+            {
+                const int32_t idx = (start + i) % count;
+                const std::string name = getMenuItemName(items[idx]);
+                char first = name.empty() ? '\0' : name[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessIndex = idx;
+                    Accessibility::ScreenReaderSpeak(getMenuItemName(items[idx]));
+                    return true;
+                }
+            }
+            return true;
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             if (_accessDropdownOpen)

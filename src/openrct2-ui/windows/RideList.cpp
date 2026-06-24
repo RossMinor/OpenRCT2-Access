@@ -307,6 +307,34 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            const int32_t n = static_cast<int32_t>(_rideList.size());
+            if (n == 0)
+                return true;
+            const char target = static_cast<char>(key);
+            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
+            for (int32_t i = 1; i <= n; i++)
+            {
+                const int32_t idx = (start + i) % n;
+                if (!_rideList[idx].Visible)
+                    continue;
+                const std::string& name = _rideList[idx].Name;
+                char first = name.empty() ? '\0' : name[0];
+                if (first >= 'A' && first <= 'Z')
+                    first += 32;
+                if (first == target)
+                {
+                    _accessibilityIndex = idx;
+                    selectedListItem = idx;
+                    invalidate();
+                    announceAccessibilityRide(idx);
+                    return true;
+                }
+            }
+            return true;
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             switch (action)
