@@ -699,6 +699,20 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::activateAlt:
                     followAccessibilityGuest();
                     return true;
+                case AccessibilityAction::announce:
+                    if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_guestList.size()))
+                        Accessibility::ScreenReaderSpeakItem(
+                            _guestList[_accessibilityIndex].Name, _accessibilityIndex,
+                            static_cast<int32_t>(_guestList.size()));
+                    else if (_accessibilityCategory >= 0 && _accessibilityCategory < static_cast<int32_t>(_groups.size()))
+                    {
+                        std::string text = OpenRCT2::FormatStringIDLegacy(
+                            STR_STRINGID, _groups[_accessibilityCategory].Arguments.args);
+                        text += ", " + std::to_string(_groups[_accessibilityCategory].NumGuests) + " guests";
+                        Accessibility::ScreenReaderSpeakItem(
+                            text, _accessibilityCategory, static_cast<int32_t>(_groups.size()));
+                    }
+                    return true;
                 case AccessibilityAction::cancel:
                     close();
                     Accessibility::ReannounceToolbarItemIfMenuMode();
@@ -779,8 +793,9 @@ namespace OpenRCT2::Ui::Windows
             if (guest == nullptr)
                 return;
 
+            // Open the guest's info window; the menu navigator hands focus to it and announces its
+            // name and tab. The list stays open behind, so closing the info window returns here.
             GuestOpen(guest);
-            Accessibility::ScreenReaderSpeak(_guestList[_accessibilityIndex].Name);
         }
 
         void followAccessibilityGuest()

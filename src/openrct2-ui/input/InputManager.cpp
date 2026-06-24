@@ -219,6 +219,9 @@ void InputManager::process()
 
     // Notice when a followed NPC has despawned so the follow state doesn't stick.
     Accessibility::TickFollowEntity();
+
+    // Announce money spent/earned by player-initiated transactions (build, demolish, land, etc.).
+    Accessibility::TickMoneyAnnounce();
 }
 
 void InputManager::handleViewScrolling()

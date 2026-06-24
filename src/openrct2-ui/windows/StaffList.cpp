@@ -297,6 +297,10 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::activateAlt:
                     followAccessibilityStaff();
                     return true;
+                case AccessibilityAction::announce:
+                    if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_staffList.size()))
+                        announceAccessibilityStaff(_accessibilityIndex);
+                    return true;
                 case AccessibilityAction::cancel:
                     close();
                     Accessibility::ReannounceToolbarItemIfMenuMode();
@@ -385,8 +389,9 @@ namespace OpenRCT2::Ui::Windows
 
             auto intent = Intent(WindowClass::peep);
             intent.PutExtra(INTENT_EXTRA_PEEP, peep);
+            // Open the staff member's info window; the menu navigator hands focus to it and announces
+            // its name and tab. The list stays open behind, so closing the info window returns here.
             ContextOpenIntent(&intent);
-            Accessibility::ScreenReaderSpeak(_staffList[_accessibilityIndex].Name);
         }
 
         void onPrepareDraw() override

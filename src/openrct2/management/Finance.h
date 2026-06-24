@@ -42,6 +42,12 @@ extern const money64 kResearchCosts[RESEARCH_FUNDING_COUNT];
 bool FinanceCheckMoneyRequired(OpenRCT2::GameActions::CommandFlags flags);
 bool FinanceCheckAffordability(money64 cost, OpenRCT2::GameActions::CommandFlags flags);
 void FinancePayment(money64 amount, ExpenditureType type);
+
+// Accessibility: if a player-initiated transaction (building, demolishing, land, marketing) has
+// occurred since the last call, returns true and writes the net amount (positive = spent,
+// negative = earned), clearing the pending state. Used to announce money changes to the screen
+// reader without reading out every guest transaction.
+bool FinanceAccessConsumePending(money64& outAmount);
 void FinancePayWages();
 void FinancePayResearch();
 void FinancePayInterest();

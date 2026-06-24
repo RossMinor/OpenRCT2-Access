@@ -354,6 +354,13 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::activate:
                     activateAccessibilitySelection();
                     return true;
+                case AccessibilityAction::activateAlt:
+                    locateAccessibilitySelection();
+                    return true;
+                case AccessibilityAction::announce:
+                    if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_rideList.size()))
+                        announceAccessibilityRide(_accessibilityIndex);
+                    return true;
                 case AccessibilityAction::cancel:
                     close();
                     // Returning to the toolbar menu: re-announce the item we land on.
@@ -468,6 +475,24 @@ namespace OpenRCT2::Ui::Windows
         }
 
         void activateAccessibilitySelection()
+        {
+            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_rideList.size()))
+                return;
+            if (!_rideList[_accessibilityIndex].Visible)
+                return;
+
+            auto* ride = GetRide(_rideList[_accessibilityIndex].Id);
+            if (ride == nullptr)
+                return;
+
+            // Open the ride's management window (status, operating, prices, maintenance, etc.) and
+            // hand keyboard focus to it. Close the list first so focus is unambiguous. The menu
+            // navigator re-announces the newly focused window automatically.
+            close();
+            RideMainOpen(*ride);
+        }
+
+        void locateAccessibilitySelection()
         {
             if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_rideList.size()))
                 return;

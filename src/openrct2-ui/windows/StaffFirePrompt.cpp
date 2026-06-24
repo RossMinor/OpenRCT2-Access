@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Game.h>
@@ -18,6 +19,7 @@
 #include <openrct2/entity/EntityRegistry.h>
 #include <openrct2/entity/Staff.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/ui/WindowManager.h>
 
 namespace OpenRCT2::Ui::Windows
@@ -49,12 +51,51 @@ namespace OpenRCT2::Ui::Windows
         void setWindowNumber(WindowNumber windownumber)
         {
             number = windownumber;
+
+            // Announce the prompt (called after onOpen, once the staff member is known).
+            Peep* peep = getGameState().entities.GetEntity<Staff>(EntityId::FromUnderlying(number));
+            if (peep != nullptr)
+            {
+                Formatter ft;
+                peep->FormatNameTo(ft);
+                Accessibility::ScreenReaderSpeak(
+                    OpenRCT2::FormatStringIDLegacy(STR_FIRE_STAFF_ID, ft.Data())
+                    + ". Press Enter to fire, or Escape to cancel.");
+            }
         }
 
         void onOpen() override
         {
             setWidgets(_staffFireWidgets);
             WindowInitScrollWidgets(*this);
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true; // modal: swallow letters so they don't reach the map cursor
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::activate:
+                {
+                    auto staffFireAction = GameActions::StaffFireAction(EntityId::FromUnderlying(number));
+                    staffFireAction.SetCallback([](const GameActions::GameAction*, const GameActions::Result* result) {
+                        if (result->error == GameActions::Status::ok)
+                            Accessibility::ScreenReaderSpeak("Staff member fired");
+                    });
+                    GameActions::Execute(&staffFireAction, getGameState());
+                    close();
+                    return true;
+                }
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true; // modal: swallow arrows and everything else
+            }
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override

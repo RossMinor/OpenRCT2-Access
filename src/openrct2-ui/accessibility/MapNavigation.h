@@ -50,6 +50,11 @@ namespace OpenRCT2::Ui::Accessibility
     // cursor. Used when something else takes over the keyboard, e.g. starting to follow an NPC.
     void LeaveMenuMode();
 
+    // Polled each frame. Announces the cost/refund of player-initiated transactions (building,
+    // demolishing, buying/selling land, marketing) once they occur. Guest spending and recurring
+    // costs are not announced.
+    void TickMoneyAnnounce();
+
     // Polled once per frame. When the map cursor is active and the player moves the mouse,
     // moves the focus to the tile under the pointer and reads it. Keyboard-driven warps are
     // ignored so the two input methods share a single focus without fighting.

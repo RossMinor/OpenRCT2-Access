@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Game.h>
@@ -15,6 +16,8 @@
 #include <openrct2/actions/ride/RideDemolishAction.h>
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
+#include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/windows/Intent.h>
 #include <openrct2/world/Park.h>
@@ -49,12 +52,50 @@ namespace OpenRCT2::Ui::Windows
         {
             rideId = currentRide.id;
             _demolishRideCost = -RideGetRefundPrice(currentRide);
+
+            auto stringId = (getGameState().park.flags & PARK_FLAGS_NO_MONEY) ? STR_REFURBISH_RIDE_ID_NO_MONEY
+                                                                              : STR_REFURBISH_RIDE_ID_MONEY;
+            Formatter ft;
+            currentRide.formatNameTo(ft);
+            ft.Add<money64>(_demolishRideCost / 2);
+            Accessibility::ScreenReaderSpeak(
+                OpenRCT2::FormatStringIDLegacy(stringId, ft.Data()) + ". Press Enter to refurbish, or Escape to cancel.");
         }
 
         void onOpen() override
         {
             setWidgets(window_ride_refurbish_widgets);
             WindowInitScrollWidgets(*this);
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true; // modal: swallow letters so they don't reach the map cursor
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::activate:
+                {
+                    // Applies a tick later; confirm from the callback. Cost is reported by the
+                    // finance hook ("Spent ...").
+                    auto gameAction = GameActions::RideDemolishAction(rideId, GameActions::RideModifyType::renew);
+                    gameAction.SetCallback([](const GameActions::GameAction*, const GameActions::Result* result) {
+                        if (result->error == GameActions::Status::ok)
+                            Accessibility::ScreenReaderSpeak("Ride refurbished");
+                    });
+                    GameActions::Execute(&gameAction, getGameState());
+                    close();
+                    return true;
+                }
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true; // modal: swallow arrows and everything else
+            }
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override

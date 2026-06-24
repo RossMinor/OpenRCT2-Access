@@ -10,6 +10,7 @@
 #include "../interface/ViewportQuery.h"
 
 #include <array>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -388,6 +389,306 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
         }
+#pragma region Accessibility
+        // Screen-reader navigation: Left/Right (or Tab/Shift+Tab) switch tabs, Up/Down step through
+        // the page's items, Enter activates a button, Escape closes. Most pages are read-only data,
+        // each statistic its own item.
+        enum class GxKind
+        {
+            data,
+            button,
+        };
+        struct GxItem
+        {
+            std::string text;
+            GxKind kind = GxKind::data;
+            WidgetIndex widget = 0;
+        };
+
+        int32_t _accessIndex = 0;
+
+        static const char* gxPageName(int32_t p)
+        {
+            static const char* kNames[] = { "Overview", "Statistics", "Rides", "Finances",
+                                            "Thoughts", "Inventory",  "Debug" };
+            return (p >= 0 && p < WINDOW_GUEST_PAGE_COUNT) ? kNames[p] : "Guest";
+        }
+
+        std::string gxGuestName()
+        {
+            auto* peep = GetGuest();
+            if (peep == nullptr)
+                return {};
+            Formatter ft;
+            peep->FormatNameTo(ft);
+            return OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
+        }
+
+        std::vector<GxItem> buildGxItems()
+        {
+            std::vector<GxItem> items;
+            auto* peep = GetGuest();
+            if (peep == nullptr)
+                return items;
+
+            const auto data = [&](std::string t) {
+                if (!t.empty())
+                    items.push_back({ std::move(t), GxKind::data, 0 });
+            };
+            const auto button = [&](std::string label, WidgetIndex w) {
+                items.push_back({ std::move(label) + ", button", GxKind::button, w });
+            };
+            const auto pct = [&](const char* label, int32_t value) {
+                return std::string(label) + ", " + std::to_string(value) + " percent";
+            };
+
+            switch (page)
+            {
+                case WINDOW_GUEST_OVERVIEW:
+                {
+                    Formatter fa;
+                    peep->FormatActionTo(fa);
+                    data("Doing, " + OpenRCT2::FormatStringIDLegacy(STR_STRINGID, fa.Data()));
+                    button("Locate on map", WIDX_LOCATE);
+                    button("Rename guest", WIDX_RENAME);
+                    break;
+                }
+                case WINDOW_GUEST_STATS:
+                {
+                    data(pct("Happiness", NormalizeGuestStatValue(peep->happiness, kPeepMaxHappiness, 3)));
+                    data(pct(
+                        "Energy", NormalizeGuestStatValue(peep->Energy - kPeepMinEnergy, kPeepMaxEnergy - kPeepMinEnergy, 3)));
+                    data(pct("Hunger", 100 - NormalizeGuestStatValue(peep->hunger - 32, 158, 0)));
+                    data(pct("Thirst", 100 - NormalizeGuestStatValue(peep->thirst - 32, 158, 0)));
+                    data(pct("Nausea", NormalizeGuestStatValue(peep->nausea - 32, 223, 0)));
+                    data(pct("Toilet", NormalizeGuestStatValue(peep->toilet - 64, 178, 0)));
+                    int32_t guestEntryTime = peep->getParkEntryTime();
+                    if (guestEntryTime != -1)
+                    {
+                        int32_t timeInPark = (getGameState().currentTicks - guestEntryTime) >> 11;
+                        data(OpenRCT2::FormatStringID(STR_GUEST_STAT_TIME_IN_PARK, static_cast<uint16_t>(timeInPark & 0xFFFF)));
+                    }
+                    {
+                        Formatter ft;
+                        auto maxIntensity = peep->intensity.GetMaximum();
+                        StringId id = STR_GUEST_STAT_PREFERRED_INTESITY_BELOW;
+                        if (peep->intensity.GetMinimum() != 0)
+                        {
+                            ft.Add<uint16_t>(peep->intensity.GetMinimum());
+                            ft.Add<uint16_t>(maxIntensity);
+                            id = (maxIntensity == 15) ? STR_GUEST_STAT_PREFERRED_INTESITY_ABOVE
+                                                      : STR_GUEST_STAT_PREFERRED_INTESITY_BETWEEN;
+                        }
+                        else
+                        {
+                            ft.Add<uint16_t>(maxIntensity);
+                        }
+                        data("Preferred intensity, " + OpenRCT2::FormatStringIDLegacy(id, ft.Data()));
+                    }
+                    {
+                        static constexpr StringId kNausea[] = {
+                            STR_PEEP_STAT_NAUSEA_TOLERANCE_NONE,
+                            STR_PEEP_STAT_NAUSEA_TOLERANCE_LOW,
+                            STR_PEEP_STAT_NAUSEA_TOLERANCE_AVERAGE,
+                            STR_PEEP_STAT_NAUSEA_TOLERANCE_HIGH,
+                        };
+                        Formatter ft;
+                        ft.Add<StringId>(kNausea[EnumValue(peep->nauseaTolerance) & 0x3]);
+                        data(OpenRCT2::FormatStringIDLegacy(STR_GUEST_STAT_NAUSEA_TOLERANCE, ft.Data()));
+                    }
+                    break;
+                }
+                case WINDOW_GUEST_RIDES:
+                {
+                    data("Rides been on, " + std::to_string(peep->guestNumRides));
+                    {
+                        Formatter ft;
+                        auto* r = GetRide(peep->favouriteRide);
+                        if (r != nullptr)
+                            r->formatNameTo(ft);
+                        else
+                            ft.Add<StringId>(STR_PEEP_FAVOURITE_RIDE_NOT_AVAILABLE);
+                        data(OpenRCT2::FormatStringIDLegacy(STR_FAVOURITE_RIDE, ft.Data()));
+                    }
+                    for (auto riddenId : _riddenRides)
+                    {
+                        auto* r = GetRide(riddenId);
+                        if (r != nullptr)
+                            data(r->getName());
+                    }
+                    break;
+                }
+                case WINDOW_GUEST_FINANCE:
+                {
+                    data(OpenRCT2::FormatStringID(STR_GUEST_STAT_CASH_IN_POCKET, peep->cashInPocket));
+                    data(OpenRCT2::FormatStringID(STR_GUEST_STAT_CASH_SPENT, peep->cashSpent));
+                    data(OpenRCT2::FormatStringID(STR_GUEST_EXPENSES_ENTRANCE_FEE, peep->paidToEnter));
+                    {
+                        Formatter ft;
+                        ft.Add<money64>(peep->paidOnRides);
+                        ft.Add<uint16_t>(peep->guestNumRides);
+                        data(OpenRCT2::FormatStringIDLegacy(
+                            peep->guestNumRides != 1 ? STR_GUEST_EXPENSES_RIDE_PLURAL : STR_GUEST_EXPENSES_RIDE, ft.Data()));
+                    }
+                    {
+                        Formatter ft;
+                        ft.Add<money64>(peep->paidOnFood);
+                        ft.Add<uint16_t>(peep->amountOfFood);
+                        data(OpenRCT2::FormatStringIDLegacy(
+                            peep->amountOfFood != 1 ? STR_GUEST_EXPENSES_FOOD_PLURAL : STR_GUEST_EXPENSES_FOOD, ft.Data()));
+                    }
+                    {
+                        Formatter ft;
+                        ft.Add<money64>(peep->paidOnDrink);
+                        ft.Add<uint16_t>(peep->amountOfDrinks);
+                        data(OpenRCT2::FormatStringIDLegacy(
+                            peep->amountOfDrinks != 1 ? STR_GUEST_EXPENSES_DRINK_PLURAL : STR_GUEST_EXPENSES_DRINK,
+                            ft.Data()));
+                    }
+                    break;
+                }
+                case WINDOW_GUEST_THOUGHTS:
+                {
+                    for (const auto& thought : peep->thoughts)
+                    {
+                        if (thought.type == PeepThoughtType::none)
+                            break;
+                        if (thought.freshness == 0)
+                            continue;
+                        Formatter ft;
+                        PeepThoughtSetFormatArgs(&thought, ft);
+                        data(OpenRCT2::FormatStringIDLegacy(STR_BLACK_STRING, ft.Data()));
+                    }
+                    if (items.empty())
+                        data("No current thoughts");
+                    break;
+                }
+                case WINDOW_GUEST_INVENTORY:
+                {
+                    for (ShopItem item = ShopItem::balloon; item < ShopItem::count; item++)
+                    {
+                        if (!peep->hasItem(item))
+                            continue;
+                        auto [imageId, ft] = InventoryFormatItem(*peep, item);
+                        data(OpenRCT2::FormatStringIDLegacy(STR_BLACK_STRING, ft.Data()));
+                    }
+                    if (items.empty())
+                        data("Carrying nothing");
+                    break;
+                }
+                default:
+                    break;
+            }
+            return items;
+        }
+
+        void gxAnnounceTab()
+        {
+            int32_t total = 0, pos = 0;
+            for (int32_t p = 0; p < WINDOW_GUEST_PAGE_COUNT; p++)
+            {
+                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty || widgetIsDisabled(*this, WIDX_TAB_1 + p))
+                    continue;
+                if (p == page)
+                    pos = total;
+                total++;
+            }
+            std::string name = gxGuestName();
+            std::string prefix = name.empty() ? "" : (name + ", ");
+            Accessibility::ScreenReaderSpeakItem(prefix + gxPageName(page) + " tab", pos, total);
+        }
+
+        void gxAnnounceFocus()
+        {
+            onPrepareDraw();
+            if (_accessIndex <= 0)
+            {
+                gxAnnounceTab();
+                return;
+            }
+            const auto items = buildGxItems();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                return;
+            Accessibility::ScreenReaderSpeakItem(items[ci].text, ci, static_cast<int32_t>(items.size()));
+        }
+
+        void gxChangeTab(int32_t delta)
+        {
+            int32_t newPage = page;
+            for (int32_t i = 0; i < WINDOW_GUEST_PAGE_COUNT; i++)
+            {
+                newPage = (newPage + delta + WINDOW_GUEST_PAGE_COUNT) % WINDOW_GUEST_PAGE_COUNT;
+                if (widgets[WIDX_TAB_1 + newPage].type != WidgetType::empty && !widgetIsDisabled(*this, WIDX_TAB_1 + newPage))
+                    break;
+            }
+            setPage(newPage);
+            _accessIndex = 0;
+            gxAnnounceTab();
+        }
+
+        void gxMove(int32_t delta)
+        {
+            const int32_t total = static_cast<int32_t>(buildGxItems().size()) + 1;
+            _accessIndex = (_accessIndex + delta + total) % total;
+            gxAnnounceFocus();
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true; // data window: swallow letters so they don't leak to the toolbar
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    gxMove(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    gxMove(1);
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    if (_accessIndex <= 0)
+                        gxChangeTab(-1);
+                    else
+                        gxAnnounceFocus();
+                    return true;
+                case AccessibilityAction::moveRight:
+                    if (_accessIndex <= 0)
+                        gxChangeTab(1);
+                    else
+                        gxAnnounceFocus();
+                    return true;
+                case AccessibilityAction::activate:
+                {
+                    if (_accessIndex <= 0)
+                        return true;
+                    const auto items = buildGxItems();
+                    const int32_t ci = _accessIndex - 1;
+                    if (ci >= 0 && ci < static_cast<int32_t>(items.size()) && items[ci].kind == GxKind::button)
+                        onMouseUp(items[ci].widget);
+                    return true;
+                }
+                case AccessibilityAction::nextTab:
+                    gxChangeTab(1);
+                    return true;
+                case AccessibilityAction::prevTab:
+                    gxChangeTab(-1);
+                    return true;
+                case AccessibilityAction::announce:
+                    gxAnnounceFocus();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+#pragma endregion
+
         void onPrepareDraw() override
         {
             onPrepareDrawCommon();

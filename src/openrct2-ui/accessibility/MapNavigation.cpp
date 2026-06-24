@@ -46,6 +46,7 @@
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/localisation/Localisation.Date.h>
+#include <openrct2/management/Finance.h>
 #include <openrct2/object/FootpathEntry.h>
 #include <openrct2/object/FootpathSurfaceObject.h>
 #include <openrct2/object/Object.h>
@@ -530,6 +531,23 @@ namespace OpenRCT2::Ui::Accessibility
         const auto cash = getGameState().park.cash;
         const StringId fmt = cash < 0 ? STR_BOTTOM_TOOLBAR_CASH_NEGATIVE : STR_BOTTOM_TOOLBAR_CASH;
         ScreenReaderSpeak(OpenRCT2::FormatStringID(fmt, cash));
+    }
+
+    void TickMoneyAnnounce()
+    {
+        if (gLegacyScene != LegacyScene::playing)
+            return;
+
+        money64 amount;
+        if (!FinanceAccessConsumePending(amount) || amount == 0)
+            return;
+
+        // Positive = money spent, negative = money earned (e.g. a demolish refund or land sale).
+        const bool spent = amount > 0;
+        const money64 magnitude = spent ? amount : -amount;
+        std::string money = OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, magnitude);
+        // interrupt = false so this queues after any action confirmation (e.g. "Ride demolished").
+        ScreenReaderSpeak((spent ? "Spent " : "Earned ") + money, false);
     }
 
     static void AnnounceDateTime()

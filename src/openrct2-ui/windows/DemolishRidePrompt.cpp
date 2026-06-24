@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Game.h>
@@ -16,6 +17,7 @@
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/windows/Intent.h>
 #include <openrct2/world/Park.h>
@@ -50,12 +52,53 @@ namespace OpenRCT2::Ui::Windows
         {
             rideId = currentRide.id;
             _demolishRideCost = -RideGetRefundPrice(currentRide);
+
+            // Announce the prompt to the screen reader (SetRide runs after onOpen, so the ride
+            // details are available here).
+            auto stringId = (getGameState().park.flags & PARK_FLAGS_NO_MONEY) ? STR_DEMOLISH_RIDE_ID
+                                                                              : STR_DEMOLISH_RIDE_ID_MONEY;
+            Formatter ft;
+            currentRide.formatNameTo(ft);
+            ft.Add<money64>(_demolishRideCost);
+            Accessibility::ScreenReaderSpeak(
+                OpenRCT2::FormatStringIDLegacy(stringId, ft.Data()) + ". Press Enter to demolish, or Escape to cancel.");
         }
 
         void onOpen() override
         {
             setWidgets(window_ride_demolish_widgets);
             WindowInitScrollWidgets(*this);
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true; // modal: swallow letters so they don't reach the map cursor
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::activate:
+                {
+                    // The demolish applies a tick later, so confirm from the action callback. The
+                    // refund is reported separately by the finance hook ("Earned ...").
+                    auto gameAction = GameActions::RideDemolishAction(rideId, GameActions::RideModifyType::demolish);
+                    gameAction.SetCallback([](const GameActions::GameAction*, const GameActions::Result* result) {
+                        if (result->error == GameActions::Status::ok)
+                            Accessibility::ScreenReaderSpeak("Ride demolished");
+                    });
+                    GameActions::Execute(&gameAction, getGameState());
+                    close();
+                    return true;
+                }
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    // Modal prompt: swallow arrows and everything else so keys never reach the map.
+                    return true;
+            }
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override

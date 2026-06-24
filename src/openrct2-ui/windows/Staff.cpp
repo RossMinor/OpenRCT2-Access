@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -31,6 +32,7 @@
 #include <openrct2/entity/PatrolArea.h>
 #include <openrct2/entity/Staff.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/management/Finance.h>
 #include <openrct2/network/Network.h>
 #include <openrct2/object/ObjectManager.h>
@@ -212,6 +214,346 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
         }
+
+#pragma region Accessibility
+        // Screen-reader navigation, like the ride/guest windows: Left/Right (or Tab/Shift+Tab) switch
+        // tabs, Up/Down step through the page's items, Enter activates/toggles/opens, Escape closes.
+        enum class SxKind
+        {
+            data,
+            dropdown,
+            checkbox,
+            button,
+        };
+        struct SxItem
+        {
+            std::string text;
+            SxKind kind = SxKind::data;
+            WidgetIndex widget = 0;
+        };
+
+        int32_t _accessIndex = 0;
+        bool _accessDropdownOpen = false;
+        WidgetIndex _accessDropdownChevron = 0;
+
+        static const char* sxPageName(int32_t p)
+        {
+            static const char* kNames[] = { "Overview", "Options", "Statistics" };
+            return (p >= 0 && p < WINDOW_STAFF_PAGE_COUNT) ? kNames[p] : "Staff";
+        }
+
+        std::string sxWidgetText(WidgetIndex w)
+        {
+            const auto& wd = widgets[w];
+            if (wd.flags.has(WidgetFlag::textIsString))
+                return wd.string != nullptr ? std::string(wd.string) : std::string();
+            if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
+                return OpenRCT2::FormatStringID(wd.text);
+            return {};
+        }
+
+        std::string sxStaffName()
+        {
+            auto* staff = GetStaff();
+            if (staff == nullptr)
+                return {};
+            Formatter ft;
+            staff->FormatNameTo(ft);
+            return OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
+        }
+
+        std::vector<SxItem> buildSxItems()
+        {
+            std::vector<SxItem> items;
+            auto* staff = GetStaff();
+            if (staff == nullptr)
+                return items;
+
+            const auto data = [&](std::string t) {
+                if (!t.empty())
+                    items.push_back({ std::move(t), SxKind::data, 0 });
+            };
+
+            switch (page)
+            {
+                case WINDOW_STAFF_OVERVIEW:
+                {
+                    Formatter fa;
+                    staff->FormatActionTo(fa);
+                    data("Doing, " + OpenRCT2::FormatStringIDLegacy(STR_STRINGID, fa.Data()));
+                    items.push_back({ "Locate, button", SxKind::dropdown, WIDX_LOCATE });
+                    items.push_back({ "Set patrol area, button", SxKind::button, WIDX_PATROL });
+                    items.push_back({ "Rename, button", SxKind::button, WIDX_RENAME });
+                    items.push_back({ "Fire, button", SxKind::button, WIDX_FIRE });
+                    break;
+                }
+                case WINDOW_STAFF_OPTIONS:
+                {
+                    for (WidgetIndex w = WIDX_CHECKBOX_1; w <= WIDX_CHECKBOX_4; w++)
+                    {
+                        if (widgets[w].type != WidgetType::checkbox)
+                            continue;
+                        std::string label = sxWidgetText(w);
+                        items.push_back(
+                            { (label.empty() ? "Option" : label) + ", checkbox, "
+                                  + (widgetIsPressed(*this, w) ? "checked" : "unchecked"),
+                              SxKind::checkbox, w });
+                    }
+                    if (widgets[WIDX_COSTUME_BOX].type == WidgetType::dropdownMenu)
+                        items.push_back(
+                            { "Costume, combo box, " + sxWidgetText(WIDX_COSTUME_BOX), SxKind::dropdown, WIDX_COSTUME_BTN });
+                    break;
+                }
+                case WINDOW_STAFF_STATISTICS:
+                {
+                    if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
+                        data(OpenRCT2::FormatStringID(STR_STAFF_STAT_WAGES, GetStaffWage(staff->assignedStaffType)));
+                    data(OpenRCT2::FormatStringID(STR_STAFF_STAT_EMPLOYED_FOR, staff->getHireDate()));
+                    switch (staff->assignedStaffType)
+                    {
+                        case StaffType::handyman:
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_LAWNS_MOWN, staff->staffLawnsMown));
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_GARDENS_WATERED, staff->staffGardensWatered));
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_LITTER_SWEPT, staff->staffLitterSwept));
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_BINS_EMPTIED, staff->staffBinsEmptied));
+                            break;
+                        case StaffType::mechanic:
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_RIDES_INSPECTED, staff->staffRidesInspected));
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_RIDES_FIXED, staff->staffRidesFixed));
+                            break;
+                        case StaffType::security:
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_VANDALS_STOPPED, staff->staffVandalsStopped));
+                            break;
+                        case StaffType::entertainer:
+                            data(OpenRCT2::FormatStringID(STR_STAFF_STAT_GUESTS_ENTERTAINED, staff->staffGuestsEntertained));
+                            break;
+                        case StaffType::count:
+                            break;
+                    }
+                    break;
+                }
+            }
+            return items;
+        }
+
+        void sxAnnounceTab()
+        {
+            int32_t total = 0, pos = 0;
+            for (int32_t p = 0; p < WINDOW_STAFF_PAGE_COUNT; p++)
+            {
+                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty || widgetIsDisabled(*this, WIDX_TAB_1 + p))
+                    continue;
+                if (p == page)
+                    pos = total;
+                total++;
+            }
+            std::string name = sxStaffName();
+            std::string prefix = name.empty() ? "" : (name + ", ");
+            Accessibility::ScreenReaderSpeakItem(prefix + sxPageName(page) + " tab", pos, total);
+        }
+
+        void sxAnnounceFocus()
+        {
+            if (_accessDropdownOpen)
+                return;
+            onPrepareDraw();
+            if (_accessIndex <= 0)
+            {
+                sxAnnounceTab();
+                return;
+            }
+            const auto items = buildSxItems();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                return;
+            Accessibility::ScreenReaderSpeakItem(items[ci].text, ci, static_cast<int32_t>(items.size()));
+        }
+
+        void sxChangeTab(int32_t delta)
+        {
+            int32_t newPage = page;
+            for (int32_t i = 0; i < WINDOW_STAFF_PAGE_COUNT; i++)
+            {
+                newPage = (newPage + delta + WINDOW_STAFF_PAGE_COUNT) % WINDOW_STAFF_PAGE_COUNT;
+                if (widgets[WIDX_TAB_1 + newPage].type != WidgetType::empty && !widgetIsDisabled(*this, WIDX_TAB_1 + newPage))
+                    break;
+            }
+            setPage(newPage);
+            _accessIndex = 0;
+            sxAnnounceTab();
+        }
+
+        void sxMove(int32_t delta)
+        {
+            const int32_t total = static_cast<int32_t>(buildSxItems().size()) + 1;
+            _accessIndex = (_accessIndex + delta + total) % total;
+            sxAnnounceFocus();
+        }
+
+        void sxCloseDropdown()
+        {
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->CloseByClass(WindowClass::dropdown);
+            _accessDropdownOpen = false;
+        }
+
+        void sxMoveDropdown(int32_t delta)
+        {
+            const int32_t n = gDropdown.numItems;
+            if (n <= 0)
+                return;
+            int32_t idx = std::max(0, gDropdown.highlightedIndex);
+            for (int32_t steps = 0; steps <= n; steps++)
+            {
+                idx = (idx + delta + n) % n;
+                if (!gDropdown.items[idx].isSeparator())
+                    break;
+                if (delta == 0)
+                    delta = 1;
+            }
+            if (gDropdown.items[idx].isSeparator())
+                return;
+            gDropdown.highlightedIndex = idx;
+
+            const auto& item = gDropdown.items[idx];
+            std::string text = item.text;
+            if (text.empty() && item.tooltip != kStringIdNone && item.tooltip != kStringIdEmpty)
+                text = OpenRCT2::FormatStringID(item.tooltip);
+            if (item.isChecked() || (item.type == Dropdown::ItemType::colour && idx == gDropdown.defaultIndex))
+                text += ", selected";
+            if (item.isDisabled())
+                text += ", unavailable";
+            int32_t total = 0, pos = 0;
+            for (int32_t j = 0; j < gDropdown.numItems; j++)
+            {
+                if (gDropdown.items[j].isSeparator())
+                    continue;
+                if (j == idx)
+                    pos = total;
+                total++;
+            }
+            Accessibility::ScreenReaderSpeakItem(text, pos, total);
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+
+        void sxOpenDropdown(WidgetIndex chevron)
+        {
+            onMouseDown(chevron);
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+                return;
+            _accessDropdownOpen = true;
+            _accessDropdownChevron = chevron;
+            sxMoveDropdown(0);
+        }
+
+        void sxCommitDropdown()
+        {
+            const int32_t idx = gDropdown.highlightedIndex;
+            const WidgetIndex chevron = _accessDropdownChevron;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            sxCloseDropdown();
+            if (valid)
+                onDropdown(chevron, idx);
+            sxAnnounceFocus();
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true;
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            if (_accessDropdownOpen)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveLeft:
+                        sxMoveDropdown(-1);
+                        return true;
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::moveRight:
+                        sxMoveDropdown(1);
+                        return true;
+                    case AccessibilityAction::activate:
+                        sxCommitDropdown();
+                        return true;
+                    case AccessibilityAction::cancel:
+                        sxCloseDropdown();
+                        sxAnnounceFocus();
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    sxMove(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    sxMove(1);
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    if (_accessIndex <= 0)
+                        sxChangeTab(-1);
+                    else
+                        sxAnnounceFocus();
+                    return true;
+                case AccessibilityAction::moveRight:
+                    if (_accessIndex <= 0)
+                        sxChangeTab(1);
+                    else
+                        sxAnnounceFocus();
+                    return true;
+                case AccessibilityAction::activate:
+                {
+                    if (_accessIndex <= 0)
+                        return true;
+                    const auto items = buildSxItems();
+                    const int32_t ci = _accessIndex - 1;
+                    if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                        return true;
+                    const auto& it = items[ci];
+                    switch (it.kind)
+                    {
+                        case SxKind::checkbox:
+                            onMouseUp(it.widget);
+                            Accessibility::ScreenReaderSpeak(widgetIsPressed(*this, it.widget) ? "checked" : "unchecked");
+                            break;
+                        case SxKind::dropdown:
+                            sxOpenDropdown(it.widget);
+                            break;
+                        case SxKind::button:
+                            onMouseUp(it.widget);
+                            break;
+                        default:
+                            break;
+                    }
+                    return true;
+                }
+                case AccessibilityAction::nextTab:
+                    sxChangeTab(1);
+                    return true;
+                case AccessibilityAction::prevTab:
+                    sxChangeTab(-1);
+                    return true;
+                case AccessibilityAction::announce:
+                    sxAnnounceFocus();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+#pragma endregion
 
         void onPrepareDraw() override
         {

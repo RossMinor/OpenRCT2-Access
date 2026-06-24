@@ -89,6 +89,23 @@ bool FinanceCheckAffordability(money64 cost, CommandFlags flags)
  * @param amount (eax)
  * @param type passed via global var 0x0141F56C (RCT2_ADDRESS_NEXT_EXPENDITURE_TYPE), our type is that var/4.
  */
+// Accessibility: accumulates the cost/refund of player-initiated transactions (building,
+// demolishing, buying/selling land, marketing) so the UI layer can announce it to the screen
+// reader. Guest spending, running costs, wages, interest and research are deliberately excluded -
+// the player does not want every park transaction read out. Positive = spent, negative = earned.
+static money64 _accessPendingMoney = 0;
+static bool _accessMoneyPending = false;
+
+bool FinanceAccessConsumePending(money64& outAmount)
+{
+    if (!_accessMoneyPending)
+        return false;
+    outAmount = _accessPendingMoney;
+    _accessPendingMoney = 0;
+    _accessMoneyPending = false;
+    return true;
+}
+
 void FinancePayment(money64 amount, ExpenditureType type)
 {
     auto& park = getGameState().park;
@@ -99,6 +116,19 @@ void FinancePayment(money64 amount, ExpenditureType type)
     {
         // Cumulative amount of money spent this day
         park.currentExpenditure -= amount;
+    }
+
+    switch (type)
+    {
+        case ExpenditureType::rideConstruction:
+        case ExpenditureType::landPurchase:
+        case ExpenditureType::landscaping:
+        case ExpenditureType::marketing:
+            _accessPendingMoney += amount;
+            _accessMoneyPending = true;
+            break;
+        default:
+            break;
     }
 
     auto intent = Intent(INTENT_ACTION_UPDATE_CASH);

@@ -13,6 +13,8 @@
 #include <limits>
 #include <memory>
 #include <openrct2-ui/UiStringIds.h>
+#include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -1045,6 +1047,581 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
         }
+
+#pragma region Accessibility
+        // Screen-reader navigation, mirroring the Options window model: Up/Down move through the
+        // current page's items (data read-outs and interactive controls), Left/Right adjust the
+        // focused control or switch tabs when on the tab selector, Enter activates, Tab/Shift+Tab
+        // switch tabs, Escape closes. Data is read from the Ride struct (the source of truth);
+        // controls reuse the window's own onMouseDown/onMouseUp/onDropdown handlers.
+        enum class AxKind
+        {
+            data,
+            dropdown,
+            spinner,
+            checkbox,
+            button,
+        };
+        struct AxItem
+        {
+            std::string text;       // fully composed spoken text
+            AxKind kind = AxKind::data;
+            WidgetIndex widget = 0; // dropdown chevron / spinner value / checkbox / button
+        };
+
+        int32_t _accessIndex = 0; // 0 = tab selector; 1..n = page items
+        bool _accessDropdownOpen = false;
+        WidgetIndex _accessDropdownChevron = 0;
+
+        static const char* axPageName(int32_t p)
+        {
+            static const char* kNames[] = { "Main",   "Vehicle",      "Operating", "Maintenance", "Colour",
+                                            "Music",  "Measurements", "Graphs",    "Income",      "Customer" };
+            return (p >= 0 && p < WINDOW_RIDE_PAGE_COUNT) ? kNames[p] : "Ride";
+        }
+
+        static const char* axKindWord(AxKind k)
+        {
+            switch (k)
+            {
+                case AxKind::dropdown:
+                    return "combo box";
+                case AxKind::spinner:
+                    return "slider";
+                case AxKind::checkbox:
+                    return "checkbox";
+                case AxKind::button:
+                    return "button";
+                default:
+                    return "";
+            }
+        }
+
+        static std::string axMoney(money64 m)
+        {
+            if (m == 0)
+                return "free";
+            return OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, m);
+        }
+
+        // Current display text of a widget (a literal string for runtime captions, else its StringId).
+        std::string axWidgetText(WidgetIndex w)
+        {
+            const auto& wd = widgets[w];
+            if (wd.flags.has(WidgetFlag::textIsString))
+                return wd.string != nullptr ? std::string(wd.string) : std::string();
+            if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
+                return OpenRCT2::FormatStringID(wd.text);
+            return {};
+        }
+
+        static std::string axStatusWord(const Ride& ride)
+        {
+            switch (ride.status)
+            {
+                case RideStatus::closed:
+                    return "Closed";
+                case RideStatus::open:
+                    return "Open";
+                case RideStatus::testing:
+                    return "Testing";
+                case RideStatus::simulating:
+                    return "Simulating";
+                default:
+                    return "Unknown";
+            }
+        }
+
+        std::string axRating(StringId id, auto value)
+        {
+            Formatter ft;
+            ft.Add<uint32_t>(value);
+            ft.Add<StringId>(GetRatingName(value));
+            return OpenRCT2::FormatStringIDLegacy(id, ft.Data());
+        }
+
+        std::string axRatings(const Ride& ride)
+        {
+            if (!ride.flags.has(RideFlag::tested))
+                return "No test results yet";
+            if (!RideHasRatings(ride))
+                return "Ratings not yet available";
+            return axRating(STR_EXCITEMENT_RATING, ride.ratings.excitement) + ", "
+                + axRating(STR_INTENSITY_RATING, ride.ratings.intensity) + ", "
+                + axRating(STR_NAUSEA_RATING, ride.ratings.nausea);
+        }
+
+        std::vector<AxItem> buildAxItems()
+        {
+            std::vector<AxItem> items;
+            auto* ridePtr = GetRide(rideId);
+            if (ridePtr == nullptr)
+                return items;
+            auto& ride = *ridePtr;
+
+            const auto data = [&](std::string t) {
+                if (!t.empty())
+                    items.push_back({ std::move(t), AxKind::data, 0 });
+            };
+            const auto control = [&](std::string label, AxKind kind, WidgetIndex w, std::string value) {
+                std::string t = std::move(label) + ", " + axKindWord(kind);
+                if (!value.empty())
+                    t += ", " + value;
+                items.push_back({ std::move(t), kind, w });
+            };
+
+            switch (page)
+            {
+                case WINDOW_RIDE_PAGE_MAIN:
+                {
+                    Formatter ft;
+                    ride.formatStatusTo(ft);
+                    data("Status, " + OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data()));
+                    control("Operation", AxKind::dropdown, WIDX_OPEN, axStatusWord(ride));
+                    if (ride.flags.has(RideFlag::tested))
+                        data(axRatings(ride));
+                    control("Locate on map", AxKind::button, WIDX_LOCATE, "");
+                    if (!widgetIsDisabled(*this, WIDX_DEMOLISH))
+                        control("Demolish", AxKind::button, WIDX_DEMOLISH, "");
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_VEHICLE:
+                {
+                    if (widgets[WIDX_VEHICLE_TYPE].type == WidgetType::dropdownMenu)
+                        control("Vehicle type", AxKind::dropdown, WIDX_VEHICLE_TYPE_DROPDOWN, axWidgetText(WIDX_VEHICLE_TYPE));
+                    if (widgets[WIDX_VEHICLE_TRAINS].type == WidgetType::spinner)
+                        control("Number of trains", AxKind::spinner, WIDX_VEHICLE_TRAINS, std::to_string(ride.numTrains));
+                    if (widgets[WIDX_VEHICLE_CARS_PER_TRAIN].type == WidgetType::spinner)
+                        control(
+                            "Cars per train", AxKind::spinner, WIDX_VEHICLE_CARS_PER_TRAIN,
+                            std::to_string(ride.numCarsPerTrain));
+                    if (widgets[WIDX_VEHICLE_REVERSED_TRAINS_CHECKBOX].type == WidgetType::checkbox)
+                        control(
+                            "Reversed trains", AxKind::checkbox, WIDX_VEHICLE_REVERSED_TRAINS_CHECKBOX,
+                            widgetIsPressed(*this, WIDX_VEHICLE_REVERSED_TRAINS_CHECKBOX) ? "checked" : "unchecked");
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_OPERATING:
+                {
+                    control("Operating mode", AxKind::dropdown, WIDX_MODE_DROPDOWN, axWidgetText(WIDX_MODE));
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_MAINTENANCE:
+                {
+                    data("Reliability " + std::to_string(ride.reliabilityPercentage) + " percent");
+                    data("Down time " + std::to_string(ride.downtime) + " percent");
+                    control(
+                        "Inspection interval", AxKind::dropdown, WIDX_INSPECTION_INTERVAL_DROPDOWN,
+                        axWidgetText(WIDX_INSPECTION_INTERVAL));
+                    StringId lastId = ride.lastInspection <= 1 ? STR_TIME_SINCE_LAST_INSPECTION_MINUTE
+                        : ride.lastInspection <= 240          ? STR_TIME_SINCE_LAST_INSPECTION_MINUTES
+                                                              : STR_TIME_SINCE_LAST_INSPECTION_MORE_THAN_4_HOURS;
+                    data(OpenRCT2::FormatStringID(lastId, static_cast<uint16_t>(ride.lastInspection)));
+                    if (ride.breakdownReason != Breakdown::none)
+                    {
+                        StringId id = ride.flags.has(RideFlag::brokenDown) ? STR_CURRENT_BREAKDOWN : STR_LAST_BREAKDOWN;
+                        Formatter ft;
+                        ft.Add<StringId>(RideBreakdownReasonNames[EnumValue(ride.breakdownReason)]);
+                        data(OpenRCT2::FormatStringIDLegacy(id, ft.Data()));
+                    }
+                    control("Locate nearest mechanic", AxKind::button, WIDX_LOCATE_MECHANIC, "");
+                    if (widgets[WIDX_REFURBISH_RIDE].type != WidgetType::empty)
+                        control("Refurbish", AxKind::button, WIDX_REFURBISH_RIDE, "");
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_INCOME:
+                {
+                    if (widgets[WIDX_PRIMARY_PRICE].type == WidgetType::spinner)
+                    {
+                        std::string label = axWidgetText(WIDX_PRIMARY_PRICE_LABEL);
+                        control(label.empty() ? "Price" : label, AxKind::spinner, WIDX_PRIMARY_PRICE, axMoney(ride.price[0]));
+                    }
+                    if (widgets[WIDX_SECONDARY_PRICE].type == WidgetType::spinner)
+                    {
+                        std::string label = axWidgetText(WIDX_SECONDARY_PRICE_LABEL);
+                        control(
+                            label.empty() ? "Secondary price" : label, AxKind::spinner, WIDX_SECONDARY_PRICE,
+                            axMoney(ride.price[1]));
+                    }
+                    if (ride.incomePerHour != kMoney64Undefined)
+                        data("Income per hour, " + axMoney(ride.incomePerHour));
+                    if (ride.upkeepCost != kMoney64Undefined)
+                        data("Running cost per hour, " + axMoney(ride.upkeepCost * 16));
+                    if (ride.profit != kMoney64Undefined)
+                        data("Profit per hour, " + axMoney(ride.profit));
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_MEASUREMENTS:
+                {
+                    if (!ride.flags.has(RideFlag::tested))
+                    {
+                        data("No test results yet");
+                        break;
+                    }
+                    if (!RideHasRatings(ride))
+                    {
+                        data("Ratings not yet available");
+                        break;
+                    }
+                    // Each statistic is its own item so they can be reviewed one at a time.
+                    data(axRating(STR_EXCITEMENT_RATING, ride.ratings.excitement));
+                    data(axRating(STR_INTENSITY_RATING, ride.ratings.intensity));
+                    data(axRating(STR_NAUSEA_RATING, ride.ratings.nausea));
+                    if (!ride.flags.has(RideFlag::noRawStats))
+                    {
+                        const auto& rtd = ride.getRideTypeDescriptor();
+                        if (rtd.specialType == RtdSpecialType::miniGolf)
+                        {
+                            data(OpenRCT2::FormatStringID(STR_HOLES, static_cast<uint16_t>(ride.numHoles)));
+                        }
+                        else
+                        {
+                            data(OpenRCT2::FormatStringID(STR_MAX_SPEED, ToHumanReadableSpeed(ride.maxSpeed)));
+                            data(OpenRCT2::FormatStringID(STR_AVERAGE_SPEED, ToHumanReadableSpeed(ride.averageSpeed)));
+                        }
+                        auto length = ride.getStation(StationIndex::FromUnderlying(0)).SegmentLength >> 16;
+                        data(OpenRCT2::FormatStringID(STR_RIDE_LENGTH_ENTRY, static_cast<uint16_t>(length & 0xFFFF)));
+                        if (rtd.flags.has(RtdFlag::hasGForces))
+                        {
+                            data(OpenRCT2::FormatStringID(STR_MAX_POSITIVE_VERTICAL_G, ride.maxPositiveVerticalG));
+                            data(OpenRCT2::FormatStringID(
+                                STR_MAX_NEGATIVE_VERTICAL_G, static_cast<int32_t>(ride.maxNegativeVerticalG)));
+                            data(OpenRCT2::FormatStringID(STR_MAX_LATERAL_G, ride.maxLateralG));
+                        }
+                        if (rtd.flags.has(RtdFlag::hasDrops))
+                        {
+                            data(OpenRCT2::FormatStringID(STR_DROPS, static_cast<uint16_t>(ride.numDrops)));
+                            data(OpenRCT2::FormatStringID(STR_HIGHEST_DROP_HEIGHT, (ride.highestDropHeight * 3) / 4));
+                        }
+                        if (rtd.specialType != RtdSpecialType::miniGolf && ride.numInversions != 0)
+                            data(OpenRCT2::FormatStringID(STR_INVERSIONS, static_cast<uint16_t>(ride.numInversions)));
+                    }
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_CUSTOMER:
+                {
+                    if (ride.isRide())
+                        data(OpenRCT2::FormatStringID(STR_CUSTOMERS_ON_RIDE, static_cast<int16_t>(ride.numRiders)));
+                    data(OpenRCT2::FormatStringID(STR_CUSTOMERS_PER_HOUR, RideCustomersPerHour(ride)));
+                    if (ride.popularity != 255)
+                        data(OpenRCT2::FormatStringID(STR_POPULARITY_PERCENT, static_cast<int16_t>(ride.popularity * 4)));
+                    if (ride.satisfaction != 255)
+                        data(OpenRCT2::FormatStringID(STR_SATISFACTION_PERCENT, static_cast<int16_t>(ride.satisfaction * 5)));
+                    if (ride.isRide())
+                    {
+                        int32_t queueTime = ride.getMaxQueueTime();
+                        data(OpenRCT2::FormatStringID(
+                            queueTime == 1 ? STR_QUEUE_TIME_MINUTE : STR_QUEUE_TIME_MINUTES, queueTime));
+                    }
+                    data(OpenRCT2::FormatStringID(STR_TOTAL_CUSTOMERS, static_cast<uint32_t>(ride.totalCustomers)));
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_MUSIC:
+                {
+                    control(
+                        "Play music", AxKind::checkbox, WIDX_PLAY_MUSIC,
+                        widgetIsPressed(*this, WIDX_PLAY_MUSIC) ? "checked" : "unchecked");
+                    if (widgets[WIDX_MUSIC].type == WidgetType::dropdownMenu)
+                        control("Music style", AxKind::dropdown, WIDX_MUSIC_DROPDOWN, axWidgetText(WIDX_MUSIC));
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_COLOUR:
+                {
+                    // Colour pickers are colourBtn widgets that open a colour grid on click; treat them
+                    // as combo boxes whose chevron is the button itself. Colours are read by name.
+                    if (widgets[WIDX_TRACK_COLOUR_SCHEME].type == WidgetType::dropdownMenu)
+                        control(
+                            "Colour scheme", AxKind::dropdown, WIDX_TRACK_COLOUR_SCHEME_DROPDOWN,
+                            axWidgetText(WIDX_TRACK_COLOUR_SCHEME));
+                    if (widgets[WIDX_TRACK_MAIN_COLOUR].type == WidgetType::colourBtn)
+                        control("Main colour", AxKind::dropdown, WIDX_TRACK_MAIN_COLOUR, "");
+                    if (widgets[WIDX_TRACK_ADDITIONAL_COLOUR].type == WidgetType::colourBtn)
+                        control("Additional colour", AxKind::dropdown, WIDX_TRACK_ADDITIONAL_COLOUR, "");
+                    if (widgets[WIDX_TRACK_SUPPORT_COLOUR].type == WidgetType::colourBtn)
+                        control("Support colour", AxKind::dropdown, WIDX_TRACK_SUPPORT_COLOUR, "");
+                    if (widgets[WIDX_MAZE_STYLE].type == WidgetType::dropdownMenu)
+                        control("Maze style", AxKind::dropdown, WIDX_MAZE_STYLE_DROPDOWN, axWidgetText(WIDX_MAZE_STYLE));
+                    if (widgets[WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX].type == WidgetType::checkbox)
+                        control(
+                            "Random colour per item", AxKind::checkbox, WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX,
+                            widgetIsPressed(*this, WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX) ? "checked" : "unchecked");
+                    if (widgets[WIDX_ENTRANCE_STYLE].type == WidgetType::dropdownMenu)
+                        control(
+                            "Station entrance style", AxKind::dropdown, WIDX_ENTRANCE_STYLE_DROPDOWN,
+                            axWidgetText(WIDX_ENTRANCE_STYLE));
+                    if (widgets[WIDX_VEHICLE_COLOUR_SCHEME].type == WidgetType::dropdownMenu)
+                        control(
+                            "Vehicle colour scheme", AxKind::dropdown, WIDX_VEHICLE_COLOUR_SCHEME_DROPDOWN,
+                            axWidgetText(WIDX_VEHICLE_COLOUR_SCHEME));
+                    if (widgets[WIDX_VEHICLE_COLOUR_INDEX].type == WidgetType::dropdownMenu)
+                        control(
+                            "Vehicle to modify", AxKind::dropdown, WIDX_VEHICLE_COLOUR_INDEX_DROPDOWN,
+                            axWidgetText(WIDX_VEHICLE_COLOUR_INDEX));
+                    if (widgets[WIDX_VEHICLE_BODY_COLOUR].type == WidgetType::colourBtn)
+                        control("Vehicle body colour", AxKind::dropdown, WIDX_VEHICLE_BODY_COLOUR, "");
+                    if (widgets[WIDX_VEHICLE_TRIM_COLOUR].type == WidgetType::colourBtn)
+                        control("Vehicle trim colour", AxKind::dropdown, WIDX_VEHICLE_TRIM_COLOUR, "");
+                    if (widgets[WIDX_VEHICLE_TERTIARY_COLOUR].type == WidgetType::colourBtn)
+                        control("Vehicle tertiary colour", AxKind::dropdown, WIDX_VEHICLE_TERTIARY_COLOUR, "");
+                    if (widgets[WIDX_RANDOMISE_VEHICLE_COLOURS].type == WidgetType::button)
+                        control("Randomise vehicle colours", AxKind::button, WIDX_RANDOMISE_VEHICLE_COLOURS, "");
+                    break;
+                }
+                case WINDOW_RIDE_PAGE_GRAPHS:
+                    data("Graphs are visual and not adapted for screen readers");
+                    break;
+            }
+            return items;
+        }
+
+        void axAnnounceTab()
+        {
+            int32_t total = 0, pos = 0;
+            for (int32_t p = 0; p < WINDOW_RIDE_PAGE_COUNT; p++)
+            {
+                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty)
+                    continue;
+                if (p == page)
+                    pos = total;
+                total++;
+            }
+            Accessibility::ScreenReaderSpeakItem(std::string(axPageName(page)) + " tab", pos, total);
+        }
+
+        void axAnnounceFocus()
+        {
+            if (_accessDropdownOpen)
+                return;
+            onPrepareDraw(); // refresh per-page widget text/positions before reading them
+            if (_accessIndex <= 0)
+            {
+                axAnnounceTab();
+                return;
+            }
+            const auto items = buildAxItems();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                return;
+            Accessibility::ScreenReaderSpeakItem(items[ci].text, ci, static_cast<int32_t>(items.size()));
+        }
+
+        void axChangeTab(int32_t delta)
+        {
+            int32_t newPage = page;
+            for (int32_t i = 0; i < WINDOW_RIDE_PAGE_COUNT; i++)
+            {
+                newPage = (newPage + delta + WINDOW_RIDE_PAGE_COUNT) % WINDOW_RIDE_PAGE_COUNT;
+                if (widgets[WIDX_TAB_1 + newPage].type != WidgetType::empty)
+                    break;
+            }
+            setPage(newPage);
+            _accessIndex = 0;
+            axAnnounceTab();
+        }
+
+        void axMove(int32_t delta)
+        {
+            const int32_t total = static_cast<int32_t>(buildAxItems().size()) + 1; // +1 for the tab selector
+            _accessIndex = (_accessIndex + delta + total) % total;
+            axAnnounceFocus();
+        }
+
+        void axCloseDropdown()
+        {
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->CloseByClass(WindowClass::dropdown);
+            _accessDropdownOpen = false;
+        }
+
+        void axMoveDropdown(int32_t delta)
+        {
+            const int32_t n = gDropdown.numItems;
+            if (n <= 0)
+                return;
+            int32_t idx = std::max(0, gDropdown.highlightedIndex);
+            for (int32_t steps = 0; steps <= n; steps++)
+            {
+                idx = (idx + delta + n) % n;
+                if (!gDropdown.items[idx].isSeparator())
+                    break;
+                if (delta == 0)
+                    delta = 1; // first focus: step forward off a separator
+            }
+            if (gDropdown.items[idx].isSeparator())
+                return;
+            gDropdown.highlightedIndex = idx;
+
+            const auto& item = gDropdown.items[idx];
+            // Most items carry display text; colour swatches are image items whose name is in the
+            // tooltip, and the current colour is marked by gDropdown.defaultIndex (not isChecked).
+            std::string text = item.text;
+            if (text.empty() && item.tooltip != kStringIdNone && item.tooltip != kStringIdEmpty)
+                text = OpenRCT2::FormatStringID(item.tooltip);
+            const bool selected = item.isChecked()
+                || (item.type == Dropdown::ItemType::colour && idx == gDropdown.defaultIndex);
+            if (selected)
+                text += ", selected";
+            if (item.isDisabled())
+                text += ", unavailable";
+            int32_t total = 0, pos = 0;
+            for (int32_t j = 0; j < gDropdown.numItems; j++)
+            {
+                if (gDropdown.items[j].isSeparator())
+                    continue;
+                if (j == idx)
+                    pos = total;
+                total++;
+            }
+            Accessibility::ScreenReaderSpeakItem(text, pos, total);
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+
+        void axOpenDropdown(WidgetIndex chevron)
+        {
+            onMouseDown(chevron); // populates and shows gDropdown
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+                return;
+            _accessDropdownOpen = true;
+            _accessDropdownChevron = chevron;
+            axMoveDropdown(0); // announce the current item
+        }
+
+        void axCommitDropdown()
+        {
+            const int32_t idx = gDropdown.highlightedIndex;
+            const WidgetIndex chevron = _accessDropdownChevron;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            axCloseDropdown();
+            if (valid)
+                onDropdown(chevron, idx);
+            axAnnounceFocus();
+        }
+
+        void axAdjust(int32_t delta)
+        {
+            if (_accessIndex <= 0)
+            {
+                axChangeTab(delta);
+                return;
+            }
+            const auto items = buildAxItems();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                return;
+            const auto& it = items[ci];
+            switch (it.kind)
+            {
+                case AxKind::dropdown:
+                    axOpenDropdown(it.widget);
+                    break;
+                case AxKind::spinner:
+                    onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (it.widget + 1) : (it.widget + 2))); // up : down
+                    axAnnounceFocus();
+                    break;
+                default:
+                    axAnnounceFocus(); // checkboxes/buttons/data: re-read only
+                    break;
+            }
+        }
+
+        void axActivate()
+        {
+            if (_accessIndex <= 0)
+                return; // tab selector uses Left/Right
+            const auto items = buildAxItems();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                return;
+            const auto& it = items[ci];
+            switch (it.kind)
+            {
+                case AxKind::checkbox:
+                    onMouseUp(it.widget);
+                    Accessibility::ScreenReaderSpeak(widgetIsPressed(*this, it.widget) ? "checked" : "unchecked");
+                    break;
+                case AxKind::dropdown:
+                    axOpenDropdown(it.widget);
+                    break;
+                case AxKind::button:
+                    onMouseUp(it.widget); // locate works immediately; demolish/refurbish open a prompt
+                    break;
+                default:
+                    break; // sliders use Left/Right
+            }
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            // First-letter navigation is a menu feature; this is a data/settings window, so letters do
+            // nothing here (but are swallowed so they don't leak to the toolbar behind the window).
+            return true;
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            if (_accessDropdownOpen)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveLeft:
+                        axMoveDropdown(-1);
+                        return true;
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::moveRight:
+                        axMoveDropdown(1);
+                        return true;
+                    case AccessibilityAction::activate:
+                        axCommitDropdown();
+                        return true;
+                    case AccessibilityAction::cancel:
+                        axCloseDropdown();
+                        axAnnounceFocus();
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    axMove(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    axMove(1);
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    axAdjust(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    axAdjust(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    axActivate();
+                    return true;
+                case AccessibilityAction::nextTab:
+                    axChangeTab(1);
+                    return true;
+                case AccessibilityAction::prevTab:
+                    axChangeTab(-1);
+                    return true;
+                case AccessibilityAction::announce:
+                    axAnnounceFocus();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    Accessibility::ReannounceToolbarItemIfMenuMode();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+#pragma endregion
+
         void onTextInput(WidgetIndex widgetIndex, std::string_view text) override
         {
             switch (page)

@@ -76,6 +76,12 @@ namespace OpenRCT2::Ui::Accessibility
         // Modal prompts sit in front and must take focus while open.
         if (auto* w = windowMgr->FindByClass(WindowClass::savePrompt))
             return w;
+        // Demolish and refurbish ride confirmations both use this window class.
+        if (auto* w = windowMgr->FindByClass(WindowClass::demolishRidePrompt))
+            return w;
+        // Fire-staff confirmation.
+        if (auto* w = windowMgr->FindByClass(WindowClass::firePrompt))
+            return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::serverList))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::scenarioSelect))
@@ -87,6 +93,12 @@ namespace OpenRCT2::Ui::Accessibility
             return w;
         // In-game navigable windows take focus while open.
         if (auto* w = windowMgr->FindByClass(WindowClass::constructRide))
+            return w;
+        // An individual ride's management window (status, operating, prices, maintenance, etc.).
+        if (auto* w = windowMgr->FindByClass(WindowClass::ride))
+            return w;
+        // An individual guest's or staff member's info window (both use WindowClass::peep).
+        if (auto* w = windowMgr->FindByClass(WindowClass::peep))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::scenery))
             return w;
@@ -306,6 +318,15 @@ namespace OpenRCT2::Ui::Accessibility
         bool handled = w->onAccessibilityAction(*action);
         if (!handled && w->classification == WindowClass::titleMenu)
             handled = HandleGenericWidgetNav(*w, *action);
+
+        // If the action moved focus to a different accessible window (a child opened, or a child
+        // closed and we landed back on its parent), re-announce that window's current focus so the
+        // player always hears where they are - at any nesting depth.
+        if (handled)
+        {
+            if (auto* now = GetActiveAccessibleWindow(); now != nullptr && now != w)
+                now->onAccessibilityAction(AccessibilityAction::announce);
+        }
 
         _lastHandledKey = handled ? e.button : 0;
         return handled;
