@@ -227,6 +227,11 @@ namespace OpenRCT2::Ui::Windows
         u8string _loanSpinnerText{};
         ParkData& _parkData;
 
+        // Accessibility: loan-adjust sub-mode (entered with Enter on the Summary page) and the
+        // currently focused marketing campaign on the Marketing page.
+        bool _accessLoanMode = false;
+        int32_t _accessMarketingIndex = -1;
+
         void SetDisabledTabs()
         {
             setWidgetDisabled(WIDX_TAB_5, (_parkData.flags & PARK_FLAGS_FORBID_MARKETING_CAMPAIGN) != 0);
@@ -310,7 +315,8 @@ namespace OpenRCT2::Ui::Windows
             {
                 case WINDOW_FINANCES_PAGE_SUMMARY:
                     return "Overview: Cash " + cash(park.cash) + ", Loan " + cash(park.bankLoan) + ", Company value "
-                        + cash(park.companyValue) + ", Weekly profit " + cash(park.currentProfit);
+                        + cash(park.companyValue) + ", Weekly profit " + cash(park.currentProfit)
+                        + ", press Enter to adjust the loan";
                 case WINDOW_FINANCES_PAGE_FINANCIAL_GRAPH:
                     return "Cash " + cash(park.cash);
                 case WINDOW_FINANCES_PAGE_VALUE_GRAPH:
@@ -320,10 +326,11 @@ namespace OpenRCT2::Ui::Windows
                 case WINDOW_FINANCES_PAGE_MARKETING:
                 {
                     const auto count = park.marketingCampaigns.size();
+                    const std::string hint = ". Use up and down to choose a campaign to start";
                     if (count == 0)
-                        return "No active marketing campaigns";
+                        return "No active marketing campaigns" + hint;
                     return std::to_string(count)
-                        + (count == 1 ? " active marketing campaign" : " active marketing campaigns");
+                        + (count == 1 ? " active marketing campaign" : " active marketing campaigns") + hint;
                 }
                 case WINDOW_FINANCES_PAGE_RESEARCH:
                     return "Research funding, "
@@ -356,19 +363,143 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeakItem(getAccessibilityPageSummary(), pos, total);
         }
 
+        std::string accessLoanText()
+        {
+            return "Loan " + OpenRCT2::FormatStringID(STR_CURRENCY_FORMAT, getGameState().park.bankLoan);
+        }
+
+        void accessAdjustLoan(bool borrow)
+        {
+            auto& park = getGameState().park;
+            money64 newLoan;
+            if (borrow)
+            {
+                if (park.bankLoan >= park.maxBankLoan)
+                {
+                    Accessibility::ScreenReaderSpeak("Loan is at the maximum");
+                    return;
+                }
+                newLoan = std::min(park.maxBankLoan, park.bankLoan + 1000.00_GBP);
+            }
+            else
+            {
+                if (park.bankLoan == 0)
+                {
+                    Accessibility::ScreenReaderSpeak("Loan is already zero");
+                    return;
+                }
+                newLoan = std::max(0.00_GBP, park.bankLoan - 1000.00_GBP);
+            }
+            // Applies a tick later, so read the new loan from the callback.
+            auto action = GameActions::ParkSetLoanAction(newLoan);
+            action.SetCallback([](const GameActions::GameAction*, const GameActions::Result* result) {
+                if (result->error == GameActions::Status::ok)
+                    Accessibility::ScreenReaderSpeak(
+                        "Loan " + OpenRCT2::FormatStringID(STR_CURRENCY_FORMAT, getGameState().park.bankLoan));
+            });
+            GameActions::Execute(&action, getGameState());
+        }
+
+        std::string accessCampaignName(int32_t i)
+        {
+            const auto& wd = widgets[WIDX_CAMPAIGN_1 + i];
+            if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
+                return OpenRCT2::FormatStringID(wd.text);
+            return "Campaign";
+        }
+
+        void accessMoveMarketing(int32_t delta)
+        {
+            std::vector<int32_t> avail;
+            for (int32_t i = 0; i < 6; i++)
+                if (widgets[WIDX_CAMPAIGN_1 + i].type != WidgetType::empty)
+                    avail.push_back(i);
+            if (avail.empty())
+            {
+                Accessibility::ScreenReaderSpeak("No campaigns available to start");
+                return;
+            }
+            const int32_t n = static_cast<int32_t>(avail.size());
+            int32_t cur = -1;
+            for (int32_t k = 0; k < n; k++)
+                if (avail[k] == _accessMarketingIndex)
+                    cur = k;
+            if (cur < 0)
+                cur = (delta >= 0) ? 0 : n - 1;
+            else
+                cur = (cur + delta + n) % n;
+            _accessMarketingIndex = avail[cur];
+            Accessibility::ScreenReaderSpeakItem(accessCampaignName(_accessMarketingIndex) + ", press Enter to set up", cur, n);
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
+            // Loan-adjust sub-mode: Left repays, Right borrows, Enter/Escape exits.
+            if (_accessLoanMode)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveLeft:
+                        accessAdjustLoan(false);
+                        return true;
+                    case AccessibilityAction::moveRight:
+                        accessAdjustLoan(true);
+                        return true;
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::announce:
+                        Accessibility::ScreenReaderSpeak(accessLoanText());
+                        return true;
+                    case AccessibilityAction::activate:
+                    case AccessibilityAction::cancel:
+                        _accessLoanMode = false;
+                        Accessibility::ScreenReaderSpeak("Finished adjusting loan");
+                        return true;
+                    default:
+                        return true; // swallow other keys while adjusting
+                }
+            }
+
             switch (action)
             {
                 case AccessibilityAction::moveLeft:
+                    _accessMarketingIndex = -1;
                     changeAccessibilityTab(-1);
                     return true;
                 case AccessibilityAction::moveRight:
+                    _accessMarketingIndex = -1;
                     changeAccessibilityTab(1);
                     return true;
                 case AccessibilityAction::moveUp:
+                    if (page == WINDOW_FINANCES_PAGE_MARKETING)
+                        accessMoveMarketing(-1);
+                    else
+                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
+                    return true;
                 case AccessibilityAction::moveDown:
-                    Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
+                    if (page == WINDOW_FINANCES_PAGE_MARKETING)
+                        accessMoveMarketing(1);
+                    else
+                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
+                    return true;
+                case AccessibilityAction::activate:
+                    if (page == WINDOW_FINANCES_PAGE_SUMMARY)
+                    {
+                        _accessLoanMode = true;
+                        Accessibility::ScreenReaderSpeak(
+                            "Adjusting loan. " + accessLoanText()
+                            + ". Left arrow repays, right arrow borrows, Escape when done.");
+                    }
+                    else if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
+                    {
+                        onMouseUp(WIDX_CAMPAIGN_1 + _accessMarketingIndex); // opens the New Campaign window
+                    }
+                    return true;
+                case AccessibilityAction::announce:
+                    if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
+                        Accessibility::ScreenReaderSpeak(accessCampaignName(_accessMarketingIndex) + ", press Enter to set up");
+                    else
+                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
                     return true;
                 case AccessibilityAction::cancel:
                     close();
@@ -377,6 +508,22 @@ namespace OpenRCT2::Ui::Windows
                 default:
                     return false;
             }
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            WidgetIndex w;
+            if (_accessLoanMode)
+                w = WIDX_LOAN;
+            else if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
+                w = WIDX_CAMPAIGN_1 + _accessMarketingIndex;
+            else
+                w = WIDX_TAB_1 + page;
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
         }
 
         void onDropdown(WidgetIndex widgetIndex, int32_t selectedIndex) override

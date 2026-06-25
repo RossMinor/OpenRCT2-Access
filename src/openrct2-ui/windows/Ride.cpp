@@ -1560,6 +1560,29 @@ namespace OpenRCT2::Ui::Windows
             return true;
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            WidgetIndex w;
+            if (_accessIndex <= 0)
+            {
+                w = WIDX_TAB_1 + page; // the focused tab
+            }
+            else
+            {
+                const auto items = buildAxItems();
+                const int32_t ci = _accessIndex - 1;
+                if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                    return std::nullopt;
+                // Control items map to their widget; data read-outs box the page content area.
+                w = (items[ci].kind == AxKind::data) ? WIDX_PAGE_BACKGROUND : items[ci].widget;
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             if (_accessDropdownOpen)

@@ -26,6 +26,7 @@
 #include <openrct2/actions/footpath/FootpathPlaceAction.h>
 #include <openrct2/actions/footpath/FootpathRemoveAction.h>
 #include <openrct2/actions/terraform/ClearAction.h>
+#include <openrct2/actions/park/LandBuyRightsAction.h>
 #include <openrct2/actions/terraform/LandLowerAction.h>
 #include <openrct2/actions/terraform/LandRaiseAction.h>
 #include <openrct2/actions/terraform/WaterLowerAction.h>
@@ -37,6 +38,7 @@
 #include <openrct2/Date.h>
 #include <openrct2/Game.h>
 #include <openrct2/GameState.h>
+#include <openrct2/Input.h>
 #include <openrct2/OpenRCT2.h>
 #include <openrct2/config/Config.h>
 #include <openrct2/interface/Viewport.h>
@@ -73,11 +75,23 @@
 
 namespace OpenRCT2::Ui::Accessibility
 {
-    // Cursor state. Coordinates are absolute map tile coordinates; the origin lets us
-    // report them relative to the bottom-left usable corner of the whole map.
+    // Cursor state, in absolute map tile coordinates.
     static bool _initialised = false;
-    static TileCoordsXY _origin{};
     static TileCoordsXY _cursor{};
+
+    // Spoken coordinates are SCREEN-RELATIVE (at the default view rotation), not raw world X/Y:
+    // they increase toward screen-right (X) and screen-up (Y). The map is drawn isometrically, so
+    // the world X axis runs diagonally and is screen-inverted; reporting screen-relative coords lets
+    // the arrow keys, camera, audio and the spoken numbers all agree (Left lowers X and pans audio
+    // right, etc.). See the arrow-key handling in HandleMapCursorKey.
+    static int32_t SpokenCoordX(int32_t tileX)
+    {
+        return (getGameState().mapSize.x - 2) - tileX;
+    }
+    static int32_t SpokenCoordY(int32_t tileY)
+    {
+        return (getGameState().mapSize.y - 2) - tileY;
+    }
 
     // The key consumed on key-down, so its key-up can be swallowed too.
     static uint32_t _lastHandledKey = 0;
@@ -331,7 +345,7 @@ namespace OpenRCT2::Ui::Accessibility
         return owned ? "Empty" : "Outside park";
     }
 
-    // Sets the coordinate origin to the bottom-left usable map corner and picks a start tile.
+    // Picks a starting tile for the cursor (first owned tile, else map centre).
     static void InitialiseCursor()
     {
         _initialised = true;
@@ -339,7 +353,6 @@ namespace OpenRCT2::Ui::Accessibility
         _lastElevation = -1;
 
         const auto mapSize = getGameState().mapSize;
-        _origin = TileCoordsXY{ 1, 1 };
 
         // Start on the first owned tile (inside the park) if there is one, else the centre.
         _cursor = TileCoordsXY{ mapSize.x / 2, mapSize.y / 2 };
@@ -518,8 +531,8 @@ namespace OpenRCT2::Ui::Accessibility
 
     static void ReadCoordinates()
     {
-        const int32_t x = _cursor.x - _origin.x;
-        const int32_t y = _cursor.y - _origin.y;
+        const int32_t x = SpokenCoordX(_cursor.x);
+        const int32_t y = SpokenCoordY(_cursor.y);
         std::string text = "X " + std::to_string(x) + ", Y " + std::to_string(y);
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
             text += ", elevation " + std::to_string(surface->baseHeight / 2);
@@ -531,6 +544,32 @@ namespace OpenRCT2::Ui::Accessibility
         const auto cash = getGameState().park.cash;
         const StringId fmt = cash < 0 ? STR_BOTTOM_TOOLBAR_CASH_NEGATIVE : STR_BOTTOM_TOOLBAR_CASH;
         ScreenReaderSpeak(OpenRCT2::FormatStringID(fmt, cash));
+    }
+
+    // Draws the engine's tile-selection highlight on whatever tile the keyboard map cursor is on,
+    // so sighted players/helpers can see where focus is. Re-asserted each frame. Skipped while a
+    // real tool owns the selection (e.g. placing a pre-built ride); cleared when focus leaves the
+    // map for a menu or window (the window focus highlight takes over there).
+    void TickFocusHighlight()
+    {
+        static bool weSetSelection = false;
+
+        const bool wantTile = IsMapCursorActive() && _initialised && !gInputFlags.has(InputFlag::toolActive);
+        if (wantTile)
+        {
+            const auto world = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
+            setMapSelectRange(CoordsXY{ world.x, world.y });
+            gMapSelectType = MapSelectType::full;
+            gMapSelectFlags.set(MapSelectFlag::enable);
+            MapSelection::invalidate();
+            weSetSelection = true;
+        }
+        else if (weSetSelection && !gInputFlags.has(InputFlag::toolActive))
+        {
+            gMapSelectFlags.unset(MapSelectFlag::enable);
+            MapSelection::invalidate();
+            weSetSelection = false;
+        }
     }
 
     void TickMoneyAnnounce()
@@ -994,6 +1033,53 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    // Buys land ownership or construction rights over the brush area. The action always reports
+    // success (it silently skips tiles that aren't for sale or are already owned), so we branch on
+    // the actual cost: if anything was bought, the finance hook also announces the amount spent;
+    // otherwise we explain why nothing happened, based on the cursor tile's ownership.
+    static void ChangeLandOwnership(GameActions::LandBuyRightSetting setting)
+    {
+        int32_t ax, ay, bx, by;
+        GetBrushBounds(ax, ay, bx, by);
+
+        const bool rights = (setting == GameActions::LandBuyRightSetting::buyConstructionRights);
+        auto action = GameActions::LandBuyRightsAction(MapRange(ax, ay, bx, by), setting);
+        action.SetCallback([rights](const GameActions::GameAction*, const GameActions::Result* result) {
+            if (result->error != GameActions::Status::ok)
+                return; // spoken via the error window
+
+            if (result->cost != 0)
+            {
+                _lastTileDescription.clear(); // ownership changed, so re-announce the tile next move
+                ScreenReaderSpeak(rights ? "Construction rights bought" : "Land bought");
+                return;
+            }
+
+            // Nothing was bought - explain why, using the cursor tile.
+            auto* surface = MapGetSurfaceElementAt(_cursor);
+            const int32_t ownership = surface != nullptr ? surface->GetOwnership() : 0;
+            if (rights)
+            {
+                if (ownership & (OWNERSHIP_OWNED | OWNERSHIP_CONSTRUCTION_RIGHTS_OWNED))
+                    ScreenReaderSpeak("You already have construction rights here");
+                else if (!(ownership & OWNERSHIP_CONSTRUCTION_RIGHTS_AVAILABLE))
+                    ScreenReaderSpeak("Construction rights here are not for sale");
+                else
+                    ScreenReaderSpeak("Nothing to buy here");
+            }
+            else
+            {
+                if (ownership & OWNERSHIP_OWNED)
+                    ScreenReaderSpeak("You already own this land");
+                else if (!(ownership & OWNERSHIP_AVAILABLE))
+                    ScreenReaderSpeak("This land is not for sale");
+                else
+                    ScreenReaderSpeak("Nothing to buy here");
+            }
+        });
+        GameActions::Execute(&action, getGameState());
+    }
+
     // Cycles the clear/terraform brush through 1x1, 3x3, 5x5, 7x7 and announces the new size.
     static void CycleBrushSize()
     {
@@ -1053,8 +1139,8 @@ namespace OpenRCT2::Ui::Accessibility
         CentreViewportOnCursor();
 
         _lastTileDescription = GetTileDescription(_cursor);
-        const int32_t x = _cursor.x - _origin.x;
-        const int32_t y = _cursor.y - _origin.y;
+        const int32_t x = SpokenCoordX(_cursor.x);
+        const int32_t y = SpokenCoordY(_cursor.y);
         ScreenReaderSpeak("Park entrance, X " + std::to_string(x) + ", Y " + std::to_string(y));
     }
 
@@ -1177,7 +1263,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (key != SDLK_UP && key != SDLK_DOWN && key != SDLK_LEFT && key != SDLK_RIGHT && key != SDLK_c
             && key != SDLK_t && key != SDLK_m && key != SDLK_SPACE && key != SDLK_d && key != SDLK_e
             && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET && key != SDLK_p
-            && key != SDLK_q && key != SDLK_x && key != SDLK_b && key != SDLK_PAGEUP && key != SDLK_PAGEDOWN)
+            && key != SDLK_q && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_PAGEUP
+            && key != SDLK_PAGEDOWN)
             return false;
 
         if (!_initialised)
@@ -1208,6 +1295,14 @@ namespace OpenRCT2::Ui::Accessibility
                 break;
             case SDLK_x:
                 ClearSceneryAtCursor();
+                break;
+            case SDLK_o:
+                // O buys land ownership over the brush area; Shift+O buys construction rights. The
+                // amount spent is announced by the finance hook.
+                if (modifiers & KMOD_SHIFT)
+                    ChangeLandOwnership(GameActions::LandBuyRightSetting::buyConstructionRights);
+                else
+                    ChangeLandOwnership(GameActions::LandBuyRightSetting::buyLand);
                 break;
             case SDLK_PAGEUP:
                 // Shift raises land, Ctrl raises water, no modifier scans up the Z axis.
@@ -1241,17 +1336,21 @@ namespace OpenRCT2::Ui::Accessibility
             case SDLK_RIGHTBRACKET:
                 CycleAnnouncementHistory(1);
                 break;
+            // Arrow keys are SCREEN-relative at the default view rotation: the world axes run
+            // diagonally on screen, so these world deltas are chosen (and the spoken coordinates
+            // flipped, see SpokenCoordX/Y) so Left moves the camera/audio left and lowers X, Up
+            // moves away and raises Y, etc.
             case SDLK_UP:
-                Move(0, 1, "North");
+                Move(0, -1, "Up");
                 break;
             case SDLK_DOWN:
-                Move(0, -1, "South");
+                Move(0, 1, "Down");
                 break;
             case SDLK_RIGHT:
-                Move(1, 0, "East");
+                Move(-1, 0, "Right");
                 break;
             case SDLK_LEFT:
-                Move(-1, 0, "West");
+                Move(1, 0, "Left");
                 break;
         }
         return true;
@@ -1349,8 +1448,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_initialised)
             InitialiseCursor();
 
-        const int32_t x = mn.x - _origin.x;
-        const int32_t y = mn.y - _origin.y;
+        const int32_t x = SpokenCoordX(mn.x);
+        const int32_t y = SpokenCoordY(mn.y);
         return "X " + std::to_string(x) + ", Y " + std::to_string(y);
     }
 
@@ -1365,6 +1464,20 @@ namespace OpenRCT2::Ui::Accessibility
     bool IsMapCursorActive()
     {
         return gLegacyScene == LegacyScene::playing && !_menuMode && !_mouseMode;
+    }
+
+    bool IsInMenuMode()
+    {
+        return _menuMode;
+    }
+
+    bool IsKeyboardNavActive()
+    {
+        // True whenever the keyboard drives navigation in-game - the map cursor OR the toolbar menu
+        // (and accessible windows). In these states the arrow keys belong to navigation, so the
+        // engine's arrow-key view scrolling must be suppressed or the camera (and positional audio)
+        // drifts while the cursor stays put. Only mouse mode lets the keyboard scroll the view.
+        return gLegacyScene == LegacyScene::playing && !_mouseMode;
     }
 
     std::string DescribeTile(const TileCoordsXY& tile)

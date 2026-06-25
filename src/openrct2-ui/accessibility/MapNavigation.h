@@ -37,6 +37,15 @@ namespace OpenRCT2::Ui::Accessibility
     // mode). Use this to suppress competing view-scroll shortcuts on those keys.
     bool IsMapCursorActive();
 
+    // Returns true when the in-game toolbar menu mode is active (Tab-opened toolbar navigation).
+    // The focus overlay uses this to highlight the focused toolbar item.
+    bool IsInMenuMode();
+
+    // Returns true whenever keyboard navigation owns the arrow keys in-game - the map cursor, the
+    // toolbar menu, or an accessible window (anything except mouse mode). Use this to suppress the
+    // engine's arrow-key view scrolling so the camera doesn't drift while navigating menus.
+    bool IsKeyboardNavActive();
+
     // The spoken description of what is on a given map tile - the same text the map cursor
     // announces as it moves (ride name, path, water, scenery, empty land, etc.).
     std::string DescribeTile(const TileCoordsXY& tile);
@@ -49,6 +58,10 @@ namespace OpenRCT2::Ui::Accessibility
     // Leaves the in-game toolbar menu mode (if active) silently, handing control back to the map
     // cursor. Used when something else takes over the keyboard, e.g. starting to follow an NPC.
     void LeaveMenuMode();
+
+    // Polled each frame. Shows a tile-selection highlight on the keyboard map cursor's tile so
+    // sighted users can see where focus is, and clears it when focus moves off the map.
+    void TickFocusHighlight();
 
     // Polled each frame. Announces the cost/refund of player-initiated transactions (building,
     // demolishing, buying/selling land, marketing) once they occur. Guest spending and recurring

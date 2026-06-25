@@ -222,6 +222,9 @@ void InputManager::process()
 
     // Announce money spent/earned by player-initiated transactions (build, demolish, land, etc.).
     Accessibility::TickMoneyAnnounce();
+
+    // Keep the on-screen focus highlight on the map cursor's tile (visual indicator for sighted users).
+    Accessibility::TickFocusHighlight();
 }
 
 void InputManager::handleViewScrolling()
@@ -279,10 +282,10 @@ void InputManager::handleViewScrolling()
         InputScrollViewport(keyboardScroll);
     }
 
-    // Mouse edge scrolling. Suppressed while the keyboard map cursor is active (keyboard mode)
-    // so the camera follows the keyboard cursor and never reacts to the mouse position. In
-    // mouse mode IsMapCursorActive() is false, so edge scrolling works normally.
-    if (Config::Get().general.edgeScrolling && !Accessibility::IsMapCursorActive())
+    // Mouse edge scrolling. Suppressed whenever keyboard navigation is active (cursor, menu, or an
+    // accessible window) so the camera never drifts from the mouse position. In mouse mode
+    // IsKeyboardNavActive() is false, so edge scrolling works normally.
+    if (Config::Get().general.edgeScrolling && !Accessibility::IsKeyboardNavActive())
     {
         if (InputGetState() != InputState::normal)
             return;
@@ -508,7 +511,7 @@ void InputManager::processHoldEvents()
     if (!hasTextInputFocus())
     {
         auto& shortcutManager = GetShortcutManager();
-        if (!shortcutManager.isPendingShortcutChange() && !Accessibility::IsMapCursorActive())
+        if (!shortcutManager.isPendingShortcutChange() && !Accessibility::IsKeyboardNavActive())
         {
             processViewScrollEvent(ShortcutId::kViewScrollUp, { 0, -1 });
             processViewScrollEvent(ShortcutId::kViewScrollDown, { 0, 1 });

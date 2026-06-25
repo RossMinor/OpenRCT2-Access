@@ -16,6 +16,7 @@
 
 #include <list>
 #include <memory>
+#include <optional>
 #include <span>
 #include <variant>
 #include <vector>
@@ -257,6 +258,14 @@ namespace OpenRCT2
         virtual bool onAccessibilityTypeahead(uint32_t /*letterKey*/)
         {
             return false;
+        }
+
+        // The screen-space rectangle of the element the keyboard accessibility focus is currently on
+        // (a widget, list row, or tab), used to draw a visible focus indicator. Returns nullopt when
+        // there is nothing to highlight. Windows that support keyboard navigation override this.
+        virtual std::optional<ScreenRect> getAccessibilityFocusRect()
+        {
+            return std::nullopt;
         }
 
         constexpr int16_t right()

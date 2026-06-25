@@ -16,6 +16,11 @@ namespace OpenRCT2
     struct WindowBase;
 }
 
+namespace OpenRCT2::Drawing
+{
+    struct RenderTarget;
+}
+
 namespace OpenRCT2::Ui::Accessibility
 {
     // Handles keyboard navigation for accessible menus (currently the title/main menu).
@@ -27,4 +32,10 @@ namespace OpenRCT2::Ui::Accessibility
     // Focuses and announces the first item of the given menu window (generic widget
     // navigation), so a menu can default to its first item when it opens.
     void FocusFirstItem(WindowBase& w);
+
+    // Draws a visible focus box around the element the keyboard accessibility focus is on (the
+    // focused toolbar item in menu mode, or the active accessible window's focused widget). Called
+    // as a top-level overlay after all windows are painted. The map cursor's tile highlight is
+    // handled separately by the engine's tile selection.
+    void DrawAccessibilityFocus(Drawing::RenderTarget& rt);
 } // namespace OpenRCT2::Ui::Accessibility

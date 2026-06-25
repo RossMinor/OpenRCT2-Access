@@ -97,8 +97,12 @@ namespace OpenRCT2::Ui::Accessibility
 
         const auto rideName = GetRideName(item);
         const auto rideType = item.Type;
+        const auto& rtdFlags = GetRideTypeDescriptor(rideType).flags;
         const auto startPiece = GetRideTypeDescriptor(rideType).StartTrackPiece;
-        const bool needsEntranceExit = GetRideTypeDescriptor(rideType).flags.has(RtdFlag::isFlatRide);
+        // Genuine flat rides need a separate entrance and exit. Shops and facilities (food stalls,
+        // toilets, etc.) are flagged isFlatRide too but have no entrance/exit - guests just walk up
+        // to them - so exclude anything marked as a shop/facility.
+        const bool needsEntranceExit = rtdFlags.has(RtdFlag::isFlatRide) && !rtdFlags.has(RtdFlag::isShopOrFacility);
 
         // Build orientation, matching the construction window's initial facing for placement.
         const Direction direction = (2 - GetCurrentRotation()) & 3;

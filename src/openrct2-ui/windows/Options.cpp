@@ -966,6 +966,30 @@ namespace OpenRCT2::Ui::Windows
             return true;
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            if (_accessDropdownOpen)
+                return std::nullopt;
+            WidgetIndex w;
+            if (_accessIndex <= 0)
+            {
+                w = WIDX_FIRST_TAB + page;
+            }
+            else
+            {
+                const auto controls = getAccessControls();
+                const int32_t ci = _accessIndex - 1;
+                if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                    return std::nullopt;
+                w = controls[ci];
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // While a dropdown sub-menu is open, route everything to it.

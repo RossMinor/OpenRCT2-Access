@@ -639,6 +639,28 @@ namespace OpenRCT2::Ui::Windows
             return true; // data window: swallow letters so they don't leak to the toolbar
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            WidgetIndex w;
+            if (_accessIndex <= 0)
+            {
+                w = WIDX_TAB_1 + page;
+            }
+            else
+            {
+                const auto items = buildGxItems();
+                const int32_t ci = _accessIndex - 1;
+                if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                    return std::nullopt;
+                w = (items[ci].kind == GxKind::button) ? items[ci].widget : WIDX_PAGE_BACKGROUND;
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             switch (action)

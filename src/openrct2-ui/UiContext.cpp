@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/input/MouseInput.h>
 #include <openrct2-ui/interface/Window.h>
@@ -156,6 +157,9 @@ public:
         auto bgColour = ThemeGetColour(WindowClass::chat, 0);
         ChatDraw(rt, bgColour);
         _inGameConsole.Draw(rt);
+
+        // Visible keyboard-focus indicator for accessibility, drawn over all windows.
+        Accessibility::DrawAccessibilityFocus(rt);
     }
 
     // Window

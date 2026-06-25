@@ -9,10 +9,15 @@
 
 #include "MenuNavigation.h"
 
+#include "MapNavigation.h"
 #include "ScreenReader.h"
 
 #include <SDL.h>
 #include <algorithm>
+#include <openrct2/drawing/Colour.h>
+#include <openrct2/drawing/Rectangle.h>
+#include <openrct2/drawing/RenderTarget.h>
+#include <openrct2/interface/ColourWithFlags.h>
 #include <openrct2/interface/Widget.h>
 #include <openrct2/interface/WindowBase.h>
 #include <openrct2/interface/WindowClasses.h>
@@ -109,6 +114,9 @@ namespace OpenRCT2::Ui::Accessibility
         if (auto* w = windowMgr->FindByClass(WindowClass::staffList))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::guestList))
+            return w;
+        // New marketing campaign setup sits in front of the Finances window, so check it first.
+        if (auto* w = windowMgr->FindByClass(WindowClass::newCampaign))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::finances))
             return w;
@@ -260,6 +268,33 @@ namespace OpenRCT2::Ui::Accessibility
     {
         _focusPos = -1;
         HandleGenericWidgetNav(w, AccessibilityAction::moveDown);
+    }
+
+    void DrawAccessibilityFocus(Drawing::RenderTarget& rt)
+    {
+        auto* windowMgr = GetWindowManager();
+        if (windowMgr == nullptr)
+            return;
+
+        // An open combo box draws its own highlighted item; don't double up.
+        if (windowMgr->FindByClass(WindowClass::dropdown) != nullptr)
+            return;
+
+        // In toolbar menu mode the toolbar owns focus (it isn't an "active accessible window"),
+        // otherwise use whichever accessible window currently has focus.
+        WindowBase* w = IsInMenuMode() ? windowMgr->FindByClass(WindowClass::topToolbar)
+                                       : GetActiveAccessibleWindow();
+        if (w == nullptr)
+            return;
+
+        const auto rect = w->getAccessibilityFocusRect();
+        if (!rect.has_value())
+            return;
+
+        // A border-only box (FillMode::none) in a high-contrast colour, drawn over everything.
+        Drawing::Rectangle::fillInset(
+            rt, *rect, ColourWithFlags{ Drawing::Colour::yellow }, Drawing::Rectangle::BorderStyle::outset,
+            Drawing::Rectangle::FillBrightness::light, Drawing::Rectangle::FillMode::none);
     }
 
     bool HandleMenuNavigationKey(const InputEvent& e)

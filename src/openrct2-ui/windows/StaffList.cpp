@@ -9,6 +9,7 @@
 
 #include <limits>
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/UiStringIds.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
@@ -292,7 +293,12 @@ namespace OpenRCT2::Ui::Windows
                     changeAccessibilityTab(1);
                     return true;
                 case AccessibilityAction::activate:
-                    activateAccessibilitySelection();
+                    // On a type header (no individual selected) Enter hires; on a staff member it
+                    // opens that member's window.
+                    if (_accessibilityIndex < 0)
+                        hireAccessibilityStaff();
+                    else
+                        activateAccessibilitySelection();
                     return true;
                 case AccessibilityAction::activateAlt:
                     followAccessibilityStaff();
@@ -300,6 +306,8 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::announce:
                     if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_staffList.size()))
                         announceAccessibilityStaff(_accessibilityIndex);
+                    else
+                        announceStaffTab();
                     return true;
                 case AccessibilityAction::cancel:
                     close();
@@ -321,6 +329,61 @@ namespace OpenRCT2::Ui::Windows
             const auto name = _staffList[_accessibilityIndex].Name;
             Accessibility::StartFollowingEntity(id, name);
             close();
+        }
+
+        // Spoken when focused on a staff-type header (no individual selected): the type, the count,
+        // and the hire affordance.
+        void announceStaffTab()
+        {
+            static const char* kTabNames[] = { "Handymen", "Mechanics", "Security guards", "Entertainers" };
+            static const char* kHireNames[] = { "handyman", "mechanic", "security guard", "entertainer" };
+            const int32_t t = std::clamp(_selectedTab, 0, 3);
+            std::string text = std::string(kTabNames[t]) + ", " + std::to_string(_staffList.size());
+            // Speak the wage up front, before the player commits to hiring.
+            if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
+                text += ", wages " + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, GetStaffWage(GetSelectedStaffType()))
+                    + " per month";
+            text += ", press Enter to hire a " + std::string(kHireNames[t]);
+            Accessibility::ScreenReaderSpeak(text);
+        }
+
+        // Hires a new staff member of the currently selected type. Forces auto-placement (the normal
+        // drag-to-place flow is unusable without sight) and announces the new hire by name.
+        void hireAccessibilityStaff()
+        {
+            const auto staffType = GetSelectedStaffType();
+
+            uint32_t staffOrders = 0;
+            if (staffType == StaffType::handyman)
+            {
+                staffOrders = STAFF_ORDERS_SWEEPING | STAFF_ORDERS_WATER_FLOWERS | STAFF_ORDERS_EMPTY_BINS;
+                if (Config::Get().general.handymenMowByDefault)
+                    staffOrders |= STAFF_ORDERS_MOWING;
+            }
+            else if (staffType == StaffType::mechanic)
+            {
+                staffOrders = STAFF_ORDERS_INSPECT_RIDES | STAFF_ORDERS_FIX_RIDES;
+            }
+
+            auto animPeepType = AnimationPeepType(static_cast<uint8_t>(staffType) + 1);
+            ObjectEntryIndex costume = (staffType == StaffType::entertainer)
+                ? findRandomPeepAnimationsIndexForType(animPeepType)
+                : findPeepAnimationsIndexForType(animPeepType);
+
+            auto hireStaffAction = GameActions::StaffHireNewAction(true /* autoPosition */, staffType, costume, staffOrders);
+            hireStaffAction.SetCallback([](const GameActions::GameAction*, const GameActions::Result* res) {
+                if (res->error != GameActions::Status::ok)
+                    return; // failures (e.g. too many staff) are spoken by the error window
+                auto actionResult = res->getData<GameActions::StaffHireNewActionResult>();
+                auto* staff = getGameState().entities.GetEntity<Staff>(actionResult.StaffEntityId);
+                if (staff == nullptr)
+                    return;
+                Formatter ft;
+                staff->FormatNameTo(ft);
+                // The wage was already announced on the type header before hiring.
+                Accessibility::ScreenReaderSpeak("Hired " + OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data()));
+            });
+            GameActions::Execute(&hireStaffAction, getGameState());
         }
 
         void announceAccessibilityStaff(int32_t index)
@@ -371,11 +434,7 @@ namespace OpenRCT2::Ui::Windows
             scrolls[0].contentOffsetY = 0;
             _accessibilityIndex = -1;
             invalidate();
-
-            static constexpr const char* kTabNames[] = { "Handymen", "Mechanics", "Security guards", "Entertainers" };
-            std::string text = kTabNames[_selectedTab];
-            text += ", " + std::to_string(_staffList.size());
-            Accessibility::ScreenReaderSpeak(text);
+            announceStaffTab();
         }
 
         void activateAccessibilitySelection()

@@ -8,6 +8,8 @@
  *****************************************************************************/
 
 #include <algorithm>
+#include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -20,6 +22,7 @@
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/management/Marketing.h>
 #include <openrct2/ride/Ride.h>
 #include <openrct2/ride/RideData.h>
@@ -307,6 +310,250 @@ namespace OpenRCT2::Ui::Windows
 
             invalidate();
         }
+
+#pragma region Accessibility
+        // Screen-reader navigation: Up/Down move through the controls, Left/Right adjust the duration
+        // or open the ride/item combo box, Enter activates, Escape closes. Mirrors the other windows.
+        enum class NcKind
+        {
+            data,
+            dropdown,
+            spinner,
+            button,
+        };
+        struct NcItem
+        {
+            std::string text;
+            NcKind kind = NcKind::data;
+            WidgetIndex widget = 0;
+        };
+
+        int32_t _accessIndex = 0;
+        bool _accessDropdownOpen = false;
+        WidgetIndex _accessDropdownChevron = 0;
+
+        std::string ncWidgetText(WidgetIndex w)
+        {
+            const auto& wd = widgets[w];
+            if (wd.flags.has(WidgetFlag::textIsString))
+                return wd.string != nullptr ? std::string(wd.string) : std::string();
+            if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
+                return OpenRCT2::FormatStringID(wd.text);
+            return {};
+        }
+
+        std::vector<NcItem> buildNcItems()
+        {
+            std::vector<NcItem> items;
+            items.push_back({ ncWidgetText(WIDX_TITLE), NcKind::data, 0 });
+
+            if (widgets[WIDX_RIDE_DROPDOWN].type == WidgetType::dropdownMenu)
+            {
+                const bool isItem = (Campaign.campaign_type == ADVERTISING_CAMPAIGN_FOOD_OR_DRINK_FREE);
+                std::string value = ncWidgetText(WIDX_RIDE_DROPDOWN);
+                items.push_back(
+                    { std::string(isItem ? "Item" : "Ride") + ", combo box, " + (value.empty() ? "not selected" : value),
+                      NcKind::dropdown, WIDX_RIDE_DROPDOWN_BUTTON });
+            }
+
+            items.push_back(
+                { "Duration, slider, " + std::to_string(Campaign.no_weeks) + (Campaign.no_weeks == 1 ? " week" : " weeks"),
+                  NcKind::spinner, WIDX_WEEKS_SPINNER });
+
+            const money64 total = AdvertisingCampaignPricePerWeek[Campaign.campaign_type] * Campaign.no_weeks;
+            items.push_back({ "Total cost, " + OpenRCT2::FormatStringID(STR_CURRENCY_FORMAT, total), NcKind::data, 0 });
+
+            std::string start = "Start campaign, button";
+            if (widgetIsDisabled(*this, WIDX_START_BUTTON))
+                start += ", unavailable, select a ride first";
+            items.push_back({ start, NcKind::button, WIDX_START_BUTTON });
+            return items;
+        }
+
+        void ncAnnounceFocus()
+        {
+            if (_accessDropdownOpen)
+                return;
+            onPrepareDraw();
+            const auto items = buildNcItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                return;
+            Accessibility::ScreenReaderSpeakItem(items[_accessIndex].text, _accessIndex, static_cast<int32_t>(items.size()));
+        }
+
+        void ncMove(int32_t delta)
+        {
+            const int32_t n = static_cast<int32_t>(buildNcItems().size());
+            if (n == 0)
+                return;
+            _accessIndex = (_accessIndex + delta + n) % n;
+            ncAnnounceFocus();
+        }
+
+        void ncCloseDropdown()
+        {
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->CloseByClass(WindowClass::dropdown);
+            _accessDropdownOpen = false;
+        }
+
+        void ncMoveDropdown(int32_t delta)
+        {
+            const int32_t n = gDropdown.numItems;
+            if (n <= 0)
+                return;
+            int32_t idx = std::max(0, gDropdown.highlightedIndex);
+            for (int32_t steps = 0; steps <= n; steps++)
+            {
+                idx = (idx + delta + n) % n;
+                if (!gDropdown.items[idx].isSeparator())
+                    break;
+                if (delta == 0)
+                    delta = 1;
+            }
+            if (gDropdown.items[idx].isSeparator())
+                return;
+            gDropdown.highlightedIndex = idx;
+            std::string text = gDropdown.items[idx].text;
+            int32_t total = 0, pos = 0;
+            for (int32_t j = 0; j < gDropdown.numItems; j++)
+            {
+                if (gDropdown.items[j].isSeparator())
+                    continue;
+                if (j == idx)
+                    pos = total;
+                total++;
+            }
+            Accessibility::ScreenReaderSpeakItem(text, pos, total);
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+
+        void ncOpenDropdown(WidgetIndex chevron)
+        {
+            onMouseDown(chevron);
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+                return;
+            _accessDropdownOpen = true;
+            _accessDropdownChevron = chevron;
+            ncMoveDropdown(0);
+        }
+
+        void ncCommitDropdown()
+        {
+            const int32_t idx = gDropdown.highlightedIndex;
+            const WidgetIndex chevron = _accessDropdownChevron;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            ncCloseDropdown();
+            if (valid)
+                onDropdown(chevron, idx);
+            ncAnnounceFocus();
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true;
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            if (_accessDropdownOpen)
+                return std::nullopt;
+            const auto items = buildNcItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                return std::nullopt;
+            if (items[_accessIndex].kind == NcKind::data)
+                return std::nullopt; // data read-outs have no control to box
+            const WidgetIndex w = items[_accessIndex].widget;
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            if (_accessDropdownOpen)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveLeft:
+                        ncMoveDropdown(-1);
+                        return true;
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::moveRight:
+                        ncMoveDropdown(1);
+                        return true;
+                    case AccessibilityAction::activate:
+                        ncCommitDropdown();
+                        return true;
+                    case AccessibilityAction::cancel:
+                        ncCloseDropdown();
+                        ncAnnounceFocus();
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    ncMove(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    ncMove(1);
+                    return true;
+                case AccessibilityAction::moveLeft:
+                case AccessibilityAction::moveRight:
+                {
+                    const auto items = buildNcItems();
+                    if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                        return true;
+                    const auto& it = items[_accessIndex];
+                    const int32_t delta = (action == AccessibilityAction::moveRight) ? 1 : -1;
+                    if (it.kind == NcKind::spinner)
+                    {
+                        onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (it.widget + 1) : (it.widget + 2)));
+                        ncAnnounceFocus();
+                    }
+                    else if (it.kind == NcKind::dropdown)
+                    {
+                        ncOpenDropdown(it.widget);
+                    }
+                    else
+                    {
+                        ncAnnounceFocus();
+                    }
+                    return true;
+                }
+                case AccessibilityAction::activate:
+                {
+                    const auto items = buildNcItems();
+                    if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                        return true;
+                    const auto& it = items[_accessIndex];
+                    if (it.kind == NcKind::dropdown)
+                        ncOpenDropdown(it.widget);
+                    else if (it.kind == NcKind::button && !widgetIsDisabled(*this, it.widget))
+                        onMouseUp(it.widget); // starts the campaign (closes on success; cost announced by finance hook)
+                    return true;
+                }
+                case AccessibilityAction::announce:
+                    ncAnnounceFocus();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+#pragma endregion
 
         void onPrepareDraw() override
         {
