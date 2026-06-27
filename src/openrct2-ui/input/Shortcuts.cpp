@@ -844,8 +844,8 @@ void ShortcutManager::registerDefaultShortcuts()
     // View
     registerShortcut(ShortcutId::kViewGeneralZoomOut, STR_SHORTCUT_ZOOM_VIEW_OUT, "PAGEUP", std::bind(MainWindowZoom, false, false));
     registerShortcut(ShortcutId::kViewGeneralZoomIn, STR_SHORTCUT_ZOOM_VIEW_IN, "PAGEDOWN", std::bind(MainWindowZoom, true, false));
-    registerShortcut(ShortcutId::kViewGeneralRotateClockwise, STR_SHORTCUT_ROTATE_VIEW_CLOCKWISE, "RETURN", "MOUSE 6", std::bind(RotateCamera, 1));
-    registerShortcut(ShortcutId::kViewGeneralRotateAnticlockwise, STR_SHORTCUT_ROTATE_VIEW_ANTICLOCKWISE, "SHIFT+RETURN", "MOUSE 5", std::bind(RotateCamera, -1));
+    registerShortcut(ShortcutId::kViewGeneralRotateClockwise, STR_SHORTCUT_ROTATE_VIEW_CLOCKWISE, "SHIFT+RIGHT", "MOUSE 6", std::bind(RotateCamera, 1));
+    registerShortcut(ShortcutId::kViewGeneralRotateAnticlockwise, STR_SHORTCUT_ROTATE_VIEW_ANTICLOCKWISE, "SHIFT+LEFT", "MOUSE 5", std::bind(RotateCamera, -1));
     registerShortcut(ShortcutId::kViewScrollUp, STR_SHORTCUT_SCROLL_MAP_UP, "UP", []() {});
     registerShortcut(ShortcutId::kViewScrollLeft, STR_SHORTCUT_SCROLL_MAP_LEFT, "LEFT", []() {});
     registerShortcut(ShortcutId::kViewScrollRight, STR_SHORTCUT_SCROLL_MAP_RIGHT, "RIGHT", []() {});

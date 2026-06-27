@@ -245,6 +245,16 @@ namespace OpenRCT2::Ui::Windows
             return {};
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const WidgetIndex w = WIDX_TAB_1 + page;
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         void changeAccessibilityTab(int32_t delta)
         {
             int32_t newPage = (page + delta + WINDOW_RESEARCH_PAGE_COUNT) % WINDOW_RESEARCH_PAGE_COUNT;

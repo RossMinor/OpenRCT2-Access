@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/AccessCrashHandler.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -131,6 +132,7 @@ namespace OpenRCT2::Ui::Windows
             initScrollWidgets();
 
             Accessibility::ScreenReaderInit();
+            Accessibility::CrashHandlerInit();
             // Default to the first menu item, matching the in-game menu standard.
             onAccessibilityAction(AccessibilityAction::moveDown);
         }

@@ -334,6 +334,16 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeakItem(text, _accessOptionCursor, count);
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const WidgetIndex w = WIDX_TAB_NEWS + page; // newsTab/optionsTab map to the two tab widgets
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             switch (action)

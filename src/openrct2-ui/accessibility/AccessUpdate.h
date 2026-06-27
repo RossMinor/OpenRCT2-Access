@@ -26,6 +26,9 @@ namespace OpenRCT2::Ui::Accessibility
     // relaunches. Safe to call repeatedly; ignored if no update is available or one is in progress.
     void StartAccessUpdateInstall();
 
+    // This build's accessibility mod version string (e.g. "v0.6").
+    const char* GetAccessModVersion();
+
     // The newer release's tag/name and the download URL of its ZIP asset (empty until available).
     std::string GetAccessUpdateTag();
     std::string GetAccessUpdateName();

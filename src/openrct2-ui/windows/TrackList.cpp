@@ -7,7 +7,9 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/RideVisualDescriptions.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/TrackDesignDescription.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/ride/Construction.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -90,6 +92,12 @@ namespace OpenRCT2::Ui::Windows
         bool _selectedItemIsBeingUpdated;
         bool _reloadTrackDesigns;
         u8string _windowTitle;
+
+        // Accessibility "extended statistics" sub-list, opened with the I key. While active, the
+        // arrow keys step through these stat lines instead of moving between designs.
+        bool _statsMode = false;
+        std::vector<std::string> _statsItems;
+        int32_t _statsIndex = 0;
 
         void filterList()
         {
@@ -366,30 +374,261 @@ namespace OpenRCT2::Ui::Windows
                 return;
             const uint16_t trackIndex = _filteredTrackIds[listIndex];
 
+            // Read order: name, cost, dimensions, ratings, in-game description, visual description.
             std::string text = _trackDesigns[trackIndex].name;
 
-            // Pull the ratings straight from the design file so the player can compare designs.
+            // Cost is not stored in a design file - it is only computed once the design is loaded
+            // for preview - so include it only when the focused design is the loaded one.
+            if (_loadedTrackDesign != nullptr && _loadedTrackDesignIndex == trackIndex
+                && _loadedTrackDesign->gameStateData.cost != 0)
+            {
+                Formatter ft;
+                ft.Add<uint32_t>(_loadedTrackDesign->gameStateData.cost);
+                text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_COST_AROUND, ft.Data());
+            }
+
+            // Pull the rest straight from the design file so the player can compare designs. Read
+            // out every statistic the visual info panel shows, in the same order.
             auto design = TrackDesignImport(_trackDesigns[trackIndex].path.c_str());
             if (design != nullptr)
             {
-                Formatter ft;
-                ft.Add<fixed32_2dp>(design->statistics.ratings.excitement);
-                text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_EXCITEMENT_RATING, ft.Data());
+                const auto& stats = design->statistics;
+                const ride_type_t rideType = design->trackAndVehicle.rtdIndex;
+                const auto& rtd = GetRideTypeDescriptor(rideType);
 
-                ft = Formatter();
-                ft.Add<fixed32_2dp>(design->statistics.ratings.intensity);
-                text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_INTENSITY_RATING, ft.Data());
+                // Append ". " followed by one formatted stat line.
+                auto appendStat = [&text](StringId id, Formatter& ft) {
+                    text += ". " + FormatStringIDLegacy(id, ft.Data());
+                };
 
-                ft = Formatter();
-                ft.Add<fixed32_2dp>(design->statistics.ratings.nausea);
-                text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_NAUSEA_RATING, ft.Data());
+                // Dimensions.
+                if (!stats.spaceRequired.IsNull())
+                {
+                    Formatter ft;
+                    ft.Add<uint16_t>(stats.spaceRequired.x);
+                    ft.Add<uint16_t>(stats.spaceRequired.y);
+                    appendStat(STR_TRACK_LIST_SPACE_REQUIRED, ft);
+                }
+
+                // Ratings.
+                {
+                    Formatter ft;
+                    ft.Add<fixed32_2dp>(stats.ratings.excitement);
+                    appendStat(STR_TRACK_LIST_EXCITEMENT_RATING, ft);
+                }
+                {
+                    Formatter ft;
+                    ft.Add<fixed32_2dp>(stats.ratings.intensity);
+                    appendStat(STR_TRACK_LIST_INTENSITY_RATING, ft);
+                }
+                {
+                    Formatter ft;
+                    ft.Add<fixed32_2dp>(stats.ratings.nausea);
+                    appendStat(STR_TRACK_LIST_NAUSEA_RATING, ft);
+                }
+
+                // The detailed statistics (speed, length, G-forces, drops, etc.) are reached
+                // separately by pressing I, so the default read-out stays manageable.
+
+                // In-game description (the ride type's), then a specific, data-derived visual
+                // description of this individual design's layout and colours.
+                const StringId descId = rtd.Naming.Description;
+                if (descId != kStringIdNone && descId != kStringIdEmpty)
+                    text += ". " + OpenRCT2::FormatStringID(descId);
+
+                const std::string visual = Accessibility::DescribeTrackDesign(*design);
+                if (!visual.empty())
+                    text += ". " + visual;
             }
 
             Accessibility::ScreenReaderSpeakItem(text, selectedListItem, count);
         }
 
+        // Returns the _trackDesigns index of the focused row, or -1 for the "build custom design"
+        // row or an invalid selection.
+        int32_t focusedDesignIndex() const
+        {
+            const int32_t count = accessibleItemCount();
+            if (count <= 0 || selectedListItem < 0 || selectedListItem >= count)
+                return -1;
+            const bool customFirst = (gLegacyScene != LegacyScene::trackDesignsManager);
+            if (customFirst && selectedListItem == 0)
+                return -1;
+            const int32_t listIndex = customFirst ? selectedListItem - 1 : selectedListItem;
+            if (listIndex < 0 || static_cast<size_t>(listIndex) >= _filteredTrackIds.size())
+                return -1;
+            return _filteredTrackIds[listIndex];
+        }
+
+        // Builds the detailed statistics (everything beyond the three headline ratings) for the
+        // focused design, one readable line each, for the I-key list. Empty for non-tracked rides.
+        std::vector<std::string> buildExtendedStats(uint16_t trackIndex)
+        {
+            std::vector<std::string> items;
+            auto design = TrackDesignImport(_trackDesigns[trackIndex].path.c_str());
+            if (design == nullptr)
+                return items;
+
+            const auto& stats = design->statistics;
+            const auto& rtd = GetRideTypeDescriptor(design->trackAndVehicle.rtdIndex);
+            auto add = [&items](StringId id, Formatter& ft) {
+                items.push_back(FormatStringIDLegacy(id, ft.Data()));
+            };
+
+            if (!rtd.flags.has(RtdFlag::hasTrack))
+                return items;
+
+            if (rtd.specialType != RtdSpecialType::maze)
+            {
+                if (rtd.specialType == RtdSpecialType::miniGolf)
+                {
+                    Formatter ft;
+                    ft.Add<uint16_t>(stats.holes);
+                    add(STR_HOLES, ft);
+                }
+                else
+                {
+                    Formatter ft;
+                    ft.Add<uint16_t>(ToHumanReadableSpeed(stats.maxSpeed << 16));
+                    add(STR_MAX_SPEED, ft);
+
+                    Formatter ft2;
+                    ft2.Add<uint16_t>(ToHumanReadableSpeed(stats.averageSpeed << 16));
+                    add(STR_AVERAGE_SPEED, ft2);
+                }
+
+                Formatter ft;
+                ft.Add<StringId>(STR_RIDE_LENGTH_ENTRY);
+                ft.Add<uint16_t>(stats.rideLength);
+                add(STR_TRACK_LIST_RIDE_LENGTH, ft);
+            }
+
+            if (rtd.flags.has(RtdFlag::hasGForces))
+            {
+                {
+                    Formatter ft;
+                    ft.Add<int32_t>(stats.maxPositiveVerticalG);
+                    add(STR_MAX_POSITIVE_VERTICAL_G, ft);
+                }
+                {
+                    Formatter ft;
+                    ft.Add<int32_t>(stats.maxNegativeVerticalG);
+                    add(STR_MAX_NEGATIVE_VERTICAL_G, ft);
+                }
+                {
+                    Formatter ft;
+                    ft.Add<int32_t>(stats.maxLateralG);
+                    add(STR_MAX_LATERAL_G, ft);
+                }
+                if (stats.totalAirTime != 0)
+                {
+                    Formatter ft;
+                    ft.Add<int32_t>(ToHumanReadableAirTime(stats.totalAirTime));
+                    add(STR_TOTAL_AIR_TIME, ft);
+                }
+            }
+
+            if (rtd.flags.has(RtdFlag::hasDrops))
+            {
+                {
+                    Formatter ft;
+                    ft.Add<uint16_t>(stats.drops);
+                    add(STR_DROPS, ft);
+                }
+                {
+                    Formatter ft;
+                    ft.Add<uint16_t>((stats.highestDropHeight * 3) / 4);
+                    add(STR_HIGHEST_DROP_HEIGHT, ft);
+                }
+            }
+
+            if (stats.inversions != 0)
+            {
+                Formatter ft;
+                ft.Add<uint16_t>(stats.inversions);
+                add(STR_INVERSIONS, ft);
+            }
+
+            return items;
+        }
+
+        void exitStatsMode()
+        {
+            _statsMode = false;
+            _statsItems.clear();
+            announceFocusedDesign();
+        }
+
+        // I opens (or closes) the extended-statistics list for the focused design.
+        bool onAccessibilityTypeahead(uint32_t key) override
+        {
+            if (key != 'i')
+                return false;
+
+            if (_statsMode)
+            {
+                exitStatsMode();
+                return true;
+            }
+
+            const int32_t trackIndex = focusedDesignIndex();
+            if (trackIndex < 0)
+            {
+                Accessibility::ScreenReaderSpeak("No statistics for this item");
+                return true;
+            }
+
+            _statsItems = buildExtendedStats(static_cast<uint16_t>(trackIndex));
+            if (_statsItems.empty())
+            {
+                Accessibility::ScreenReaderSpeak("No additional statistics for this ride");
+                return true;
+            }
+
+            _statsMode = true;
+            _statsIndex = 0;
+            Accessibility::ScreenReaderSpeakItem(
+                "Extended statistics. " + _statsItems[0], 0, static_cast<int32_t>(_statsItems.size()));
+            return true;
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
+            // While the extended-statistics list is open, the arrow keys step through it, Escape
+            // closes it, and other actions are swallowed so they don't disturb the design list.
+            if (_statsMode)
+            {
+                const int32_t statCount = static_cast<int32_t>(_statsItems.size());
+                switch (action)
+                {
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveLeft:
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::moveRight:
+                    {
+                        if (statCount <= 0)
+                            return true;
+                        const bool forward = (action == AccessibilityAction::moveDown
+                                              || action == AccessibilityAction::moveRight);
+                        if (forward)
+                            _statsIndex = (_statsIndex + 1) % statCount;
+                        else
+                            _statsIndex = (_statsIndex - 1 + statCount) % statCount;
+                        Accessibility::ScreenReaderSpeakItem(_statsItems[_statsIndex], _statsIndex, statCount);
+                        return true;
+                    }
+                    case AccessibilityAction::cancel:
+                        exitStatsMode();
+                        return true;
+                    case AccessibilityAction::announce:
+                        if (statCount > 0)
+                            Accessibility::ScreenReaderSpeakItem(_statsItems[_statsIndex], _statsIndex, statCount);
+                        return true;
+                    default:
+                        return true;
+                }
+            }
+
             const int32_t count = accessibleItemCount();
             switch (action)
             {

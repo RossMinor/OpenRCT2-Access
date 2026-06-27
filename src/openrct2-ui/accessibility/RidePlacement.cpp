@@ -37,8 +37,10 @@
 #include <openrct2/world/tile_element/SurfaceElement.h>
 #include <openrct2/world/tile_element/TileElement.h>
 #include <openrct2/world/tile_element/TrackElement.h>
+#include <algorithm>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace OpenRCT2;
 using namespace OpenRCT2::Numerics;
@@ -68,7 +70,120 @@ namespace OpenRCT2::Ui::Accessibility
     static StationIndex _station = StationIndex::FromUnderlying(0);
     static std::string _rideName;
 
-    static constexpr const char* kDirectionNames[] = { "North", "East", "South", "West" };
+    // World direction (the value stored on the track piece) to compass name, matching the
+    // movement keys' fixed, camera-independent frame: dir 0 = -x = East, 1 = +y = South,
+    // 2 = +x = West (the way the Left arrow moves), 3 = -y = North. This is absolute - it does NOT
+    // shift with the camera rotation, so a given orientation always reports the same compass name,
+    // consistent with the absolute spoken coordinates.
+    static constexpr const char* kFacingNames[] = { "East", "South", "West", "North" };
+
+    // Rotated tile offsets (world units, multiples of kCoordsXYStep) of every tile the current
+    // footprint occupies, relative to the placement origin. Mirrors how TrackPlaceAction lays a
+    // piece out: each occupied tile is origin + clearance.Rotate(direction).
+    static std::vector<CoordsXY> FootprintOffsets()
+    {
+        std::vector<CoordsXY> offsets;
+        const auto& ted = GetTrackElementDescriptor(_trackType);
+        for (uint8_t i = 0; i < ted.sequenceData.numSequences; i++)
+        {
+            const auto& bl = ted.sequenceData.sequences[i].clearance;
+            offsets.push_back(CoordsXY{ bl.x, bl.y }.Rotate(_direction));
+        }
+        if (offsets.empty())
+            offsets.push_back(CoordsXY{ 0, 0 });
+        return offsets;
+    }
+
+    // The keyboard cursor always anchors the footprint's "bottom-left" corner so a blind player
+    // has a single, predictable grab point no matter the ride's size or orientation. In the spoken
+    // coordinate frame "bottom-left" is the lowest X and Y, which corresponds to the largest world
+    // x/y of the footprint; so the placement origin is the cursor minus the maximum rotated offset.
+    static CoordsXY AnchorOriginFromCursor(const CoordsXY& cursor)
+    {
+        int32_t maxX = 0, maxY = 0;
+        for (const auto& o : FootprintOffsets())
+        {
+            maxX = std::max(maxX, o.x);
+            maxY = std::max(maxY, o.y);
+        }
+        return CoordsXY{ cursor.x - maxX, cursor.y - maxY };
+    }
+
+    // Footprint extent in tiles, for announcing the ride's size to the player.
+    static void FootprintSize(int32_t& widthTiles, int32_t& heightTiles)
+    {
+        int32_t minX = 0, maxX = 0, minY = 0, maxY = 0;
+        for (const auto& o : FootprintOffsets())
+        {
+            minX = std::min(minX, o.x);
+            maxX = std::max(maxX, o.x);
+            minY = std::min(minY, o.y);
+            maxY = std::max(maxY, o.y);
+        }
+        widthTiles = (maxX - minX) / kCoordsXYStep + 1;
+        heightTiles = (maxY - minY) / kCoordsXYStep + 1;
+    }
+
+    bool AccessibleRidePlacementFootprintRange(const CoordsXY& cursor, MapRange& outRange)
+    {
+        if (!_active || _stage != Stage::footprint)
+            return false;
+
+        const CoordsXY origin = AnchorOriginFromCursor(cursor);
+        const auto offsets = FootprintOffsets();
+        CoordsXY first{ origin.x + offsets.front().x, origin.y + offsets.front().y };
+        int32_t minX = first.x, maxX = first.x, minY = first.y, maxY = first.y;
+        for (const auto& off : offsets)
+        {
+            const int32_t tx = origin.x + off.x;
+            const int32_t ty = origin.y + off.y;
+            minX = std::min(minX, tx);
+            maxX = std::max(maxX, tx);
+            minY = std::min(minY, ty);
+            maxY = std::max(maxY, ty);
+        }
+        outRange = MapRange(CoordsXY{ minX, minY }, CoordsXY{ maxX, maxY });
+        return true;
+    }
+
+    // Finds a base height where the whole footprint fits at `origin`, querying with the given flags.
+    // Starts at the highest terrain (or water) under the footprint and searches upward, mirroring
+    // the construction tool. Returns the height, or nullopt if none fits within range.
+    static std::optional<int32_t> FindFootprintBaseZ(const CoordsXY& origin)
+    {
+        const auto offsets = FootprintOffsets();
+
+        int32_t baseZ = 0;
+        bool haveSurface = false;
+        for (const auto& off : offsets)
+        {
+            auto* surface = MapGetSurfaceElementAt(CoordsXY{ origin.x + off.x, origin.y + off.y });
+            if (surface == nullptr)
+                continue;
+            int32_t z = floor2(surface->getBaseZ(), kCoordsZStep);
+            if (surface->GetWaterHeight() > 0)
+                z = std::max<int32_t>(z, surface->GetWaterHeight());
+            if (!haveSurface || z > baseZ)
+            {
+                baseZ = z;
+                haveSurface = true;
+            }
+        }
+        if (!haveSurface)
+            return std::nullopt;
+
+        for (int32_t i = 0; i < 7; i++, baseZ += kCoordsZStep)
+        {
+            const CoordsXYZD loc{ origin.x, origin.y, baseZ, _direction };
+            auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, loc, 0, 0, 0, {}, false);
+            auto res = GameActions::Query(&query, getGameState());
+            if (res.error == GameActions::Status::ok)
+                return baseZ;
+            if (res.error == GameActions::Status::insufficientFunds)
+                break; // raising height won't help
+        }
+        return std::nullopt;
+    }
 
     static std::string GetRideName(const RideSelection& item)
     {
@@ -133,9 +248,13 @@ namespace OpenRCT2::Ui::Accessibility
             _stage = Stage::footprint;
             _active = true;
 
+            int32_t w = 1, h = 1;
+            FootprintSize(w, h);
+            std::string size = std::to_string(w) + " by " + std::to_string(h);
             ScreenReaderSpeak(
-                "Placing " + rideName
-                + ". Move the cursor to position it, R to rotate, Enter to build, Escape to cancel.");
+                "Placing " + rideName + ", " + size + ", entrance facing " + kFacingNames[_direction & 3]
+                + ". The cursor holds the bottom left corner. Move to position it, R to rotate, Enter to build, "
+                  "Escape to cancel.");
         });
 
         GameActions::Execute(&createAction, getGameState());
@@ -158,8 +277,7 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
         _direction = (_direction + 1) & 3;
-        ScreenReaderSpeak(
-            std::string("Rotated, facing ") + kDirectionNames[(_direction + GetCurrentRotation()) & 3]);
+        ScreenReaderSpeak(std::string("Rotated, entrance facing ") + kFacingNames[_direction & 3]);
     }
 
     static void Finish()
@@ -207,33 +325,21 @@ namespace OpenRCT2::Ui::Accessibility
         Finish();
     }
 
-    static void PlaceFootprint(const CoordsXY& mapCoords)
+    static void PlaceFootprint(const CoordsXY& cursor)
     {
-        auto* surface = MapGetSurfaceElementAt(mapCoords);
-        if (surface == nullptr)
+        // The cursor marks the footprint's bottom-left corner; derive the real placement origin.
+        const CoordsXY origin = AnchorOriginFromCursor(cursor);
+
+        if (MapGetSurfaceElementAt(origin) == nullptr && MapGetSurfaceElementAt(cursor) == nullptr)
         {
             ScreenReaderSpeak("Cannot build here");
             return;
         }
 
-        int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
-        if (surface->GetWaterHeight() > 0)
-            baseZ = std::max<int32_t>(baseZ, surface->GetWaterHeight());
-
-        // Search upward for a height where the footprint fits, mirroring the construction tool.
-        for (int32_t i = 0; i < 7; i++, baseZ += kCoordsZStep)
+        if (auto baseZ = FindFootprintBaseZ(origin); baseZ.has_value())
         {
-            const CoordsXYZD trackLoc = { mapCoords.x, mapCoords.y, baseZ, _direction };
-            auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, trackLoc, 0, 0, 0, {}, false);
-            auto queryRes = GameActions::Query(&query, getGameState());
-            if (queryRes.error != GameActions::Status::ok)
-            {
-                if (queryRes.error == GameActions::Status::insufficientFunds)
-                    break; // raising height won't help
-                continue;
-            }
-
-            const CoordsXYZ placedLoc = { mapCoords.x, mapCoords.y, baseZ };
+            const CoordsXYZD trackLoc = { origin.x, origin.y, *baseZ, _direction };
+            const CoordsXYZ placedLoc = { origin.x, origin.y, *baseZ };
             auto place = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, trackLoc, 0, 0, 0, {}, false);
             place.SetCallback([placedLoc](const GameActions::GameAction*, const GameActions::Result* result) {
                 if (result->error == GameActions::Status::ok)
@@ -244,9 +350,11 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         // No valid height found: announce the error and stay active for another attempt.
-        Audio::Play3D(Audio::SoundId::error, { mapCoords, baseZ });
+        auto* surface = MapGetSurfaceElementAt(origin);
+        int32_t baseZ = surface != nullptr ? floor2(surface->getBaseZ(), kCoordsZStep) : 0;
+        Audio::Play3D(Audio::SoundId::error, { origin, baseZ });
         auto* windowMgr = GetWindowManager();
-        const CoordsXYZD failLoc = { mapCoords.x, mapCoords.y, baseZ, _direction };
+        const CoordsXYZD failLoc = { origin.x, origin.y, baseZ, _direction };
         auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, failLoc, 0, 0, 0, {}, false);
         auto res = GameActions::Query(&query, getGameState());
         windowMgr->ShowError(res.getErrorTitle(), res.getErrorMessage());

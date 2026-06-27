@@ -37,4 +37,10 @@ namespace OpenRCT2::Ui::Accessibility
 
     // Aborts placement and demolishes the not-yet-built ride so no empty ride is left behind.
     void AccessibleRidePlacementCancel();
+
+    // While positioning a ride's footprint, fills outRange with the world-coordinate bounding box
+    // the footprint would occupy with the cursor at its bottom-left corner, so the placement area
+    // can be highlighted. Returns false when not positioning a footprint (use the single cursor
+    // tile instead).
+    bool AccessibleRidePlacementFootprintRange(const CoordsXY& cursor, MapRange& outRange);
 } // namespace OpenRCT2::Ui::Accessibility

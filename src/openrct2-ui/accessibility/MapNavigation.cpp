@@ -79,18 +79,17 @@ namespace OpenRCT2::Ui::Accessibility
     static bool _initialised = false;
     static TileCoordsXY _cursor{};
 
-    // Spoken coordinates are SCREEN-RELATIVE (at the default view rotation), not raw world X/Y:
-    // they increase toward screen-right (X) and screen-up (Y). The map is drawn isometrically, so
-    // the world X axis runs diagonally and is screen-inverted; reporting screen-relative coords lets
-    // the arrow keys, camera, audio and the spoken numbers all agree (Left lowers X and pans audio
-    // right, etc.). See the arrow-key handling in HandleMapCursorKey.
-    static int32_t SpokenCoordX(int32_t tileX)
+    // Spoken coordinates are ABSOLUTE: a tile always reports the same X/Y no matter how the camera
+    // is rotated. The orientation is fixed to the default view (where screen-left is lower X), so at
+    // the default angle Left lowers X; at other rotations Left still moves the camera/audio left
+    // (see MoveScreen) but may change Y instead - the tile's coordinates themselves never move.
+    static int32_t SpokenCoordX(const TileCoordsXY& t)
     {
-        return (getGameState().mapSize.x - 2) - tileX;
+        return (getGameState().mapSize.x - 2) - t.x;
     }
-    static int32_t SpokenCoordY(int32_t tileY)
+    static int32_t SpokenCoordY(const TileCoordsXY& t)
     {
-        return (getGameState().mapSize.y - 2) - tileY;
+        return (getGameState().mapSize.y - 2) - t.y;
     }
 
     // The key consumed on key-down, so its key-up can be swallowed too.
@@ -125,6 +124,21 @@ namespace OpenRCT2::Ui::Accessibility
     // Edge length (in tiles) of the square brush used for clearing scenery and terraforming.
     // Cycles 1, 3, 5, 7. Larger brushes carve out flat pads for big rides in one keypress.
     static int32_t _brushSize = 1;
+
+    // The world direction (0..3) of the cursor's most recent arrow move. Used as the "facing" for
+    // building sloped paths: a ramp rises (or falls) toward this direction.
+    static Direction _lastMoveDir = 0;
+
+    // Footpath slope-build mode, cycled with the L key. In Up/Down, pressing the build-path key
+    // lays a ramp rising/falling toward the facing direction (connecting to the path behind the
+    // cursor), so the player can build a staircase up to an elevated ride entrance.
+    enum class SlopeMode
+    {
+        flat,
+        up,
+        down,
+    };
+    static SlopeMode _slopeMode = SlopeMode::flat;
 
     // Elevation tone: a short sine beep whose pitch rises with terrain height. It plays only
     // when the cursor moves onto a tile at a different elevation, so scanning flat ground stays
@@ -245,65 +259,89 @@ namespace OpenRCT2::Ui::Accessibility
         return obj != nullptr ? std::string(obj->GetName()) : std::string();
     }
 
-    // Describes what is on a tile: rides, the park entrance, ride entrances/exits, paths,
-    // queues, fences, scenery (named), water, or empty land (inside or outside the park).
+    // Describes everything on a tile, read from the top down so a blind player learns what is
+    // stacked on it (e.g. a ride bridging over a path, or a bench on a path), not just the topmost
+    // feature. Each element becomes one comma-separated part; the park-ownership status ("outside
+    // park") is appended last, since it describes the land beneath everything. "Outside park" means
+    // the tile is outside the owned/buildable area; buying the land makes it read as inside.
     static std::string GetTileDescription(const TileCoordsXY& tile)
     {
-        RideId ride = RideId::GetNull();
-        bool parkEntrance = false, rideEntrance = false, rideExit = false;
-        bool queue = false, path = false, wall = false, scenery = false;
-        std::string wallName, sceneryName, pathName;
+        // Collected bottom-to-top (the order tile elements are stored in), then reversed so the
+        // topmost feature is announced first.
+        std::vector<std::string> parts;
+        RideId seenRide = RideId::GetNull();
 
         for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
         {
             if (auto* track = el->asTrack(); track != nullptr)
             {
-                ride = track->GetRideIndex();
+                // A ride spans several track pieces on one tile; announce it only once.
+                const RideId r = track->GetRideIndex();
+                if (r != seenRide)
+                {
+                    seenRide = r;
+                    if (!r.IsNull())
+                        parts.push_back(GetRideDescription(r));
+                }
             }
             else if (auto* entrance = el->asEntrance(); entrance != nullptr)
             {
                 switch (entrance->GetEntranceType())
                 {
                     case ENTRANCE_TYPE_PARK_ENTRANCE:
-                        parkEntrance = true;
+                        parts.push_back("Park entrance");
                         break;
                     case ENTRANCE_TYPE_RIDE_ENTRANCE:
-                        rideEntrance = true;
+                        parts.push_back("Ride entrance");
                         break;
                     case ENTRANCE_TYPE_RIDE_EXIT:
-                        rideExit = true;
+                        parts.push_back("Ride exit");
                         break;
                 }
             }
             else if (auto* p = el->asPath(); p != nullptr)
             {
-                path = true;
-                queue = p->IsQueue();
-                if (pathName.empty())
+                std::string name;
+                if (p->HasLegacyPathEntry())
+                    name = GetObjectName(ObjectType::paths, p->GetLegacyPathEntryIndex());
+                else
+                    name = GetObjectName(ObjectType::footpathSurface, p->GetSurfaceEntryIndex());
+
+                if (p->IsQueue())
                 {
-                    if (p->HasLegacyPathEntry())
-                        pathName = GetObjectName(ObjectType::paths, p->GetLegacyPathEntryIndex());
+                    if (name.empty())
+                    {
+                        parts.push_back("Queue line");
+                    }
                     else
-                        pathName = GetObjectName(ObjectType::footpathSurface, p->GetSurfaceEntryIndex());
+                    {
+                        // Queue surfaces are usually named just by colour, so append "queue"
+                        // unless the name already mentions it.
+                        std::string lower = name;
+                        for (auto& c : lower)
+                            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        parts.push_back((lower.find("queue") != std::string::npos) ? name : name + " queue");
+                    }
+                }
+                else
+                {
+                    parts.push_back(name.empty() ? "Path" : name);
                 }
             }
             else if (auto* w = el->asWall(); w != nullptr)
             {
-                wall = true;
-                if (wallName.empty())
-                    wallName = GetObjectName(ObjectType::walls, w->GetEntryIndex());
+                std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
+                parts.push_back(name.empty() ? "Fence" : name);
             }
             else if (auto* ss = el->asSmallScenery(); ss != nullptr)
             {
-                scenery = true;
-                if (sceneryName.empty())
-                    sceneryName = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
+                std::string name = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
+                parts.push_back(name.empty() ? "Scenery" : name);
             }
             else if (auto* ls = el->asLargeScenery(); ls != nullptr)
             {
-                scenery = true;
-                if (sceneryName.empty())
-                    sceneryName = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
+                std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
+                parts.push_back(name.empty() ? "Scenery" : name);
             }
 
             if (el->isLastForTile())
@@ -311,38 +349,30 @@ namespace OpenRCT2::Ui::Accessibility
             el++;
         }
 
-        if (!ride.IsNull())
-            return GetRideDescription(ride);
-        if (parkEntrance)
-            return "Park entrance";
-        if (rideEntrance)
-            return "Ride entrance";
-        if (rideExit)
-            return "Ride exit";
-        if (queue)
-        {
-            if (pathName.empty())
-                return "Queue line";
-            // Queue surfaces are usually named just by colour, so append "queue" unless the
-            // name already mentions it.
-            std::string lower = pathName;
-            for (auto& c : lower)
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            return (lower.find("queue") != std::string::npos) ? pathName : pathName + " queue";
-        }
-        if (path)
-            return pathName.empty() ? "Path" : pathName;
-        if (wall)
-            return wallName.empty() ? "Fence" : wallName;
-        if (scenery)
-            return sceneryName.empty() ? "Scenery" : sceneryName;
+        // Tile elements were gathered bottom-to-top; flip so we read the topmost feature first.
+        std::reverse(parts.begin(), parts.end());
 
         auto* surface = MapGetSurfaceElementAt(tile);
+        // Water is the surface itself, so it sits beneath any structures: announce it last.
         if (surface != nullptr && surface->GetWaterHeight() > 0)
-            return "Water";
+            parts.push_back("Water");
 
         const bool owned = surface != nullptr && (surface->GetOwnership() & OWNERSHIP_OWNED) != 0;
-        return owned ? "Empty" : "Outside park";
+
+        if (parts.empty())
+            return owned ? "Empty" : "Outside park";
+
+        std::string result;
+        for (size_t i = 0; i < parts.size(); i++)
+        {
+            if (i != 0)
+                result += ", ";
+            result += parts[i];
+        }
+        // The land beneath everything: note when the tile is outside the owned park area.
+        if (!owned)
+            result += ", outside park";
+        return result;
     }
 
     // Picks a starting tile for the cursor (first owned tile, else map centre).
@@ -504,8 +534,19 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
 
+        const bool wasOwned = IsTileOwned(_cursor); // ownership of the tile we are leaving
         _cursor = target;
         CentreViewportOnCursor();
+
+        // Remember which world direction we just moved, as the "facing" for sloped-path building.
+        if (dx > 0)
+            _lastMoveDir = 2;
+        else if (dx < 0)
+            _lastMoveDir = 0;
+        else if (dy > 0)
+            _lastMoveDir = 1;
+        else if (dy < 0)
+            _lastMoveDir = 3;
 
         // Elevation tone: beep only when the new tile's height differs from the last one, so
         // moving across flat ground stays silent. Pitch rises with elevation.
@@ -520,19 +561,51 @@ namespace OpenRCT2::Ui::Accessibility
             _scanHeight = surface->baseHeight; // the Z-axis probe starts from ground on each move
         }
 
-        // Announce the tile only when its description changes from the previous tile.
+        // Announce crossing the park boundary in either direction. The tile description (below)
+        // already labels unowned land "Outside park", but this gives an explicit, symmetric cue
+        // for both leaving and re-entering, regardless of what is on the tile.
+        const bool owned = IsTileOwned(_cursor);
+        bool announcedCrossing = false;
+        if (owned != wasOwned)
+        {
+            ScreenReaderSpeak(owned ? "Entered the park" : "Left the park");
+            announcedCrossing = true;
+        }
+
+        // Announce the tile only when its description changes from the previous tile. If we just
+        // announced a boundary crossing, queue the description (interrupt = false) so both are heard,
+        // but skip the bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
         std::string description = GetTileDescription(_cursor);
         if (description != _lastTileDescription)
         {
-            ScreenReaderSpeak(description);
+            const bool bareGround = (description == "Empty" || description == "Outside park");
+            if (!(announcedCrossing && bareGround))
+                ScreenReaderSpeak(description, !announcedCrossing);
             _lastTileDescription = std::move(description);
         }
     }
 
+    // Moves the cursor in a SCREEN-relative direction. The (dx, dy) are the world deltas that give
+    // that screen direction at the default view rotation; we rotate them by the current camera
+    // rotation so e.g. Left always moves the camera/audio left, at any of the 4 rotations. The
+    // rotation is the 90-degree step (x, y) -> (y, -x), applied (4 - rotation) times.
+    static void MoveScreen(int32_t dx, int32_t dy, const char* directionName)
+    {
+        const int32_t steps = (4 - (GetCurrentRotation() & 3)) & 3;
+        for (int32_t i = 0; i < steps; i++)
+        {
+            const int32_t nx = dy;
+            const int32_t ny = -dx;
+            dx = nx;
+            dy = ny;
+        }
+        Move(dx, dy, directionName);
+    }
+
     static void ReadCoordinates()
     {
-        const int32_t x = SpokenCoordX(_cursor.x);
-        const int32_t y = SpokenCoordY(_cursor.y);
+        const int32_t x = SpokenCoordX(_cursor);
+        const int32_t y = SpokenCoordY(_cursor);
         std::string text = "X " + std::to_string(x) + ", Y " + std::to_string(y);
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
             text += ", elevation " + std::to_string(surface->baseHeight / 2);
@@ -558,7 +631,13 @@ namespace OpenRCT2::Ui::Accessibility
         if (wantTile)
         {
             const auto world = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
-            setMapSelectRange(CoordsXY{ world.x, world.y });
+            // While positioning a ride, highlight the whole footprint the ride would occupy;
+            // otherwise highlight just the cursor tile.
+            MapRange footprint;
+            if (AccessibleRidePlacementFootprintRange(CoordsXY{ world.x, world.y }, footprint))
+                setMapSelectRange(footprint);
+            else
+                setMapSelectRange(CoordsXY{ world.x, world.y });
             gMapSelectType = MapSelectType::full;
             gMapSelectFlags.set(MapSelectFlag::enable);
             MapSelection::invalidate();
@@ -689,26 +768,69 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    // Compass name for a world direction, in the same fixed frame as the spoken coordinates and
+    // ride-placement facing (0 = -x = East, 1 = +y = South, 2 = +x = West, 3 = -y = North).
+    static const char* WorldDirectionName(Direction dir)
+    {
+        static constexpr const char* kNames[] = { "East", "South", "West", "North" };
+        return kNames[dir & 3];
+    }
+
+    // Connecting height of the path on the tile behind the cursor (opposite the facing direction
+    // `dir`), at the edge shared with the cursor's tile, or nullopt when there is no path to
+    // connect to. A ramp that rises toward the cursor is one path-step higher on that edge.
+    static std::optional<int32_t> BehindPathEdgeHeight(Direction dir)
+    {
+        const auto mapSize = getGameState().mapSize;
+        const TileCoordsXY behind{ _cursor.x - CoordsDirectionDelta[dir].x / kCoordsXYStep,
+                                   _cursor.y - CoordsDirectionDelta[dir].y / kCoordsXYStep };
+        if (behind.x < 1 || behind.y < 1 || behind.x > mapSize.x - 2 || behind.y > mapSize.y - 2)
+            return std::nullopt;
+
+        std::optional<int32_t> best;
+        for (TileElement* el = MapGetFirstElementAt(behind); el != nullptr;)
+        {
+            if (auto* path = el->asPath(); path != nullptr)
+            {
+                int32_t edge = path->getBaseZ();
+                if (path->IsSloped() && path->GetSlopeDirection() == dir)
+                    edge += kPathHeightStep;
+                if (!best.has_value() || edge > *best)
+                    best = edge;
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        return best;
+    }
+
+    // Cycles the footpath slope-build mode (flat -> up -> down) and announces it.
+    static void CycleSlopeMode()
+    {
+        switch (_slopeMode)
+        {
+            case SlopeMode::flat:
+                _slopeMode = SlopeMode::up;
+                ScreenReaderSpeak("Slope up");
+                break;
+            case SlopeMode::up:
+                _slopeMode = SlopeMode::down;
+                ScreenReaderSpeak("Slope down");
+                break;
+            case SlopeMode::down:
+                _slopeMode = SlopeMode::flat;
+                ScreenReaderSpeak("Flat paths");
+                break;
+        }
+    }
+
     static void BuildPath()
     {
         // Ensure a valid default path type is selected.
         if (!Windows::WindowFootpathSelectDefault())
         {
             ScreenReaderSpeak("No path type available");
-            return;
-        }
-
-        // Let the engine work out the base height and slope from the terrain, so paths follow
-        // gentle hills (becoming stairs) instead of always being placed flat.
-        auto placement = FootpathGetOnTerrainPlacement(_cursor);
-        if (!placement.isValid())
-        {
-            ScreenReaderSpeak("Cannot build a path here");
-            return;
-        }
-        if (placement.slope.type == FootpathSlopeType::irregular)
-        {
-            ScreenReaderSpeak("Ground is too uneven to build a path here");
             return;
         }
 
@@ -723,18 +845,88 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         const auto world = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
-        const CoordsXYZ loc{ world.x, world.y, placement.baseZ };
+        const Direction dir = _lastMoveDir & 3;
+        const auto behindEdge = BehindPathEdgeHeight(dir);
 
+        FootpathSlope slope{};
+        int32_t baseZ = 0;
+        Direction actionDir = kInvalidDirection;
+        std::string what;
+
+        if (_slopeMode == SlopeMode::flat)
+        {
+            auto placement = FootpathGetOnTerrainPlacement(_cursor);
+            // Prefer connecting to a higher path behind the cursor (e.g. a flat landing at the top
+            // of a ramp); otherwise follow the terrain as before so paths step up gentle hills.
+            if (behindEdge.has_value() && (!placement.isValid() || *behindEdge > placement.baseZ))
+            {
+                baseZ = *behindEdge;
+                slope = { FootpathSlopeType::flat, 0 };
+                actionDir = dir;
+            }
+            else
+            {
+                if (!placement.isValid())
+                {
+                    ScreenReaderSpeak("Cannot build a path here");
+                    return;
+                }
+                if (placement.slope.type == FootpathSlopeType::irregular)
+                {
+                    ScreenReaderSpeak("Ground is too uneven to build a path here");
+                    return;
+                }
+                baseZ = placement.baseZ;
+                slope = placement.slope;
+            }
+            what = gFootpathSelection.isQueueSelected ? "Queue built" : "Path built";
+            if (slope.type == FootpathSlopeType::sloped)
+                what += ", sloped";
+        }
+        else
+        {
+            // Up or down ramp toward the facing direction, starting from the path behind the cursor
+            // (or the ground when there is none, to begin a ramp from terrain).
+            int32_t fromZ;
+            if (behindEdge.has_value())
+            {
+                fromZ = *behindEdge;
+            }
+            else
+            {
+                // No path behind: start the ramp from the ground at the cursor.
+                auto placement = FootpathGetOnTerrainPlacement(_cursor);
+                if (!placement.isValid())
+                {
+                    ScreenReaderSpeak("Cannot build a path here");
+                    return;
+                }
+                fromZ = placement.baseZ;
+            }
+
+            actionDir = dir;
+            if (_slopeMode == SlopeMode::up)
+            {
+                baseZ = fromZ;
+                slope = { FootpathSlopeType::sloped, dir };
+                what = std::string("Ramp up to the ") + WorldDirectionName(dir);
+            }
+            else
+            {
+                baseZ = fromZ - kPathHeightStep;
+                slope = { FootpathSlopeType::sloped, DirectionReverse(dir) };
+                what = std::string("Ramp down to the ") + WorldDirectionName(dir);
+            }
+        }
+
+        const CoordsXYZ loc{ world.x, world.y, baseZ };
         auto action = GameActions::FootpathPlaceAction(
-            loc, placement.slope, type, gFootpathSelection.railings, kInvalidDirection, flags);
+            loc, slope, type, gFootpathSelection.railings, actionDir, flags);
         const auto result = GameActions::Execute(&action, getGameState());
         if (result.error == GameActions::Status::ok)
         {
             _lastTileDescription.clear();
-            std::string msg = gFootpathSelection.isQueueSelected ? "Queue built" : "Path built";
-            if (placement.slope.type == FootpathSlopeType::sloped)
-                msg += ", sloped";
-            ScreenReaderSpeak(msg);
+            ScreenReaderSpeak(what);
         }
         // Failures are spoken automatically via the error window.
     }
@@ -1139,8 +1331,8 @@ namespace OpenRCT2::Ui::Accessibility
         CentreViewportOnCursor();
 
         _lastTileDescription = GetTileDescription(_cursor);
-        const int32_t x = SpokenCoordX(_cursor.x);
-        const int32_t y = SpokenCoordY(_cursor.y);
+        const int32_t x = SpokenCoordX(_cursor);
+        const int32_t y = SpokenCoordY(_cursor);
         ScreenReaderSpeak("Park entrance, X " + std::to_string(x) + ", Y " + std::to_string(y));
     }
 
@@ -1260,11 +1452,16 @@ namespace OpenRCT2::Ui::Accessibility
         if (key == SDLK_TAB)
             return EnterMenuMode();
 
+        // Shift+Left / Shift+Right rotate the camera (the view-rotate shortcuts). Let them fall
+        // through to the shortcut manager instead of moving the map cursor.
+        if ((key == SDLK_LEFT || key == SDLK_RIGHT) && (modifiers & KMOD_SHIFT))
+            return false;
+
         if (key != SDLK_UP && key != SDLK_DOWN && key != SDLK_LEFT && key != SDLK_RIGHT && key != SDLK_c
             && key != SDLK_t && key != SDLK_m && key != SDLK_SPACE && key != SDLK_d && key != SDLK_e
             && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET && key != SDLK_p
-            && key != SDLK_q && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_PAGEUP
-            && key != SDLK_PAGEDOWN)
+            && key != SDLK_q && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
+            && key != SDLK_PAGEUP && key != SDLK_PAGEDOWN)
             return false;
 
         if (!_initialised)
@@ -1321,6 +1518,9 @@ namespace OpenRCT2::Ui::Accessibility
                 else
                     ScanZLevel(-1);
                 break;
+            case SDLK_l:
+                CycleSlopeMode();
+                break;
             case SDLK_b:
                 CycleBrushSize();
                 break;
@@ -1341,16 +1541,16 @@ namespace OpenRCT2::Ui::Accessibility
             // flipped, see SpokenCoordX/Y) so Left moves the camera/audio left and lowers X, Up
             // moves away and raises Y, etc.
             case SDLK_UP:
-                Move(0, -1, "Up");
+                MoveScreen(0, -1, "Up");
                 break;
             case SDLK_DOWN:
-                Move(0, 1, "Down");
+                MoveScreen(0, 1, "Down");
                 break;
             case SDLK_RIGHT:
-                Move(-1, 0, "Right");
+                MoveScreen(-1, 0, "Right");
                 break;
             case SDLK_LEFT:
-                Move(1, 0, "Left");
+                MoveScreen(1, 0, "Left");
                 break;
         }
         return true;
@@ -1448,8 +1648,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_initialised)
             InitialiseCursor();
 
-        const int32_t x = SpokenCoordX(mn.x);
-        const int32_t y = SpokenCoordY(mn.y);
+        const int32_t x = SpokenCoordX(mn);
+        const int32_t y = SpokenCoordY(mn);
         return "X " + std::to_string(x) + ", Y " + std::to_string(y);
     }
 

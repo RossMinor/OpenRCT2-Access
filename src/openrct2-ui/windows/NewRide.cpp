@@ -12,6 +12,7 @@
 #include <limits>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/RidePlacement.h>
+#include <openrct2-ui/accessibility/RideVisualDescriptions.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/ride/Construction.h>
@@ -633,12 +634,9 @@ namespace OpenRCT2::Ui::Windows
             auto& objMgr = GetContext()->GetObjectManager();
             const auto* rideObj = objMgr.GetLoadedObject<RideObject>(item.EntryIndex);
 
+            // Read order: name, cost, dimensions, other info (designs and vehicles), the in-game
+            // description, and finally a visual description of what the ride looks like.
             std::string text = getRideName(item);
-
-            // Footprint dimensions, so the player knows the size of what they're about to build.
-            const std::string footprint = getRideFootprintText(item);
-            if (!footprint.empty())
-                text += ", " + footprint;
 
             // Cost, right after the name.
             if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
@@ -652,22 +650,20 @@ namespace OpenRCT2::Ui::Windows
                 text += ", " + OpenRCT2::FormatStringID(stringId, price);
             }
 
+            // Footprint dimensions, so the player knows the size of what they're about to build.
+            const std::string footprint = getRideFootprintText(item);
+            if (!footprint.empty())
+                text += ", " + footprint;
+
+            // Other info: number of saved designs available...
             if (_currentTab != SHOP_TAB)
             {
                 const auto designCount = GetNumTrackDesigns(item);
                 text += ", " + OpenRCT2::FormatStringID(GetDesignsAvailableStringId(designCount), designCount);
             }
 
-            // Description.
-            if (rideObj != nullptr)
-            {
-                const RideNaming rideNaming = GetRideNaming(item.Type, &rideObj->GetEntry());
-                if (rideNaming.Description != kStringIdNone)
-                    text += ". " + OpenRCT2::FormatStringID(rideNaming.Description);
-            }
-
-            // Vehicles last, mirroring the info panel: the full list of choices when the ride
-            // type offers one, or the specific vehicle name when vehicles are listed separately.
+            // ...and the available vehicles, mirroring the info panel: the full list of choices when
+            // the ride type offers one, or the specific vehicle name when listed separately.
             UpdateVehicleAvailability(item.Type);
             if (!_vehicleAvailability.empty())
             {
@@ -682,6 +678,19 @@ namespace OpenRCT2::Ui::Windows
                     text += _vehicleAvailability.c_str();
                 }
             }
+
+            // In-game description.
+            if (rideObj != nullptr)
+            {
+                const RideNaming rideNaming = GetRideNaming(item.Type, &rideObj->GetEntry());
+                if (rideNaming.Description != kStringIdNone)
+                    text += ". " + OpenRCT2::FormatStringID(rideNaming.Description);
+            }
+
+            // Visual description (what the ride looks like) for players who cannot see it, last.
+            const std::string visual = Accessibility::GetRideVisualDescription(item.Type);
+            if (!visual.empty())
+                text += ". " + visual;
 
             return text;
         }
