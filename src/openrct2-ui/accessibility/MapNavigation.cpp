@@ -80,9 +80,10 @@ namespace OpenRCT2::Ui::Accessibility
     static TileCoordsXY _cursor{};
 
     // Spoken coordinates are ABSOLUTE: a tile always reports the same X/Y no matter how the camera
-    // is rotated. The orientation is fixed to the default view (where screen-left is lower X), so at
-    // the default angle Left lowers X; at other rotations Left still moves the camera/audio left
-    // (see MoveScreen) but may change Y instead - the tile's coordinates themselves never move.
+    // is rotated. The orientation is fixed to the default view (where screen-right is higher X and
+    // screen-up is higher Y). The arrow keys rotate with the camera (see MoveScreen) so they stay
+    // consistent with these fixed axes: after rotating East, Up moves the way Right did at North and
+    // therefore raises X. The tile's coordinates themselves never move.
     static int32_t SpokenCoordX(const TileCoordsXY& t)
     {
         return (getGameState().mapSize.x - 2) - t.x;
@@ -585,13 +586,15 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    // Moves the cursor in a SCREEN-relative direction. The (dx, dy) are the world deltas that give
-    // that screen direction at the default view rotation; we rotate them by the current camera
-    // rotation so e.g. Left always moves the camera/audio left, at any of the 4 rotations. The
-    // rotation is the 90-degree step (x, y) -> (y, -x), applied (4 - rotation) times.
+    // Moves the cursor in a SCREEN-relative direction. The (dx, dy) are the world deltas for that
+    // direction at the default view rotation; we rotate them by the current camera rotation so the
+    // arrow keys rotate together with the view. This keeps them consistent with the absolute spoken
+    // coordinates at every rotation: e.g. after rotating East, Up moves the way Right did at North,
+    // so it raises X (see SpokenCoordX/Y). The rotation is the 90-degree step (x, y) -> (y, -x),
+    // applied `rotation` times (matching how the camera rotates the world onto the screen).
     static void MoveScreen(int32_t dx, int32_t dy, const char* directionName)
     {
-        const int32_t steps = (4 - (GetCurrentRotation() & 3)) & 3;
+        const int32_t steps = GetCurrentRotation() & 3;
         for (int32_t i = 0; i < steps; i++)
         {
             const int32_t nx = dy;
