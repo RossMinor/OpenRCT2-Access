@@ -17,6 +17,7 @@
 #include <openrct2/SpriteIds.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/park/ParkSetLoanAction.h>
+#include <openrct2/actions/park/ParkSetResearchFundingAction.h>
 #include <openrct2/drawing/ColourMap.h>
 #include <openrct2/drawing/Drawing.String.h>
 #include <openrct2/drawing/Drawing.h>
@@ -231,6 +232,12 @@ namespace OpenRCT2::Ui::Windows
         // currently focused marketing campaign on the Marketing page.
         bool _accessLoanMode = false;
         int32_t _accessMarketingIndex = -1;
+        // Focused line in the Summary page's detailed read-out (the expenditure/income table). -1
+        // means nothing focused yet, so the first Down arrow lands on the first line.
+        int32_t _accessSummaryIndex = -1;
+        // Focused row in the Research page's funding controls (funding level + 7 priority
+        // checkboxes), navigated with up/down and toggled with Enter. -1 = nothing focused yet.
+        int32_t _accessResearchIndex = -1;
 
         void SetDisabledTabs()
         {
@@ -333,10 +340,141 @@ namespace OpenRCT2::Ui::Windows
                         + (count == 1 ? " active marketing campaign" : " active marketing campaigns") + hint;
                 }
                 case WINDOW_FINANCES_PAGE_RESEARCH:
+                    // The funding level and each priority checkbox are navigable one at a time with
+                    // up/down and toggled with Enter (see buildResearchItems), so the entry
+                    // announcement is just a short header.
                     return "Research funding, "
-                        + OpenRCT2::FormatStringID(kResearchFundingLevelNames[gameState.researchFundingLevel & 3]);
+                        + OpenRCT2::FormatStringID(kResearchFundingLevelNames[gameState.researchFundingLevel & 3])
+                        + ". Use up and down to review and change funding and priorities";
             }
             return {};
+        }
+
+        // The Summary page's full expenditure / income table, one line per category for the current
+        // month (every category, even zero ones, so nothing on screen is skipped), then the month
+        // profit and the loan / interest / cash / value totals drawn beneath the table. Navigated
+        // line by line with the up and down arrows.
+        std::vector<std::string> buildSummaryLines()
+        {
+            auto& park = getGameState().park;
+            const auto cash = [](money64 m) { return OpenRCT2::FormatStringID(STR_CURRENCY_FORMAT, m); };
+            std::vector<std::string> lines;
+
+            money64 profit = 0;
+            for (int32_t j = 0; j < static_cast<int32_t>(ExpenditureType::count); j++)
+            {
+                const money64 v = _parkData.expenditureTable[0][j]; // index 0 = current month
+                profit += v;
+                lines.push_back(OpenRCT2::FormatStringID(_windowFinancesSummaryRowLabels[j]) + ", " + cash(v));
+            }
+            lines.push_back("Month profit, " + cash(profit));
+
+            lines.push_back("Loan, " + cash(park.bankLoan) + ", press Enter to adjust");
+            if (!(_parkData.flags & PARK_FLAGS_RCT1_INTEREST))
+                lines.push_back(
+                    "Interest rate, "
+                    + OpenRCT2::FormatStringID(
+                        STR_FINANCES_SUMMARY_AT_X_PER_YEAR, static_cast<uint16_t>(_parkData.bankLoanInterestRate)));
+            lines.push_back("Cash, " + cash(park.cash));
+            lines.push_back("Park value, " + cash(park.value));
+            lines.push_back("Company value, " + cash(park.companyValue));
+            lines.push_back("Weekly profit, " + cash(park.currentProfit));
+            return lines;
+        }
+
+        void accessMoveSummary(int32_t delta)
+        {
+            const auto lines = buildSummaryLines();
+            if (lines.empty())
+                return;
+            const int32_t n = static_cast<int32_t>(lines.size());
+            _accessSummaryIndex = (_accessSummaryIndex + delta + n) % n;
+            Accessibility::ScreenReaderSpeakItem(lines[_accessSummaryIndex], _accessSummaryIndex, n);
+        }
+
+        // One navigable row on the Research page's funding controls. category -1 is the funding-level
+        // row (Enter cycles None/Minimum/Normal/Maximum, matching the game's funding dropdown); 0..6
+        // are the priority checkboxes (Enter toggles on/off, exactly as clicking the checkbox does).
+        struct AxResearchItem
+        {
+            std::string label;
+            int32_t category;
+            bool enabled;
+        };
+
+        std::vector<AxResearchItem> buildResearchItems()
+        {
+            const auto& gameState = getGameState();
+            std::vector<AxResearchItem> items;
+
+            // Funding level (hidden in no-money scenarios and once all research is done).
+            if (widgets[WIDX_RESEARCH_FUNDING].type != WidgetType::empty)
+            {
+                const int32_t level = gameState.researchFundingLevel & 3;
+                items.push_back({ "Funding level, " + OpenRCT2::FormatStringID(kResearchFundingLevelNames[level]) + ", "
+                                      + OpenRCT2::FormatStringID(STR_RESEARCH_COST_PER_MONTH, kResearchCosts[level]),
+                                  -1, true });
+            }
+
+            static constexpr StringId kLabels[7] = {
+                STR_RESEARCH_NEW_TRANSPORT_RIDES, STR_RESEARCH_NEW_GENTLE_RIDES,
+                STR_RESEARCH_NEW_ROLLER_COASTERS, STR_RESEARCH_NEW_THRILL_RIDES,
+                STR_RESEARCH_NEW_WATER_RIDES,     STR_RESEARCH_NEW_SHOPS_AND_STALLS,
+                STR_RESEARCH_NEW_SCENERY_AND_THEMING,
+            };
+            for (int32_t i = 0; i < 7; i++)
+            {
+                const int32_t mask = 1 << i;
+                const bool enabled = (gameState.researchUncompletedCategories & mask) != 0;
+                const char* state = !enabled ? "fully researched" : ((gameState.researchPriorities & mask) ? "on" : "off");
+                items.push_back(
+                    { OpenRCT2::FormatStringID(kLabels[i]) + ", " + state + ", checkbox", i, enabled });
+            }
+            return items;
+        }
+
+        void accessMoveResearch(int32_t delta)
+        {
+            const auto items = buildResearchItems();
+            if (items.empty())
+                return;
+            const int32_t n = static_cast<int32_t>(items.size());
+            _accessResearchIndex = (_accessResearchIndex + delta + n) % n;
+            Accessibility::ScreenReaderSpeakItem(items[_accessResearchIndex].label, _accessResearchIndex, n);
+        }
+
+        void accessActivateResearch()
+        {
+            const auto items = buildResearchItems();
+            if (_accessResearchIndex < 0 || _accessResearchIndex >= static_cast<int32_t>(items.size()))
+                return;
+            const auto& it = items[_accessResearchIndex];
+
+            if (it.category < 0)
+            {
+                // Cycle the funding level (None -> Minimum -> Normal -> Maximum -> None) - the same
+                // game action the funding dropdown runs.
+                const auto& gameState = getGameState();
+                const int32_t newLevel = (gameState.researchFundingLevel + 1) & 3;
+                auto action = GameActions::ParkSetResearchFundingAction(gameState.researchPriorities, newLevel);
+                GameActions::Execute(&action, getGameState());
+            }
+            else if (!it.enabled)
+            {
+                Accessibility::ScreenReaderSpeak("That category is fully researched and cannot be changed");
+                return;
+            }
+            else
+            {
+                // Route through the window's own mouse-up handler, the exact path a checkbox click
+                // takes (WindowResearchFundingMouseUp), so the toggle matches the game precisely.
+                onMouseUp(static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + it.category));
+            }
+
+            // The action applies immediately in single player; re-read the focused row.
+            const auto updated = buildResearchItems();
+            if (_accessResearchIndex >= 0 && _accessResearchIndex < static_cast<int32_t>(updated.size()))
+                Accessibility::ScreenReaderSpeak(updated[_accessResearchIndex].label);
         }
 
         void changeAccessibilityTab(int32_t delta)
@@ -349,6 +487,8 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
             setPage(newPage);
+            _accessSummaryIndex = -1;  // restart the Summary table read-out from the top
+            _accessResearchIndex = -1; // and the Research funding rows
 
             // Position among the visible tabs.
             int32_t total = 0, pos = 0;
@@ -402,10 +542,14 @@ namespace OpenRCT2::Ui::Windows
 
         std::string accessCampaignName(int32_t i)
         {
-            const auto& wd = widgets[WIDX_CAMPAIGN_1 + i];
-            if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
-                return OpenRCT2::FormatStringID(wd.text);
-            return "Campaign";
+            // The campaign buttons draw their label directly (kMarketingCampaignNames), not via the
+            // widget's text field, so read it from there and include the weekly cost - the same two
+            // pieces of text a sighted player sees on the button.
+            std::string name = OpenRCT2::FormatStringID(kMarketingCampaignNames[i][0]);
+            if (name.empty())
+                name = "Campaign";
+            return name + ", "
+                + OpenRCT2::FormatStringID(STR_MARKETING_PER_WEEK, AdvertisingCampaignPricePerWeek[i]);
         }
 
         void accessMoveMarketing(int32_t delta)
@@ -473,12 +617,20 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::moveUp:
                     if (page == WINDOW_FINANCES_PAGE_MARKETING)
                         accessMoveMarketing(-1);
+                    else if (page == WINDOW_FINANCES_PAGE_SUMMARY)
+                        accessMoveSummary(-1);
+                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH)
+                        accessMoveResearch(-1);
                     else
                         Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
                     return true;
                 case AccessibilityAction::moveDown:
                     if (page == WINDOW_FINANCES_PAGE_MARKETING)
                         accessMoveMarketing(1);
+                    else if (page == WINDOW_FINANCES_PAGE_SUMMARY)
+                        accessMoveSummary(1);
+                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH)
+                        accessMoveResearch(1);
                     else
                         Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
                     return true;
@@ -494,10 +646,20 @@ namespace OpenRCT2::Ui::Windows
                     {
                         onMouseUp(WIDX_CAMPAIGN_1 + _accessMarketingIndex); // opens the New Campaign window
                     }
+                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH)
+                    {
+                        accessActivateResearch();
+                    }
                     return true;
                 case AccessibilityAction::announce:
                     if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
                         Accessibility::ScreenReaderSpeak(accessCampaignName(_accessMarketingIndex) + ", press Enter to set up");
+                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH && _accessResearchIndex >= 0)
+                    {
+                        const auto items = buildResearchItems();
+                        if (_accessResearchIndex < static_cast<int32_t>(items.size()))
+                            Accessibility::ScreenReaderSpeak(items[_accessResearchIndex].label);
+                    }
                     else
                         Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
                     return true;
@@ -512,13 +674,20 @@ namespace OpenRCT2::Ui::Windows
 
         std::optional<ScreenRect> getAccessibilityFocusRect() override
         {
-            WidgetIndex w;
+            WidgetIndex w = WIDX_TAB_1 + page;
             if (_accessLoanMode)
                 w = WIDX_LOAN;
             else if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
                 w = WIDX_CAMPAIGN_1 + _accessMarketingIndex;
-            else
-                w = WIDX_TAB_1 + page;
+            else if (page == WINDOW_FINANCES_PAGE_RESEARCH && _accessResearchIndex >= 0)
+            {
+                const auto items = buildResearchItems();
+                if (_accessResearchIndex < static_cast<int32_t>(items.size()))
+                {
+                    const int32_t cat = items[_accessResearchIndex].category;
+                    w = (cat < 0) ? WIDX_RESEARCH_FUNDING : static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + cat);
+                }
+            }
             if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
                 return std::nullopt;
             const auto& wd = widgets[w];

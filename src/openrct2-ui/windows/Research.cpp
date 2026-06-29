@@ -120,20 +120,13 @@ namespace OpenRCT2::Ui::Windows
         STR_RESEARCH_STAGE_UNKNOWN,
     };
 
-    // Priority-checkbox labels, in bit order, for the accessible Funding page summary.
-    static constexpr StringId kResearchCategoryLabels[] = {
-        STR_RESEARCH_NEW_TRANSPORT_RIDES,
-        STR_RESEARCH_NEW_GENTLE_RIDES,
-        STR_RESEARCH_NEW_ROLLER_COASTERS,
-        STR_RESEARCH_NEW_THRILL_RIDES,
-        STR_RESEARCH_NEW_WATER_RIDES,
-        STR_RESEARCH_NEW_SHOPS_AND_STALLS,
-        STR_RESEARCH_NEW_SCENERY_AND_THEMING,
-    };
-
     class ResearchWindow final : public Window
     {
     public:
+        // Accessibility: focused row in the Funding page's item list (funding level + the seven
+        // priority checkboxes). -1 means nothing focused, so the first Down arrow lands on row 0.
+        int32_t _accessFundingIndex = -1;
+
         void onOpen() override
         {
             setPage(WINDOW_RESEARCH_PAGE_DEVELOPMENT);
@@ -222,32 +215,113 @@ namespace OpenRCT2::Ui::Windows
                     return text;
                 }
                 case WINDOW_RESEARCH_PAGE_FUNDING:
-                {
-                    std::string text = "Overview: Research funding "
-                        + OpenRCT2::FormatStringID(kResearchFundingLevelNames[gameState.researchFundingLevel & 3]);
-                    std::string priorities;
-                    for (int32_t i = 0; i < 7; i++)
-                    {
-                        if (gameState.researchPriorities & (1uLL << i))
-                        {
-                            if (!priorities.empty())
-                                priorities += ", ";
-                            priorities += OpenRCT2::FormatStringID(kResearchCategoryLabels[i]);
-                        }
-                    }
-                    if (priorities.empty())
-                        text += ". No research priorities selected";
-                    else
-                        text += ". Priorities: " + priorities;
-                    return text;
-                }
+                    // The funding level and each priority are now navigable one at a time with the up
+                    // and down arrows (see buildFundingItems), so the entry announcement is just a
+                    // short header rather than one long chunk.
+                    return "Research funding, "
+                        + OpenRCT2::FormatStringID(kResearchFundingLevelNames[gameState.researchFundingLevel & 3])
+                        + ". Use up and down to review and change funding and priorities";
             }
             return {};
         }
 
+        // One navigable row on the Funding page. category -1 is the funding-level row (Enter cycles
+        // None/Minimum/Normal/Maximum); 0..6 are the priority checkboxes (Enter toggles on/off).
+        struct AxFundingItem
+        {
+            std::string label;
+            int32_t category;
+            bool enabled;
+        };
+
+        std::vector<AxFundingItem> buildFundingItems()
+        {
+            const auto& gameState = getGameState();
+            std::vector<AxFundingItem> items;
+
+            // Funding level (hidden in no-money scenarios and once all research is done).
+            if (widgets[WIDX_RESEARCH_FUNDING].type != WidgetType::empty)
+            {
+                const int32_t level = gameState.researchFundingLevel & 3;
+                items.push_back({ "Funding level, " + OpenRCT2::FormatStringID(kResearchFundingLevelNames[level]) + ", "
+                                      + OpenRCT2::FormatStringID(STR_RESEARCH_COST_PER_MONTH, kResearchCosts[level]),
+                                  -1, true });
+            }
+
+            static constexpr StringId kLabels[7] = {
+                STR_RESEARCH_NEW_TRANSPORT_RIDES, STR_RESEARCH_NEW_GENTLE_RIDES,
+                STR_RESEARCH_NEW_ROLLER_COASTERS, STR_RESEARCH_NEW_THRILL_RIDES,
+                STR_RESEARCH_NEW_WATER_RIDES,     STR_RESEARCH_NEW_SHOPS_AND_STALLS,
+                STR_RESEARCH_NEW_SCENERY_AND_THEMING,
+            };
+            for (int32_t i = 0; i < 7; i++)
+            {
+                const int32_t mask = 1 << i;
+                const bool enabled = (gameState.researchUncompletedCategories & mask) != 0;
+                const char* state = !enabled ? "fully researched" : ((gameState.researchPriorities & mask) ? "on" : "off");
+                items.push_back(
+                    { OpenRCT2::FormatStringID(kLabels[i]) + ", " + state + ", checkbox", i, enabled });
+            }
+            return items;
+        }
+
+        void accessMoveFunding(int32_t delta)
+        {
+            const auto items = buildFundingItems();
+            if (items.empty())
+                return;
+            const int32_t n = static_cast<int32_t>(items.size());
+            _accessFundingIndex = (_accessFundingIndex + delta + n) % n;
+            Accessibility::ScreenReaderSpeakItem(items[_accessFundingIndex].label, _accessFundingIndex, n);
+        }
+
+        void accessActivateFunding()
+        {
+            const auto items = buildFundingItems();
+            if (_accessFundingIndex < 0 || _accessFundingIndex >= static_cast<int32_t>(items.size()))
+                return;
+            const auto& it = items[_accessFundingIndex];
+            const auto& gameState = getGameState();
+
+            if (it.category < 0)
+            {
+                // Cycle the funding level (None -> Minimum -> Normal -> Maximum -> None).
+                const int32_t newLevel = (gameState.researchFundingLevel + 1) & 3;
+                auto action = GameActions::ParkSetResearchFundingAction(gameState.researchPriorities, newLevel);
+                GameActions::Execute(&action, getGameState());
+            }
+            else if (!it.enabled)
+            {
+                Accessibility::ScreenReaderSpeak("That category is fully researched and cannot be changed");
+                return;
+            }
+            else
+            {
+                const uint8_t newPriorities = gameState.researchPriorities ^ static_cast<uint8_t>(1u << it.category);
+                auto action = GameActions::ParkSetResearchFundingAction(newPriorities, gameState.researchFundingLevel);
+                GameActions::Execute(&action, getGameState());
+            }
+
+            // The action applies immediately in single player; re-read the focused row so the new
+            // funding level or checkbox state is heard.
+            const auto updated = buildFundingItems();
+            if (_accessFundingIndex >= 0 && _accessFundingIndex < static_cast<int32_t>(updated.size()))
+                Accessibility::ScreenReaderSpeak(updated[_accessFundingIndex].label);
+        }
+
         std::optional<ScreenRect> getAccessibilityFocusRect() override
         {
-            const WidgetIndex w = WIDX_TAB_1 + page;
+            WidgetIndex w = WIDX_TAB_1 + page;
+            // On the Funding page, highlight the focused row's widget so a sighted helper can follow.
+            if (page == WINDOW_RESEARCH_PAGE_FUNDING && _accessFundingIndex >= 0)
+            {
+                const auto items = buildFundingItems();
+                if (_accessFundingIndex < static_cast<int32_t>(items.size()))
+                {
+                    const int32_t cat = items[_accessFundingIndex].category;
+                    w = (cat < 0) ? WIDX_RESEARCH_FUNDING : static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + cat);
+                }
+            }
             if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
                 return std::nullopt;
             const auto& wd = widgets[w];
@@ -257,6 +331,7 @@ namespace OpenRCT2::Ui::Windows
 
         void changeAccessibilityTab(int32_t delta)
         {
+            _accessFundingIndex = -1; // restart the Funding row read-out from the top
             int32_t newPage = (page + delta + WINDOW_RESEARCH_PAGE_COUNT) % WINDOW_RESEARCH_PAGE_COUNT;
             setPage(newPage);
             Accessibility::ScreenReaderSpeakItem(getAccessibilityPageSummary(), page, WINDOW_RESEARCH_PAGE_COUNT);
@@ -273,8 +348,30 @@ namespace OpenRCT2::Ui::Windows
                     changeAccessibilityTab(1);
                     return true;
                 case AccessibilityAction::moveUp:
+                    if (page == WINDOW_RESEARCH_PAGE_FUNDING)
+                        accessMoveFunding(-1);
+                    else
+                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
+                    return true;
                 case AccessibilityAction::moveDown:
-                    Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
+                    if (page == WINDOW_RESEARCH_PAGE_FUNDING)
+                        accessMoveFunding(1);
+                    else
+                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
+                    return true;
+                case AccessibilityAction::activate:
+                    if (page == WINDOW_RESEARCH_PAGE_FUNDING)
+                        accessActivateFunding();
+                    return true;
+                case AccessibilityAction::announce:
+                    if (page == WINDOW_RESEARCH_PAGE_FUNDING && _accessFundingIndex >= 0)
+                    {
+                        const auto items = buildFundingItems();
+                        if (_accessFundingIndex < static_cast<int32_t>(items.size()))
+                            Accessibility::ScreenReaderSpeak(items[_accessFundingIndex].label);
+                    }
+                    else
+                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
                     return true;
                 case AccessibilityAction::cancel:
                     close();

@@ -1164,16 +1164,19 @@ namespace OpenRCT2
          */
         void Launch()
         {
-            if (!_versionCheckFuture.valid())
-            {
-                _versionCheckFuture = std::async(std::launch::async, [this] {
-                    _newVersionInfo = GetLatestVersion();
-                    if (!String::startsWith(gVersionInfoTag, _newVersionInfo.tag))
-                    {
-                        _hasNewVersionInfo = true;
-                    }
-                });
-            }
+            // Auto-updater disabled for the OpenRCT2-Access fork: we don't want the game
+            // checking the upstream OpenRCT2 GitHub releases and prompting users to "update"
+            // (which would replace this accessibility build). Re-enable by uncommenting.
+            // if (!_versionCheckFuture.valid())
+            // {
+            //     _versionCheckFuture = std::async(std::launch::async, [this] {
+            //         _newVersionInfo = GetLatestVersion();
+            //         if (!String::startsWith(gVersionInfoTag, _newVersionInfo.tag))
+            //         {
+            //             _hasNewVersionInfo = true;
+            //         }
+            //     });
+            // }
 
             if (!gOpenRCT2Headless)
             {

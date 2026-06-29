@@ -19,6 +19,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <openrct2-ui/UiStringIds.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
@@ -56,12 +57,18 @@
 #include <openrct2/object/ObjectManager.h>
 #include <openrct2/object/ObjectTypes.h>
 #include <openrct2/ride/Ride.h>
+#include <openrct2/ride/RideConstruction.h>
+#include <openrct2/ride/TrackData.h>
+#include <openrct2/ride/TrackIteration.h>
+#include <openrct2/ride/ted/TrackElementDescriptor.h>
 #include <openrct2/ui/WindowManager.h>
+#include <openrct2/world/Banner.h>
 #include <openrct2/world/Footpath.h>
 #include <openrct2/world/Location.hpp>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/MapLimits.h>
 #include <openrct2/world/MapSelection.h>
+#include <openrct2/world/tile_element/BannerElement.h>
 #include <openrct2/world/tile_element/EntranceElement.h>
 #include <openrct2/world/tile_element/LargeSceneryElement.h>
 #include <openrct2/world/tile_element/PathElement.h>
@@ -91,6 +98,13 @@ namespace OpenRCT2::Ui::Accessibility
     static int32_t SpokenCoordY(const TileCoordsXY& t)
     {
         return (getGameState().mapSize.y - 2) - t.y;
+    }
+
+    // Exported so other features (e.g. ride construction) can speak a tile's position with the exact
+    // same absolute X/Y convention the map cursor uses, with no change to how coordinates read.
+    std::string SpokenTileCoordsText(const TileCoordsXY& tile)
+    {
+        return "X " + std::to_string(SpokenCoordX(tile)) + ", Y " + std::to_string(SpokenCoordY(tile));
     }
 
     // The key consumed on key-down, so its key-up can be swallowed too.
@@ -125,6 +139,26 @@ namespace OpenRCT2::Ui::Accessibility
     // Edge length (in tiles) of the square brush used for clearing scenery and terraforming.
     // Cycles 1, 3, 5, 7. Larger brushes carve out flat pads for big rides in one keypress.
     static int32_t _brushSize = 1;
+
+    // Marked terraform area: two markers define an arbitrary rectangle the land/water raise and
+    // lower commands act on instead of the cursor brush. The 'k' key cycles through setting the
+    // first corner, the opposite corner, then clearing. _markerCount is 0 (none), 1 (one corner
+    // set), or 2 (rectangle active). Either corner may be marked first; the rectangle uses the
+    // min/max of the two so corner order does not matter.
+    static TileCoordsXY _markerA{};
+    static TileCoordsXY _markerB{};
+    static int32_t _markerCount = 0;
+
+    // Which marker Shift+K jumps to next: 0 = first corner, 1 = second corner. Toggles on each
+    // press so the cursor snaps back and forth between the two markers.
+    static int32_t _snapTarget = 0;
+
+    // Numbered waypoints: bookmarks on the map. Shift + number (1-9) drops or moves the waypoint in
+    // that slot at the cursor; pressing the plain number warps the cursor to it. Session-only - they
+    // are cleared on park load, like the terraform markers.
+    static constexpr int32_t kWaypointCount = 9;
+    static TileCoordsXY _waypoints[kWaypointCount]{};
+    static bool _waypointSet[kWaypointCount] = {};
 
     // The world direction (0..3) of the cursor's most recent arrow move. Used as the "facing" for
     // building sloped paths: a ramp rises (or falls) toward this direction.
@@ -234,24 +268,6 @@ namespace OpenRCT2::Ui::Accessibility
         return found;
     }
 
-    // A ride's name and footprint size, e.g. "Wooden Coaster 1, 4 by 4".
-    static std::string GetRideDescription(RideId rideId)
-    {
-        auto* ride = GetRide(rideId);
-        if (ride == nullptr)
-            return {};
-
-        std::string text = ride->getName();
-        TileCoordsXY mn, mx;
-        if (ComputeRideBounds(rideId, mn, mx))
-        {
-            const int32_t w = mx.x - mn.x + 1;
-            const int32_t h = mx.y - mn.y + 1;
-            text += ", " + std::to_string(w) + " by " + std::to_string(h);
-        }
-        return text;
-    }
-
     // The localised name of a loaded object, or an empty string if not found.
     static std::string GetObjectName(ObjectType type, ObjectEntryIndex index)
     {
@@ -259,6 +275,21 @@ namespace OpenRCT2::Ui::Accessibility
         auto* obj = objManager.GetLoadedObject(type, index);
         return obj != nullptr ? std::string(obj->GetName()) : std::string();
     }
+
+    // Builds the spoken description of a sign-capable element (banner, wall, or large scenery). If
+    // the element carries a banner with custom text, it is appended so the player hears what the
+    // sign actually says, e.g. "Sign, reading Main Street". Falls back to just the base label.
+    static std::string DescribeSign(const std::string& base, const Banner* banner)
+    {
+        if (banner == nullptr)
+            return base;
+        std::string text = banner->getText();
+        if (text.empty())
+            return base;
+        return base + ", reading " + text;
+    }
+
+    static std::string DescribeTrackPiece(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted);
 
     // Describes everything on a tile, read from the top down so a blind player learns what is
     // stacked on it (e.g. a ride bridging over a path, or a bench on a path), not just the topmost
@@ -270,20 +301,17 @@ namespace OpenRCT2::Ui::Accessibility
         // Collected bottom-to-top (the order tile elements are stored in), then reversed so the
         // topmost feature is announced first.
         std::vector<std::string> parts;
-        RideId seenRide = RideId::GetNull();
 
         for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
         {
-            if (auto* track = el->asTrack(); track != nullptr)
+            // Read placed track pieces (shape, slope, bank) with no ride name; skip the construction
+            // preview ghost so the not-yet-built next piece never reads here.
+            if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
             {
-                // A ride spans several track pieces on one tile; announce it only once.
-                const RideId r = track->GetRideIndex();
-                if (r != seenRide)
-                {
-                    seenRide = r;
-                    if (!r.IsNull())
-                        parts.push_back(GetRideDescription(r));
-                }
+                std::string piece
+                    = DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType()));
+                if (!piece.empty())
+                    parts.push_back(piece);
             }
             else if (auto* entrance = el->asEntrance(); entrance != nullptr)
             {
@@ -328,11 +356,27 @@ namespace OpenRCT2::Ui::Accessibility
                 {
                     parts.push_back(name.empty() ? "Path" : name);
                 }
+
+                // Path additions are the benches, litter bins, lamps and fountains placed on a
+                // path. They live on the same element as the path; announce them as their own part
+                // so a tile reads e.g. "Bench, Tarmac path".
+                if (p->HasAddition())
+                {
+                    std::string addition = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
+                    parts.push_back(addition.empty() ? "Path addition" : addition);
+                }
+            }
+            else if (auto* b = el->asBanner(); b != nullptr)
+            {
+                // Banners are the signs placed on path edges to name areas or give directions; the
+                // player can type custom text on them. Read that text so it is not lost.
+                parts.push_back(DescribeSign("Sign", b->GetBanner()));
             }
             else if (auto* w = el->asWall(); w != nullptr)
             {
                 std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
-                parts.push_back(name.empty() ? "Fence" : name);
+                // A wall can itself be a sign carrying custom text (e.g. a wall-mounted sign).
+                parts.push_back(DescribeSign(name.empty() ? "Fence" : name, w->GetBanner()));
             }
             else if (auto* ss = el->asSmallScenery(); ss != nullptr)
             {
@@ -342,7 +386,8 @@ namespace OpenRCT2::Ui::Accessibility
             else if (auto* ls = el->asLargeScenery(); ls != nullptr)
             {
                 std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
-                parts.push_back(name.empty() ? "Scenery" : name);
+                // Large scenery with a banner is a sign (the big stand-alone signs); read its text.
+                parts.push_back(DescribeSign(name.empty() ? "Scenery" : name, ls->GetBanner()));
             }
 
             if (el->isLastForTile())
@@ -437,6 +482,21 @@ namespace OpenRCT2::Ui::Accessibility
         _lastTileDescription = GetTileDescription(_cursor);
     }
 
+    std::optional<ScreenCoordsXY> GetMapCursorScreenPos()
+    {
+        if (!_initialised)
+            return std::nullopt;
+        auto* w = WindowGetMain();
+        if (w == nullptr || w->viewport == nullptr)
+            return std::nullopt;
+
+        // Centre the view on the cursor so the cursor tile is at the viewport centre, then return
+        // that centre point. A screen-to-map lookup there resolves back to the cursor tile.
+        CentreViewportOnCursor();
+        const auto* vp = w->viewport;
+        return ScreenCoordsXY{ vp->pos.x + vp->width / 2, vp->pos.y + vp->height / 2 };
+    }
+
     // Builds a mono 16-bit PCM WAV in memory holding a sine wave at the given frequency, with
     // short fade in/out so the beep starts and ends without an audible click. Returns the raw
     // bytes of a complete .wav file, ready to hand to CreateStreamFromWAV.
@@ -523,6 +583,140 @@ namespace OpenRCT2::Ui::Accessibility
         Audio::CreateAudioChannel(source, Audio::MixerGroup::Sound, false, Audio::kMixerVolumeMax, 0.5f, 1.0, true);
     }
 
+    // Returns a spoken label if the given tile holds a terraform-area marker, otherwise nullptr.
+    // Used to call out markers as the cursor arrows over them so the player can feel the rectangle.
+    static const char* MarkerLabelAt(const TileCoordsXY& t)
+    {
+        const bool isA = _markerCount >= 1 && t.x == _markerA.x && t.y == _markerA.y;
+        const bool isB = _markerCount == 2 && t.x == _markerB.x && t.y == _markerB.y;
+        if (isA && isB)
+            return "First and second marker";
+        if (isA)
+            return "First marker";
+        if (isB)
+            return "Second marker";
+        return nullptr;
+    }
+
+    // Human-readable slope/bank for a track piece, in the same terms the construction menu uses.
+    static const char* PitchName(OpenRCT2::TrackMetadata::TrackPitch p)
+    {
+        using OpenRCT2::TrackMetadata::TrackPitch;
+        switch (p)
+        {
+            case TrackPitch::up25:
+                return "gentle up";
+            case TrackPitch::up60:
+                return "steep up";
+            case TrackPitch::up90:
+                return "vertical up";
+            case TrackPitch::down25:
+                return "gentle down";
+            case TrackPitch::down60:
+                return "steep down";
+            case TrackPitch::down90:
+                return "vertical down";
+            default:
+                return "level";
+        }
+    }
+    static const char* RollName(OpenRCT2::TrackMetadata::TrackRoll r)
+    {
+        using OpenRCT2::TrackMetadata::TrackRoll;
+        switch (r)
+        {
+            case TrackRoll::left:
+                return "banked left";
+            case TrackRoll::right:
+                return "banked right";
+            default:
+                return "no bank";
+        }
+    }
+
+    // Names a basic piece's shape from its geometry, for the many pieces that carry no in-game
+    // description (straights, slopes, plain curves). The turn comes from the rotation change across
+    // the piece; the curve sharpness from its track group. Special pieces keep their in-game name.
+    static std::string DeriveBasicShape(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted)
+    {
+        const int32_t turn = (ted.coordinates.rotationEnd - ted.coordinates.rotationBegin) & 3;
+        if (turn == 0)
+            return "straight";
+        if (turn == 2)
+            return "half turn";
+
+        const char* dir = (turn == 1) ? "right" : "left";
+        const char* sharp = "";
+        switch (ted.definition.group)
+        {
+            case OpenRCT2::TrackGroup::curveVerySmall:
+                sharp = "very small ";
+                break;
+            case OpenRCT2::TrackGroup::curveSmall:
+                sharp = "small ";
+                break;
+            case OpenRCT2::TrackGroup::curveLarge:
+                sharp = "large ";
+                break;
+            default:
+                break;
+        }
+        return std::string(dir) + " " + sharp + "curve";
+    }
+
+    // Builds the full spoken description of one track piece: its shape (the game's piece name, or a
+    // derived name for basic pieces), its slope (level / gentle up / steep down, or a transition
+    // like "level to gentle up"), and its banking when banked - all of the piece's attributes.
+    static std::string DescribeTrackPiece(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted)
+    {
+        std::string s = OpenRCT2::FormatStringID(ted.description);
+        if (s.empty())
+            s = DeriveBasicShape(ted);
+
+        const auto& def = ted.definition;
+        std::string slope = (def.pitchStart == def.pitchEnd)
+            ? PitchName(def.pitchEnd)
+            : std::string(PitchName(def.pitchStart)) + " to " + PitchName(def.pitchEnd);
+        s += s.empty() ? slope : (", " + slope);
+
+        using OpenRCT2::TrackMetadata::TrackRoll;
+        if (def.rollStart != TrackRoll::none || def.rollEnd != TrackRoll::none)
+        {
+            std::string bank = (def.rollStart == def.rollEnd)
+                ? RollName(def.rollEnd)
+                : std::string(RollName(def.rollStart)) + " to " + RollName(def.rollEnd);
+            s += ", " + bank;
+        }
+        return s;
+    }
+
+    // If the tile holds placed ride track, returns the piece description(s) on it (shape, slope,
+    // bank). The ride name is deliberately not included - just the tile's pieces. Empty when the
+    // tile has no track, or only the construction preview ghost.
+    static std::string GetTrackReadout(const TileCoordsXY& tile)
+    {
+        std::string pieces;
+        for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
+        {
+            // Skip the construction preview ghost - only read track that has actually been placed.
+            if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
+            {
+                const auto& ted = OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType());
+                std::string piece = DescribeTrackPiece(ted);
+                if (!piece.empty())
+                {
+                    if (!pieces.empty())
+                        pieces += ", ";
+                    pieces += piece;
+                }
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        return pieces;
+    }
+
     static void Move(int32_t dx, int32_t dy, const char* directionName)
     {
         const auto mapSize = getGameState().mapSize;
@@ -573,17 +767,29 @@ namespace OpenRCT2::Ui::Accessibility
             announcedCrossing = true;
         }
 
-        // Announce the tile only when its description changes from the previous tile. If we just
-        // announced a boundary crossing, queue the description (interrupt = false) so both are heard,
-        // but skip the bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
+        // On a ride's track, announce the piece on EVERY move (no change suppression) so the player
+        // can trace a layout tile by tile - each tile reads its piece name. Off the track, announce
+        // the tile only when its description changes from the previous tile. If we just announced a
+        // boundary crossing, queue the read (interrupt = false) so both are heard, but skip the
+        // bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
         std::string description = GetTileDescription(_cursor);
-        if (description != _lastTileDescription)
+        if (std::string track = GetTrackReadout(_cursor); !track.empty())
+        {
+            ScreenReaderSpeak(track, !announcedCrossing);
+            _lastTileDescription = std::move(description); // keep baseline coherent for leaving the track
+        }
+        else if (description != _lastTileDescription)
         {
             const bool bareGround = (description == "Empty" || description == "Outside park");
             if (!(announcedCrossing && bareGround))
                 ScreenReaderSpeak(description, !announcedCrossing);
             _lastTileDescription = std::move(description);
         }
+
+        // Call out a terraform-area marker on the new tile. Queued (interrupt = false) so it is
+        // heard after any tile description or boundary cue rather than cutting them off.
+        if (const char* marker = MarkerLabelAt(_cursor); marker != nullptr)
+            ScreenReaderSpeak(marker, false);
     }
 
     // Moves the cursor in a SCREEN-relative direction. The (dx, dy) are the world deltas for that
@@ -1028,11 +1234,180 @@ namespace OpenRCT2::Ui::Accessibility
         by = maxTileY * kCoordsXYStep;
     }
 
+    // Returns true when two markers are set, defining an active terraform rectangle.
+    static bool HasMarkedArea()
+    {
+        return _markerCount == 2;
+    }
+
+    // The tile rectangle the land/water raise/lower commands act on: the marked rectangle when two
+    // markers are set, otherwise the square brush centred on the cursor (GetBrushBounds). The
+    // markers may be in any corner order, so the rectangle is built from their min/max.
+    static void GetTerraformBounds(int32_t& ax, int32_t& ay, int32_t& bx, int32_t& by)
+    {
+        if (!HasMarkedArea())
+        {
+            GetBrushBounds(ax, ay, bx, by);
+            return;
+        }
+
+        const auto mapSize = getGameState().mapSize;
+        const int32_t minTileX = std::clamp(std::min(_markerA.x, _markerB.x), 1, mapSize.x - 2);
+        const int32_t minTileY = std::clamp(std::min(_markerA.y, _markerB.y), 1, mapSize.y - 2);
+        const int32_t maxTileX = std::clamp(std::max(_markerA.x, _markerB.x), 1, mapSize.x - 2);
+        const int32_t maxTileY = std::clamp(std::max(_markerA.y, _markerB.y), 1, mapSize.y - 2);
+        ax = minTileX * kCoordsXYStep;
+        ay = minTileY * kCoordsXYStep;
+        bx = maxTileX * kCoordsXYStep;
+        by = maxTileY * kCoordsXYStep;
+    }
+
+    // The cursor tile when using the brush, or the centre tile of the marked rectangle. The
+    // terraform commands sample this tile after the change to report the new elevation, so when a
+    // marked area is active (and the cursor may sit outside it) the read-out reflects the area.
+    static TileCoordsXY TerraformSampleTile()
+    {
+        if (!HasMarkedArea())
+            return _cursor;
+        return TileCoordsXY{ (_markerA.x + _markerB.x) / 2, (_markerA.y + _markerB.y) / 2 };
+    }
+
+    // 'k' cycles the terraform-area markers: first press sets one corner at the cursor, second
+    // press sets the opposite corner (activating the rectangle), third press clears them. Once a
+    // rectangle is active, Shift/Ctrl + Page Up/Down raise or lower the whole area at once.
+    static void CycleAreaMarker()
+    {
+        _snapTarget = 0; // any change to the markers restarts the Shift+K snap at the first corner
+        if (_markerCount == 0)
+        {
+            _markerA = _cursor;
+            _markerCount = 1;
+            ScreenReaderSpeak(
+                "First marker set at X " + std::to_string(SpokenCoordX(_cursor)) + ", Y "
+                + std::to_string(SpokenCoordY(_cursor)));
+        }
+        else if (_markerCount == 1)
+        {
+            _markerB = _cursor;
+            _markerCount = 2;
+            const int32_t w = std::max(_markerA.x, _markerB.x) - std::min(_markerA.x, _markerB.x) + 1;
+            const int32_t h = std::max(_markerA.y, _markerB.y) - std::min(_markerA.y, _markerB.y) + 1;
+            ScreenReaderSpeak(
+                "Second marker set at X " + std::to_string(SpokenCoordX(_cursor)) + ", Y "
+                + std::to_string(SpokenCoordY(_cursor)) + ". Marked area " + std::to_string(w) + " by "
+                + std::to_string(h) + " tiles");
+        }
+        else
+        {
+            _markerCount = 0;
+            ScreenReaderSpeak("Markers cleared");
+        }
+    }
+
+    // Shift+K snaps the cursor to a terraform marker, alternating between the two on each press so
+    // the player can hop back and forth between the corners they defined. Centres the view and
+    // reads the marker name and coordinates, like jumping to the park entrance.
+    static void SnapToMarker()
+    {
+        if (_markerCount == 0)
+        {
+            ScreenReaderSpeak("No markers set");
+            return;
+        }
+        if (!_initialised)
+            InitialiseCursor();
+
+        TileCoordsXY dest;
+        const char* label;
+        if (_markerCount == 1 || _snapTarget == 0)
+        {
+            dest = _markerA;
+            label = "First marker";
+            _snapTarget = (_markerCount == 2) ? 1 : 0;
+        }
+        else
+        {
+            dest = _markerB;
+            label = "Second marker";
+            _snapTarget = 0;
+        }
+
+        _cursor = dest;
+        _menuMode = false;
+        CentreViewportOnCursor();
+
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            const int32_t elevation = surface->baseHeight / 2;
+            // Match normal movement: only sound the elevation tone when the height actually changes,
+            // so jumping to a marker/waypoint at the same height as the current tile stays silent.
+            if (elevation != _lastElevation)
+            {
+                PlayElevationTone(elevation);
+                _lastElevation = elevation;
+            }
+            _scanHeight = surface->baseHeight;
+        }
+
+        _lastTileDescription = GetTileDescription(_cursor);
+        ScreenReaderSpeak(
+            std::string(label) + ", X " + std::to_string(SpokenCoordX(_cursor)) + ", Y "
+            + std::to_string(SpokenCoordY(_cursor)));
+    }
+
+    // Drops (or moves) the numbered waypoint in the given slot at the cursor's current tile.
+    static void SetWaypoint(int32_t slot)
+    {
+        if (!_initialised)
+            InitialiseCursor();
+        _waypoints[slot] = _cursor;
+        _waypointSet[slot] = true;
+        ScreenReaderSpeak(
+            "Waypoint " + std::to_string(slot + 1) + " set at X " + std::to_string(SpokenCoordX(_cursor)) + ", Y "
+            + std::to_string(SpokenCoordY(_cursor)));
+    }
+
+    // Warps the cursor to the numbered waypoint in the given slot, centring the view and reading the
+    // waypoint number, what is on the tile, and its coordinates. Announces if the slot is empty.
+    static void JumpToWaypoint(int32_t slot)
+    {
+        if (!_waypointSet[slot])
+        {
+            ScreenReaderSpeak("Waypoint " + std::to_string(slot + 1) + " not set");
+            return;
+        }
+        if (!_initialised)
+            InitialiseCursor();
+
+        _cursor = _waypoints[slot];
+        _menuMode = false;
+        CentreViewportOnCursor();
+
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            const int32_t elevation = surface->baseHeight / 2;
+            // Match normal movement: only sound the elevation tone when the height actually changes,
+            // so jumping to a marker/waypoint at the same height as the current tile stays silent.
+            if (elevation != _lastElevation)
+            {
+                PlayElevationTone(elevation);
+                _lastElevation = elevation;
+            }
+            _scanHeight = surface->baseHeight;
+        }
+
+        const std::string description = GetTileDescription(_cursor);
+        _lastTileDescription = description;
+        ScreenReaderSpeak(
+            "Waypoint " + std::to_string(slot + 1) + ", " + description + ", X "
+            + std::to_string(SpokenCoordX(_cursor)) + ", Y " + std::to_string(SpokenCoordY(_cursor)));
+    }
+
     // Removes small and large scenery (trees, bushes, statues, etc.) across the brush area.
     static void ClearSceneryAtCursor()
     {
         int32_t ax, ay, bx, by;
-        GetBrushBounds(ax, ay, bx, by);
+        GetTerraformBounds(ax, ay, bx, by);
 
         const GameActions::ClearableItems items = GameActions::CLEARABLE_ITEMS::kScenerySmall
             | GameActions::CLEARABLE_ITEMS::kSceneryLarge;
@@ -1041,7 +1416,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (result.error == GameActions::Status::ok)
         {
             _lastTileDescription.clear();
-            ScreenReaderSpeak("Scenery cleared");
+            ScreenReaderSpeak(HasMarkedArea() ? "Marked area scenery cleared" : "Scenery cleared");
         }
         // Failures are spoken automatically via the error window.
     }
@@ -1074,13 +1449,24 @@ namespace OpenRCT2::Ui::Accessibility
             std::string name = p->HasLegacyPathEntry() ? GetObjectName(ObjectType::paths, p->GetLegacyPathEntryIndex())
                                                         : GetObjectName(ObjectType::footpathSurface, p->GetSurfaceEntryIndex());
             if (p->IsQueue())
-                return name.empty() ? "Queue line" : name + " queue";
-            return name.empty() ? "Path" : name;
+                name = name.empty() ? "Queue line" : name + " queue";
+            else if (name.empty())
+                name = "Path";
+            if (p->HasAddition())
+            {
+                std::string addition = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
+                name += ", " + (addition.empty() ? std::string("path addition") : addition);
+            }
+            return name;
+        }
+        if (auto* b = el->asBanner(); b != nullptr)
+        {
+            return DescribeSign("Sign", b->GetBanner());
         }
         if (auto* w = el->asWall(); w != nullptr)
         {
             std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
-            return name.empty() ? "Fence" : name;
+            return DescribeSign(name.empty() ? "Fence" : name, w->GetBanner());
         }
         if (auto* ss = el->asSmallScenery(); ss != nullptr)
         {
@@ -1090,7 +1476,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (auto* ls = el->asLargeScenery(); ls != nullptr)
         {
             std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
-            return name.empty() ? "Scenery" : name;
+            return DescribeSign(name.empty() ? "Scenery" : name, ls->GetBanner());
         }
         if (auto* surface = el->asSurface(); surface != nullptr)
             return surface->GetWaterHeight() > 0 ? "Water surface" : "Ground";
@@ -1136,35 +1522,51 @@ namespace OpenRCT2::Ui::Accessibility
     static void ChangeLandHeight(bool raise)
     {
         int32_t ax, ay, bx, by;
-        GetBrushBounds(ax, ay, bx, by);
+        GetTerraformBounds(ax, ay, bx, by);
         const int32_t centreX = (ax + bx) / 2 + 16;
         const int32_t centreY = (ay + by) / 2 + 16;
 
-        // Re-read the cursor tile AFTER the change applies so the player hears the new height
-        // (and any water<->land change) without moving off the tile and back, plus the elevation
-        // tone at the new height. The land action is applied a tick later, so this must run in the
-        // game-action callback - reading immediately after Execute would report the old height.
-        const auto announceAfterChange = [](const GameActions::GameAction*, const GameActions::Result* result) {
+        const bool marked = HasMarkedArea();
+        const TileCoordsXY sample = TerraformSampleTile();
+
+        // Re-read a tile AFTER the change applies so the player hears the new height (and any
+        // water<->land change) without moving off the tile and back, plus the elevation tone at the
+        // new height. The land action is applied a tick later, so this must run in the game-action
+        // callback - reading immediately after Execute would report the old height. With a marked
+        // area the sample is the rectangle centre (the cursor may sit outside it) and we prefix
+        // "Marked area"; in brush mode the sample is the cursor and we keep its move-time baseline.
+        const auto announceAfterChange = [marked, sample](
+                                             const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
                 return; // failures are spoken automatically via the error window
 
-            // Report the new elevation (and tone) every press, but only name the tile type when
-            // it actually changes, e.g. water <-> land - not "Water"/"Empty" on every press.
-            const std::string tileType = GetTileDescription(_cursor);
-            const bool typeChanged = (tileType != _lastTileDescription);
-            _lastTileDescription = tileType; // keep the move-time change baseline in sync
-
             std::string spoken;
-            if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+            if (auto* surface = MapGetSurfaceElementAt(sample); surface != nullptr)
             {
                 const int32_t elevation = surface->baseHeight / 2;
                 PlayElevationTone(elevation);
-                _lastElevation = elevation;
-                _scanHeight = surface->baseHeight; // keep the Z-axis probe at the new ground level
                 spoken = "elevation " + std::to_string(elevation);
+                if (!marked)
+                {
+                    _lastElevation = elevation;
+                    _scanHeight = surface->baseHeight; // keep the Z-axis probe at the new ground level
+                }
             }
-            if (typeChanged)
-                spoken = spoken.empty() ? tileType : (tileType + ", " + spoken);
+
+            if (marked)
+            {
+                spoken = spoken.empty() ? "Marked area" : ("Marked area, " + spoken);
+            }
+            else
+            {
+                // Only name the tile type when it actually changes, e.g. water <-> land - not
+                // "Water"/"Empty" on every press - and keep the move-time change baseline in sync.
+                const std::string tileType = GetTileDescription(sample);
+                const bool typeChanged = (tileType != _lastTileDescription);
+                _lastTileDescription = tileType;
+                if (typeChanged)
+                    spoken = spoken.empty() ? tileType : (tileType + ", " + spoken);
+            }
             if (!spoken.empty())
                 ScreenReaderSpeak(spoken);
         };
@@ -1186,18 +1588,24 @@ namespace OpenRCT2::Ui::Accessibility
     static void ChangeWaterHeight(bool raise)
     {
         int32_t ax, ay, bx, by;
-        GetBrushBounds(ax, ay, bx, by);
+        GetTerraformBounds(ax, ay, bx, by);
+
+        const bool marked = HasMarkedArea();
+        const TileCoordsXY sample = TerraformSampleTile();
 
         // Like land, the water action applies a tick later, so report the new level from the
-        // game-action callback rather than immediately after Execute.
-        const auto announceAfterChange = [](const GameActions::GameAction*, const GameActions::Result* result) {
+        // game-action callback rather than immediately after Execute. With a marked area the sample
+        // is the rectangle centre and the read-out is prefixed "Marked area".
+        const auto announceAfterChange = [marked, sample](
+                                             const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
                 return; // failures are spoken automatically via the error window
 
-            auto* surface = MapGetSurfaceElementAt(_cursor);
+            auto* surface = MapGetSurfaceElementAt(sample);
             if (surface == nullptr)
                 return;
 
+            const std::string prefix = marked ? "Marked area, " : "";
             const int32_t waterHeight = surface->GetWaterHeight();
             if (waterHeight > 0)
             {
@@ -1206,11 +1614,11 @@ namespace OpenRCT2::Ui::Accessibility
                 // water on the same scale the land would read at that spot.
                 const int32_t level = std::max(0, waterHeight / kWaterHeightStep - 1);
                 PlayElevationTone(level);
-                ScreenReaderSpeak("Water level " + std::to_string(level));
+                ScreenReaderSpeak(prefix + "Water level " + std::to_string(level));
             }
             else
             {
-                ScreenReaderSpeak("No water");
+                ScreenReaderSpeak(prefix + "No water");
             }
         };
 
@@ -1228,18 +1636,19 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    // Buys land ownership or construction rights over the brush area. The action always reports
-    // success (it silently skips tiles that aren't for sale or are already owned), so we branch on
-    // the actual cost: if anything was bought, the finance hook also announces the amount spent;
-    // otherwise we explain why nothing happened, based on the cursor tile's ownership.
+    // Buys land ownership or construction rights over the brush (or marked) area. The action always
+    // reports success (it silently skips tiles that aren't for sale or are already owned), so we
+    // branch on the actual cost: if anything was bought, the finance hook also announces the amount
+    // spent; otherwise we explain why nothing happened, based on a sample tile's ownership.
     static void ChangeLandOwnership(GameActions::LandBuyRightSetting setting)
     {
         int32_t ax, ay, bx, by;
-        GetBrushBounds(ax, ay, bx, by);
+        GetTerraformBounds(ax, ay, bx, by);
+        const TileCoordsXY sample = TerraformSampleTile();
 
         const bool rights = (setting == GameActions::LandBuyRightSetting::buyConstructionRights);
         auto action = GameActions::LandBuyRightsAction(MapRange(ax, ay, bx, by), setting);
-        action.SetCallback([rights](const GameActions::GameAction*, const GameActions::Result* result) {
+        action.SetCallback([rights, sample](const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
                 return; // spoken via the error window
 
@@ -1250,8 +1659,8 @@ namespace OpenRCT2::Ui::Accessibility
                 return;
             }
 
-            // Nothing was bought - explain why, using the cursor tile.
-            auto* surface = MapGetSurfaceElementAt(_cursor);
+            // Nothing was bought - explain why, using the sample tile (cursor, or area centre).
+            auto* surface = MapGetSurfaceElementAt(sample);
             const int32_t ownership = surface != nullptr ? surface->GetOwnership() : 0;
             if (rights)
             {
@@ -1344,6 +1753,58 @@ namespace OpenRCT2::Ui::Accessibility
         static constexpr const char* kDirections[] = { "North", "East", "South", "West" };
         const uint8_t rotation = GetCurrentRotation() & 3;
         ScreenReaderSpeak(std::string("Facing ") + kDirections[rotation]);
+    }
+
+    static bool IsRideConstructionWindowOpen();
+
+    // Shift+B: report where a ride's track is broken or incomplete (a gap or an open end), with the
+    // coordinate, so the player knows where the circuit still needs joining. Uses the ride being
+    // built if the construction window is open, otherwise the ride track under the cursor.
+    static void ReportTrackBreaks()
+    {
+        RideId rideId = RideId::GetNull();
+        if (IsRideConstructionWindowOpen())
+            rideId = _currentRideIndex;
+        if (rideId.IsNull())
+        {
+            for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
+            {
+                if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
+                {
+                    rideId = track->GetRideIndex();
+                    break;
+                }
+                if (el->isLastForTile())
+                    break;
+                el++;
+            }
+        }
+
+        auto* ride = rideId.IsNull() ? nullptr : GetRide(rideId);
+        if (ride == nullptr)
+        {
+            ScreenReaderSpeak("No ride track here");
+            return;
+        }
+
+        CoordsXYE origin;
+        if (!RideTryGetOriginElement(*ride, &origin))
+        {
+            ScreenReaderSpeak("That ride has no track yet");
+            return;
+        }
+
+        CoordsXYE gap;
+        if (OpenRCT2::findTrackGap(*ride, origin, &gap))
+        {
+            const TileCoordsXY tile{ CoordsXY{ gap.x, gap.y } };
+            const int32_t height = gap.element != nullptr ? gap.element->getBaseZ() / (kCoordsZStep * 2) : 0;
+            ScreenReaderSpeak("Track break at " + SpokenTileCoordsText(tile) + ", height " + std::to_string(height));
+        }
+        else
+        {
+            ScreenReaderSpeak("Track is a complete circuit, no breaks");
+        }
     }
 
     static bool HandleMapCursorKey(uint32_t key, uint32_t modifiers)
@@ -1455,16 +1916,35 @@ namespace OpenRCT2::Ui::Accessibility
         if (key == SDLK_TAB)
             return EnterMenuMode();
 
-        // Shift+Left / Shift+Right rotate the camera (the view-rotate shortcuts). Let them fall
-        // through to the shortcut manager instead of moving the map cursor.
+        // Shift+Left / Shift+Right rotate the camera. Do the rotation here (rather than letting it
+        // fall through to the shortcut manager) so we can announce the compass direction the view
+        // snaps to, then keep the spoken arrow-key axes aligned with the new rotation.
         if ((key == SDLK_LEFT || key == SDLK_RIGHT) && (modifiers & KMOD_SHIFT))
-            return false;
+        {
+            ViewportRotateAll(key == SDLK_RIGHT ? 1 : -1);
+            ReportFacing();
+            return true;
+        }
+
+        // Number keys 1-9 are waypoints: Shift+N drops/moves waypoint N at the cursor, plain N
+        // warps to it. (SDL reports the digit keycode with KMOD_SHIFT set, so both share this key.)
+        if (key >= SDLK_1 && key <= SDLK_9)
+        {
+            if (!_initialised)
+                InitialiseCursor();
+            const int32_t slot = static_cast<int32_t>(key - SDLK_1);
+            if (modifiers & KMOD_SHIFT)
+                SetWaypoint(slot);
+            else
+                JumpToWaypoint(slot);
+            return true;
+        }
 
         if (key != SDLK_UP && key != SDLK_DOWN && key != SDLK_LEFT && key != SDLK_RIGHT && key != SDLK_c
             && key != SDLK_t && key != SDLK_m && key != SDLK_SPACE && key != SDLK_d && key != SDLK_e
             && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET && key != SDLK_p
             && key != SDLK_q && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
-            && key != SDLK_PAGEUP && key != SDLK_PAGEDOWN)
+            && key != SDLK_k && key != SDLK_PAGEUP && key != SDLK_PAGEDOWN)
             return false;
 
         if (!_initialised)
@@ -1525,7 +2005,18 @@ namespace OpenRCT2::Ui::Accessibility
                 CycleSlopeMode();
                 break;
             case SDLK_b:
-                CycleBrushSize();
+                // Shift+B reports track breaks; plain B cycles the terraform/clear brush size.
+                if (modifiers & KMOD_SHIFT)
+                    ReportTrackBreaks();
+                else
+                    CycleBrushSize();
+                break;
+            case SDLK_k:
+                // K cycles the area markers; Shift+K snaps the cursor between them.
+                if (modifiers & KMOD_SHIFT)
+                    SnapToMarker();
+                else
+                    CycleAreaMarker();
                 break;
             case SDLK_e:
                 GoToEntrance();
@@ -1559,6 +2050,63 @@ namespace OpenRCT2::Ui::Accessibility
         return true;
     }
 
+    // True while the ride construction window is open (build mode).
+    static bool IsRideConstructionWindowOpen()
+    {
+        auto* windowMgr = GetWindowManager();
+        return windowMgr != nullptr && windowMgr->FindByClass(WindowClass::rideConstruction) != nullptr;
+    }
+
+    // Ride construction keyboard menu. While the construction window is open, Ctrl+arrows operate
+    // the build menu (field navigation and value changes), Ctrl+Enter activates the focused item,
+    // Ctrl+B reads the build state, and Escape exits (with confirmation). Plain arrows are NOT
+    // consumed here, so the map tile cursor keeps working normally during construction. Returns true
+    // if the key was consumed. Translated keys are forwarded to the window's onAccessibilityAction.
+    static bool HandleRideConstructionAccessKey(uint32_t key, uint32_t modifiers)
+    {
+        auto* windowMgr = GetWindowManager();
+        if (windowMgr == nullptr)
+            return false;
+        auto* w = windowMgr->FindByClass(WindowClass::rideConstruction);
+        if (w == nullptr)
+            return false;
+
+        std::optional<AccessibilityAction> action;
+        if (modifiers & KMOD_CTRL)
+        {
+            switch (key)
+            {
+                case SDLK_UP:
+                    action = AccessibilityAction::moveUp;
+                    break;
+                case SDLK_DOWN:
+                    action = AccessibilityAction::moveDown;
+                    break;
+                case SDLK_LEFT:
+                    action = AccessibilityAction::moveLeft;
+                    break;
+                case SDLK_RIGHT:
+                    action = AccessibilityAction::moveRight;
+                    break;
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER:
+                    action = AccessibilityAction::activate;
+                    break;
+                case SDLK_b:
+                    action = AccessibilityAction::announce; // Ctrl+B: read build state
+                    break;
+            }
+        }
+        if (key == SDLK_ESCAPE)
+            action = AccessibilityAction::cancel;
+
+        if (!action.has_value())
+            return false;
+
+        w->onAccessibilityAction(*action);
+        return true;
+    }
+
     bool HandleMapNavigationKey(const InputEvent& e)
     {
         if (e.deviceKind != InputDeviceKind::keyboard)
@@ -1569,6 +2117,8 @@ namespace OpenRCT2::Ui::Accessibility
         {
             _initialised = false;
             _menuMode = false;
+            _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
+            std::fill(std::begin(_waypointSet), std::end(_waypointSet), false); // and any waypoints
             return false;
         }
 
@@ -1596,6 +2146,15 @@ namespace OpenRCT2::Ui::Accessibility
             return true;
         }
 
+        // Ride construction: Ctrl+arrows (and Ctrl+Enter / Ctrl+B / Escape) drive the build menu
+        // when the construction window is open; plain arrows fall through so the map cursor keeps
+        // working. Checked before mouse/menu mode so the build menu works regardless of either.
+        if (HandleRideConstructionAccessKey(key, e.modifiers))
+        {
+            _lastHandledKey = key;
+            return true;
+        }
+
         // In mouse mode the keyboard cursor is inactive: let keys fall through to the game so
         // the mouse can drive everything normally. (Open windows are still navigable via the
         // separate menu-navigation handler.)
@@ -1605,11 +2164,12 @@ namespace OpenRCT2::Ui::Accessibility
             return false;
         }
 
-        // Cursor-driven ride placement owns the keyboard; make sure a toolbar menu left open
-        // from selecting the ride doesn't intercept the arrows used to position it.
+        // Cursor-driven ride placement and ride construction own the keyboard; make sure a toolbar
+        // menu left open from selecting the ride doesn't intercept the arrows. Entering build mode
+        // (the construction window) leaves toolbar menu mode so plain arrows drive the map cursor.
         if (_menuMode
-            && (Windows::WindowTrackPlaceIsActive() || IsAccessibleRidePlacementActive()
-                || IsAccessibleSceneryPlacementActive()))
+            && (IsRideConstructionWindowOpen() || Windows::WindowTrackPlaceIsActive()
+                || IsAccessibleRidePlacementActive() || IsAccessibleSceneryPlacementActive()))
             _menuMode = false;
 
         const bool handled = _menuMode ? HandleMenuModeKey(key) : HandleMapCursorKey(key, e.modifiers);

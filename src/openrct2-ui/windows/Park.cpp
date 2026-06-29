@@ -193,6 +193,9 @@ namespace OpenRCT2::Ui::Windows
         int32_t _numberOfStaff = -1;
         int32_t _numberOfRides = -1;
         uint8_t _peepAnimationFrame = 0;
+        // Accessibility: admission-price adjust sub-mode, entered with Enter on the Price page.
+        // While active, Left/Right lower/raise the entrance fee.
+        bool _accessPriceMode = false;
 
         Graph::GraphProperties<uint16_t> _ratingProps{};
         Graph::GraphProperties<uint32_t> _guestProps{};
@@ -257,6 +260,14 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        // "Admission price, free" or "Admission price, $X", without any hint text.
+        std::string accessPriceText()
+        {
+            const money64 fee = Park::GetEntranceFee(getGameState().park);
+            return fee == 0 ? std::string("Admission price, free")
+                            : "Admission price, " + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, fee);
+        }
+
         std::string getAccessibilityPageSummary()
         {
             auto& park = getGameState().park;
@@ -270,10 +281,10 @@ namespace OpenRCT2::Ui::Windows
                     return OpenRCT2::FormatStringID(STR_GUESTS_IN_PARK_LABEL, static_cast<uint32_t>(park.numGuestsInPark));
                 case WINDOW_PARK_PAGE_PRICE:
                 {
-                    const money64 fee = Park::GetEntranceFee(park);
-                    if (fee == 0)
-                        return "Admission price, free";
-                    return "Admission price, " + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, fee);
+                    std::string text = accessPriceText();
+                    if (widgets[WIDX_INCREASE_PRICE].type != WidgetType::empty)
+                        text += ", press Enter to adjust";
+                    return text;
                 }
                 case WINDOW_PARK_PAGE_STATS:
                 {
@@ -325,6 +336,7 @@ namespace OpenRCT2::Ui::Windows
 
         void changeAccessibilityTab(int32_t delta)
         {
+            _accessPriceMode = false; // leave price-adjust mode if it was somehow still active
             int32_t newPage = page;
             for (int32_t i = 0; i < WINDOW_PARK_PAGE_COUNT; i++)
             {
@@ -347,8 +359,59 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeakItem(getAccessibilityPageSummary(), pos, total);
         }
 
+        // Lowers or raises the park admission fee by one pound, then announces the new fee. The fee
+        // can only be set when the park charges for admission (the spinner is hidden for pay-per-ride
+        // scenarios). Applies a tick later, so the new value is read from the game-action callback.
+        void accessAdjustPrice(bool increase)
+        {
+            if (widgets[WIDX_INCREASE_PRICE].type == WidgetType::empty)
+            {
+                Accessibility::ScreenReaderSpeak("Admission price cannot be changed in this scenario");
+                return;
+            }
+            const money64 newFee = increase ? std::min(kMaxEntranceFee, _parkData.entranceFee + 1.00_GBP)
+                                            : std::max(0.00_GBP, _parkData.entranceFee - 1.00_GBP);
+            auto action = GameActions::ParkSetEntranceFeeAction(newFee);
+            action.SetCallback([](const GameActions::GameAction*, const GameActions::Result* result) {
+                if (result->error != GameActions::Status::ok)
+                    return;
+                const money64 fee = Park::GetEntranceFee(getGameState().park);
+                Accessibility::ScreenReaderSpeak(
+                    fee == 0 ? std::string("Admission price, free")
+                             : "Admission price, " + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, fee));
+            });
+            GameActions::Execute(&action, getGameState());
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
+            // Admission-price adjust sub-mode (entered with Enter on the Price page): Left lowers the
+            // fee, Right raises it, Enter/Escape leaves the mode.
+            if (_accessPriceMode)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveLeft:
+                        accessAdjustPrice(false);
+                        return true;
+                    case AccessibilityAction::moveRight:
+                        accessAdjustPrice(true);
+                        return true;
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::announce:
+                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
+                        return true;
+                    case AccessibilityAction::activate:
+                    case AccessibilityAction::cancel:
+                        _accessPriceMode = false;
+                        Accessibility::ScreenReaderSpeak("Finished adjusting admission price");
+                        return true;
+                    default:
+                        return true; // swallow other keys while adjusting
+                }
+            }
+
             switch (action)
             {
                 case AccessibilityAction::moveLeft:
@@ -373,6 +436,20 @@ namespace OpenRCT2::Ui::Windows
                         const bool willOpen = !Park::IsOpen(park);
                         Park::SetOpen(park, willOpen);
                         Accessibility::ScreenReaderSpeak(willOpen ? "Park opened" : "Park closed");
+                    }
+                    else if (page == WINDOW_PARK_PAGE_PRICE)
+                    {
+                        if (widgets[WIDX_INCREASE_PRICE].type == WidgetType::empty)
+                        {
+                            Accessibility::ScreenReaderSpeak("Admission price cannot be changed in this scenario");
+                        }
+                        else
+                        {
+                            _accessPriceMode = true;
+                            Accessibility::ScreenReaderSpeak(
+                                "Adjusting admission price. " + accessPriceText()
+                                + ". Left arrow lowers, right arrow raises, Escape when done.");
+                        }
                     }
                     return true;
                 case AccessibilityAction::cancel:

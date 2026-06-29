@@ -8,6 +8,8 @@
  *****************************************************************************/
 
 #include <limits>
+#include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/ProvisionalElements.h>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/input/InputManager.h>
@@ -247,6 +249,10 @@ namespace OpenRCT2::Ui::Windows
         u8string _windowTitle{};
         u8string _specialDropdownText{};
         u8string _brakeSpeedText{};
+
+        // Accessibility: keyboard build menu, driven by Ctrl+arrows from the map-navigation handler.
+        int32_t _accessFieldIndex = -1;  // focused build field (index into axBuildFields), -1 = none
+        bool _accessPendingExit = false; // Escape pressed once; a second Escape confirms leaving
 
     public:
         void onOpen() override
@@ -1119,6 +1125,489 @@ namespace OpenRCT2::Ui::Windows
                     }
                     break;
                 }
+            }
+        }
+
+        // ---- Accessibility: keyboard ride construction (Phase 1) ---------------------------------
+        // The build window is presented as a list of "fields" navigated with Ctrl+Up/Down. Ctrl+Left/
+        // Right change the focused field's value; Ctrl+Enter activates buttons / toggles; Ctrl+B reads
+        // the build state; Escape exits (with confirmation). Every change is applied by calling the
+        // window's own onMouseDown handlers, so behaviour matches mouse play exactly.
+
+        enum class AxField
+        {
+            direction,
+            curve,
+            slope,
+            bank,
+            chain,
+            construct,
+            demolish,
+            back,
+            forward,
+            station, // place station entrance / exit
+        };
+
+        struct AxOption
+        {
+            WidgetIndex widget;
+            const char* label;
+            uint8_t value; // the TrackCurve / TrackPitch / TrackRoll value this option represents
+        };
+
+        bool axWidgetPresent(WidgetIndex w) const
+        {
+            return w < static_cast<WidgetIndex>(widgets.size()) && widgets[w].type != WidgetType::empty;
+        }
+
+        // The track heading, described in the player's own frame (Up always raises Y, Right raises X,
+        // etc., regardless of camera rotation), so "up" means the track extends the way the Up arrow
+        // moves. Matches the direction enum: 0 = right, 1 = down, 2 = left, 3 = up.
+        static const char* axDirectionName(uint8_t dir)
+        {
+            switch (dir & 3)
+            {
+                case 0:
+                    return "right";
+                case 1:
+                    return "down";
+                case 2:
+                    return "left";
+                default:
+                    return "up";
+            }
+        }
+
+        std::vector<AxField> axBuildFields()
+        {
+            std::vector<AxField> fields;
+            // The Rotate button is offered (mainly for the first piece) as a Direction field that
+            // points the track up / down / left / right.
+            if (axWidgetPresent(WIDX_ROTATE) && !widgetIsDisabled(*this, WIDX_ROTATE))
+                fields.push_back(AxField::direction);
+            if (axWidgetPresent(WIDX_STRAIGHT))
+                fields.push_back(AxField::curve);
+            if (axWidgetPresent(WIDX_LEVEL))
+                fields.push_back(AxField::slope);
+            // The banking widgets double as the brake/booster speed spinner on some rides; only treat
+            // them as banking when that spinner isn't being shown.
+            if (axWidgetPresent(WIDX_BANK_STRAIGHT) && !_currentlyShowingBrakeOrBoosterSpeed)
+                fields.push_back(AxField::bank);
+            if (axWidgetPresent(WIDX_CHAIN_LIFT))
+                fields.push_back(AxField::chain);
+            if (axWidgetPresent(WIDX_CONSTRUCT))
+                fields.push_back(AxField::construct);
+            if (axWidgetPresent(WIDX_DEMOLISH))
+                fields.push_back(AxField::demolish);
+            if (axWidgetPresent(WIDX_PREVIOUS_SECTION))
+                fields.push_back(AxField::back);
+            if (axWidgetPresent(WIDX_NEXT_SECTION))
+                fields.push_back(AxField::forward);
+            if (axWidgetPresent(WIDX_ENTRANCE))
+                fields.push_back(AxField::station);
+            return fields;
+        }
+
+        static std::vector<AxOption> axCurveOptions()
+        {
+            return {
+                { WIDX_LEFT_CURVE_LARGE, "left large curve", static_cast<uint8_t>(TrackCurve::leftLarge) },
+                { WIDX_LEFT_CURVE, "left curve", static_cast<uint8_t>(TrackCurve::left) },
+                { WIDX_LEFT_CURVE_SMALL, "left small curve", static_cast<uint8_t>(TrackCurve::leftSmall) },
+                { WIDX_LEFT_CURVE_VERY_SMALL, "left very small curve", static_cast<uint8_t>(TrackCurve::leftVerySmall) },
+                { WIDX_STRAIGHT, "straight", static_cast<uint8_t>(TrackCurve::none) },
+                { WIDX_RIGHT_CURVE_VERY_SMALL, "right very small curve", static_cast<uint8_t>(TrackCurve::rightVerySmall) },
+                { WIDX_RIGHT_CURVE_SMALL, "right small curve", static_cast<uint8_t>(TrackCurve::rightSmall) },
+                { WIDX_RIGHT_CURVE, "right curve", static_cast<uint8_t>(TrackCurve::right) },
+                { WIDX_RIGHT_CURVE_LARGE, "right large curve", static_cast<uint8_t>(TrackCurve::rightLarge) },
+            };
+        }
+
+        static std::vector<AxOption> axSlopeOptions()
+        {
+            return {
+                { WIDX_SLOPE_DOWN_VERTICAL, "vertical drop", static_cast<uint8_t>(TrackPitch::down90) },
+                { WIDX_SLOPE_DOWN_STEEP, "steep down", static_cast<uint8_t>(TrackPitch::down60) },
+                { WIDX_SLOPE_DOWN, "down", static_cast<uint8_t>(TrackPitch::down25) },
+                { WIDX_LEVEL, "level", static_cast<uint8_t>(TrackPitch::none) },
+                { WIDX_SLOPE_UP, "up", static_cast<uint8_t>(TrackPitch::up25) },
+                { WIDX_SLOPE_UP_STEEP, "steep up", static_cast<uint8_t>(TrackPitch::up60) },
+                { WIDX_SLOPE_UP_VERTICAL, "vertical climb", static_cast<uint8_t>(TrackPitch::up90) },
+            };
+        }
+
+        static std::vector<AxOption> axBankOptions()
+        {
+            return {
+                { WIDX_BANK_LEFT, "bank left", static_cast<uint8_t>(TrackRoll::left) },
+                { WIDX_BANK_STRAIGHT, "no bank", static_cast<uint8_t>(TrackRoll::none) },
+                { WIDX_BANK_RIGHT, "bank right", static_cast<uint8_t>(TrackRoll::right) },
+            };
+        }
+
+        static int32_t axCurrentOption(const std::vector<AxOption>& opts, uint8_t value)
+        {
+            for (size_t i = 0; i < opts.size(); i++)
+                if (opts[i].value == value)
+                    return static_cast<int32_t>(i);
+            return -1;
+        }
+
+        std::string axCostText(money64 cost) const
+        {
+            if (cost <= 0)
+                return "free";
+            return FormatStringID(STR_CURRENCY_FORMAT, cost);
+        }
+
+        // Whether the current selection maps to a real track piece, plus its cost when known.
+        std::string axValidityAndCost()
+        {
+            const bool valid = WindowRideConstructionUpdateStateGetTrackElement().first;
+            if (!valid)
+                return "not allowed here";
+            if (_currentTrackPrice != kMoney64Undefined)
+                return "valid, " + axCostText(_currentTrackPrice);
+            return "valid";
+        }
+
+        // The composed next piece: curve, slope, bank, chain lift, then validity / cost.
+        std::string axComposedPiece()
+        {
+            std::string s;
+            if (_currentlySelectedTrack.isTrackType)
+            {
+                s = "special piece";
+            }
+            else
+            {
+                const auto opts = axCurveOptions();
+                const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentlySelectedTrack.curve));
+                s = (idx >= 0) ? opts[idx].label : "straight";
+            }
+            {
+                const auto opts = axSlopeOptions();
+                const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackPitchEnd));
+                s += std::string(", ") + ((idx >= 0) ? opts[idx].label : "level");
+            }
+            if (_currentTrackRollEnd != TrackRoll::none)
+            {
+                const auto opts = axBankOptions();
+                const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackRollEnd));
+                if (idx >= 0)
+                    s += std::string(", ") + opts[idx].label;
+            }
+            if (_currentTrackHasLiftHill)
+                s += ", chain lift";
+            s += ". " + axValidityAndCost();
+            return s;
+        }
+
+        // Ctrl+B: where the build cursor sits, which way it points, and the composed next piece. The
+        // heading uses the player's up/down/left/right frame (same as the Direction control), not
+        // compass names, so it stays consistent with how the arrow keys move.
+        std::string axBuildStateText()
+        {
+            const TileCoordsXY tile{ CoordsXY{ _currentTrackBegin.x, _currentTrackBegin.y } };
+            std::string s = Accessibility::SpokenTileCoordsText(tile);
+            s += ", height " + std::to_string(_currentTrackBegin.z / (kCoordsZStep * 2));
+            s += ", pointing " + std::string(axDirectionName(_currentTrackPieceDirection));
+            s += ". Next piece: " + axComposedPiece();
+            return s;
+        }
+
+        // Field name + current value, announced when focus lands on a field.
+        std::string axFieldLabel(AxField field)
+        {
+            switch (field)
+            {
+                case AxField::direction:
+                    return std::string("Direction, points ") + axDirectionName(_currentTrackPieceDirection)
+                        + ". Left and right rotate it";
+                case AxField::curve:
+                {
+                    if (_currentlySelectedTrack.isTrackType)
+                        return "Curve, special piece";
+                    const auto opts = axCurveOptions();
+                    const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentlySelectedTrack.curve));
+                    return std::string("Curve, ") + ((idx >= 0) ? opts[idx].label : "straight");
+                }
+                case AxField::slope:
+                {
+                    const auto opts = axSlopeOptions();
+                    const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackPitchEnd));
+                    return std::string("Slope, ") + ((idx >= 0) ? opts[idx].label : "level");
+                }
+                case AxField::bank:
+                {
+                    const auto opts = axBankOptions();
+                    const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackRollEnd));
+                    return std::string("Banking, ") + ((idx >= 0) ? opts[idx].label : "no bank");
+                }
+                case AxField::chain:
+                    return std::string("Chain lift, ") + (_currentTrackHasLiftHill ? "on" : "off");
+                case AxField::construct:
+                    return "Construct. " + axComposedPiece();
+                case AxField::demolish:
+                    return "Demolish last piece";
+                case AxField::back:
+                    return "Move back one section";
+                case AxField::forward:
+                    return "Move forward one section";
+                case AxField::station:
+                {
+                    auto* ride = GetRide(_currentRideIndex);
+                    if (ride != nullptr)
+                    {
+                        const auto& st = ride->getStation(StationIndex::FromUnderlying(0));
+                        if (st.Entrance.IsNull())
+                            return "Place station entrance at the cursor";
+                        if (st.Exit.IsNull())
+                            return "Place station exit at the cursor";
+                    }
+                    return "Station entrance and exit placed";
+                }
+            }
+            return {};
+        }
+
+        void axCycleSelector(AxField field, int32_t delta)
+        {
+            std::vector<AxOption> opts;
+            int32_t current = -1;
+            switch (field)
+            {
+                case AxField::curve:
+                    opts = axCurveOptions();
+                    current = _currentlySelectedTrack.isTrackType
+                        ? -1
+                        : axCurrentOption(opts, static_cast<uint8_t>(_currentlySelectedTrack.curve));
+                    break;
+                case AxField::slope:
+                    opts = axSlopeOptions();
+                    current = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackPitchEnd));
+                    break;
+                case AxField::bank:
+                    opts = axBankOptions();
+                    current = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackRollEnd));
+                    break;
+                default:
+                    return;
+            }
+
+            const int32_t n = static_cast<int32_t>(opts.size());
+            const int32_t start = (current < 0) ? (delta > 0 ? -1 : n) : current;
+            for (int32_t i = 1; i <= n; i++)
+            {
+                const int32_t idx = (((start + delta * i) % n) + n) % n;
+                if (!widgetIsDisabled(*this, opts[idx].widget))
+                {
+                    onMouseDown(opts[idx].widget);
+                    Accessibility::ScreenReaderSpeak(std::string(opts[idx].label) + ". " + axValidityAndCost());
+                    return;
+                }
+            }
+            Accessibility::ScreenReaderSpeak("No other option available");
+        }
+
+        void axToggleChain()
+        {
+            onMouseDown(WIDX_CHAIN_LIFT);
+            Accessibility::ScreenReaderSpeak(
+                std::string("Chain lift ") + (_currentTrackHasLiftHill ? "on" : "off") + ". " + axValidityAndCost());
+        }
+
+        // Rotates the build direction (the vanilla Rotate button). delta > 0 turns one way, < 0 the
+        // other. Announces the new heading in the player's up/down/left/right frame.
+        void axRotate(int32_t delta)
+        {
+            const int32_t times = (delta > 0) ? 1 : 3; // Rotate only goes one way, so 3 turns = -1
+            for (int32_t i = 0; i < times; i++)
+                onMouseUp(WIDX_ROTATE);
+            Accessibility::ScreenReaderSpeak(
+                std::string("Track points ") + axDirectionName(_currentTrackPieceDirection) + ". " + axValidityAndCost());
+        }
+
+        void axConstruct()
+        {
+            if (_rideConstructionState == RideConstructionState::Place)
+            {
+                // First piece / free placement: build at the keyboard map cursor's tile, not the
+                // mouse. The map cursor keeps the view centred on itself, so its screen position is
+                // the viewport centre - feed that to the normal construct tool so the piece lands
+                // exactly where C reports the cursor to be.
+                const auto screenPos = Accessibility::GetMapCursorScreenPos();
+                if (!screenPos)
+                {
+                    Accessibility::ScreenReaderSpeak("Move the map cursor to where you want to start building first");
+                    return;
+                }
+                onToolUpdate(WIDX_CONSTRUCT, *screenPos); // position the ghost at the cursor
+                onToolDown(WIDX_CONSTRUCT, *screenPos);   // place it there
+            }
+            else
+            {
+                onMouseDown(WIDX_CONSTRUCT); // chains the next piece from the current track end
+            }
+
+            if (_trackPlaceErrorMessage != kStringIdNone)
+            {
+                Accessibility::ScreenReaderSpeak("Cannot build. " + FormatStringID(_trackPlaceErrorMessage));
+                return;
+            }
+            std::string s = "Built. " + axBuildStateText();
+            if (_trackPlaceCost != kMoney64Undefined && _trackPlaceCost > 0)
+                s += ", spent " + axCostText(_trackPlaceCost);
+            Accessibility::ScreenReaderSpeak(s);
+        }
+
+        // Places the station entrance (first) or exit (once the entrance exists) at the map cursor.
+        // Drives the vanilla entrance/exit tool with the cursor's screen position, the same way
+        // Construct does. The entrance/exit must sit on a tile next to the station platform.
+        void axPlaceEntranceExit()
+        {
+            auto* ride = GetRide(_currentRideIndex);
+            if (ride == nullptr)
+                return;
+            const auto stationIndex = StationIndex::FromUnderlying(0);
+
+            const bool placingExit = !ride->getStation(stationIndex).Entrance.IsNull();
+            if (placingExit && !ride->getStation(stationIndex).Exit.IsNull())
+            {
+                Accessibility::ScreenReaderSpeak("Entrance and exit are already placed");
+                return;
+            }
+
+            const auto screenPos = Accessibility::GetMapCursorScreenPos();
+            if (!screenPos)
+            {
+                Accessibility::ScreenReaderSpeak("Move the map cursor next to the station platform first");
+                return;
+            }
+
+            // Arm the entrance/exit tool if needed, then force the type we want (entrance, then exit).
+            if (_rideConstructionState != RideConstructionState::EntranceExit)
+                onMouseUp(WIDX_ENTRANCE);
+            gRideEntranceExitPlaceType = placingExit ? ENTRANCE_TYPE_RIDE_EXIT : ENTRANCE_TYPE_RIDE_ENTRANCE;
+
+            onToolUpdate(WIDX_ENTRANCE, *screenPos); // resolve the station-edge position/direction
+            onToolDown(WIDX_ENTRANCE, *screenPos);   // place it
+
+            const auto& st = ride->getStation(stationIndex);
+            if (placingExit)
+                Accessibility::ScreenReaderSpeak(
+                    st.Exit.IsNull() ? "Could not place exit. Move the cursor onto a tile next to the station platform."
+                                     : "Exit placed");
+            else
+                Accessibility::ScreenReaderSpeak(
+                    st.Entrance.IsNull()
+                        ? "Could not place entrance. Move the cursor onto a tile next to the station platform."
+                        : "Entrance placed. Now place the exit.");
+        }
+
+        void axActivate(AxField field)
+        {
+            switch (field)
+            {
+                case AxField::chain:
+                    axToggleChain();
+                    break;
+                case AxField::station:
+                    axPlaceEntranceExit();
+                    break;
+                case AxField::construct:
+                    axConstruct();
+                    break;
+                case AxField::demolish:
+                    onMouseDown(WIDX_DEMOLISH);
+                    Accessibility::ScreenReaderSpeak("Removed last piece. " + axBuildStateText());
+                    break;
+                // Previous / Next Section are the vanilla buttons that move the build position along
+                // the existing track; they just announce the new build state.
+                case AxField::back:
+                    onMouseDown(WIDX_PREVIOUS_SECTION);
+                    Accessibility::ScreenReaderSpeak("Back. " + axBuildStateText());
+                    break;
+                case AxField::forward:
+                    onMouseDown(WIDX_NEXT_SECTION);
+                    Accessibility::ScreenReaderSpeak("Forward. " + axBuildStateText());
+                    break;
+                default:
+                    break; // selectors change via Ctrl+Left/Right, not activate
+            }
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            // Any build action clears a pending exit confirmation.
+            if (action != AccessibilityAction::cancel)
+                _accessPendingExit = false;
+
+            const auto fields = axBuildFields();
+            switch (action)
+            {
+                case AccessibilityAction::cancel:
+                    if (!_accessPendingExit)
+                    {
+                        _accessPendingExit = true;
+                        Accessibility::ScreenReaderSpeak(
+                            "Exit build mode? Press Escape again to confirm, or keep building.");
+                    }
+                    else
+                    {
+                        _accessPendingExit = false;
+                        close();
+                    }
+                    return true;
+
+                case AccessibilityAction::moveUp:
+                case AccessibilityAction::moveDown:
+                {
+                    if (fields.empty())
+                    {
+                        Accessibility::ScreenReaderSpeak("No build options available");
+                        return true;
+                    }
+                    const int32_t n = static_cast<int32_t>(fields.size());
+                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
+                    _accessFieldIndex = (_accessFieldIndex < 0) ? (delta > 0 ? 0 : n - 1)
+                                                                : (_accessFieldIndex + delta + n) % n;
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(fields[_accessFieldIndex]));
+                    return true;
+                }
+
+                case AccessibilityAction::moveLeft:
+                case AccessibilityAction::moveRight:
+                {
+                    if (_accessFieldIndex < 0 || _accessFieldIndex >= static_cast<int32_t>(fields.size()))
+                    {
+                        Accessibility::ScreenReaderSpeak("Press Control up or down to choose a setting first");
+                        return true;
+                    }
+                    const int32_t delta = (action == AccessibilityAction::moveRight) ? 1 : -1;
+                    const AxField f = fields[_accessFieldIndex];
+                    if (f == AxField::direction)
+                        axRotate(delta);
+                    else if (f == AxField::curve || f == AxField::slope || f == AxField::bank)
+                        axCycleSelector(f, delta);
+                    else if (f == AxField::chain)
+                        axToggleChain();
+                    else
+                        Accessibility::ScreenReaderSpeak(axFieldLabel(f));
+                    return true;
+                }
+
+                case AccessibilityAction::activate:
+                    if (_accessFieldIndex >= 0 && _accessFieldIndex < static_cast<int32_t>(fields.size()))
+                        axActivate(fields[_accessFieldIndex]);
+                    return true;
+
+                case AccessibilityAction::announce: // Ctrl+B
+                    Accessibility::ScreenReaderSpeak(axBuildStateText());
+                    return true;
+
+                default:
+                    return true;
             }
         }
 
