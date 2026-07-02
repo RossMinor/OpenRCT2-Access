@@ -75,6 +75,14 @@ namespace OpenRCT2::Ui::Windows
             return true; // modal: swallow letters so they don't reach the map cursor
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            // Modal prompt: highlight the primary (yes/fire) button that Enter activates.
+            const auto& wd = widgets[WIDX_YES];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             switch (action)

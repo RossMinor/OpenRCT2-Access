@@ -479,6 +479,34 @@ namespace OpenRCT2::Ui::Windows
             widgetScrollUpdateThumbs(*this, WIDX_LIST);
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const int32_t count = getServerCount();
+            // The three action buttons follow the servers: box the button widget directly.
+            if (_accessIndex >= count && _accessIndex < getAccessTotal())
+            {
+                const WidgetIndex bw = WIDX_FETCH_SERVERS + (_accessIndex - count);
+                const auto& wd = widgets[bw];
+                return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                                   windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+            }
+
+            const auto& lw = widgets[WIDX_LIST];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+            if (_accessIndex < 0 || _accessIndex >= count)
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+
+            const int32_t rowTop = viewTop + _accessIndex * kItemHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kItemHeight, viewBottom);
+            if (bottom <= top)
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+            return ScreenRect{ { left, top }, { right, bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             const int32_t total = getAccessTotal();

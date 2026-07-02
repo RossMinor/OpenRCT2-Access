@@ -28,8 +28,8 @@ namespace OpenRCT2::Ui::Accessibility
 {
     // The version this build represents. Bump it to the version being shipped before each release;
     // the launch check compares it to the fork's latest GitHub release tag and offers an update
-    // when they differ. (Set below the latest release to exercise the notification.)
-    static constexpr const char* kAccessModVersion = "v0.81";
+    // when they differ.
+    static constexpr const char* kAccessModVersion = "v0.9";
     static constexpr const char* kReleasesApiUrl =
         "https://api.github.com/repos/RossMinor/OpenRCT2-Access/releases/latest";
 

@@ -452,6 +452,7 @@ namespace OpenRCT2::Config
             model->rideMusicEnabled = reader->GetBoolean("ride_music", true);
             model->rideMusicVolume = reader->GetInt32("ride_music_volume", 100);
             model->audioFocus = reader->GetBoolean("audio_focus", false);
+            model->accessibilityCueVolume = reader->GetInt32("accessibility_cue_volume", 100);
         }
     }
 
@@ -468,6 +469,7 @@ namespace OpenRCT2::Config
         writer->WriteBoolean("ride_music", model->rideMusicEnabled);
         writer->WriteInt32("ride_music_volume", model->rideMusicVolume);
         writer->WriteBoolean("audio_focus", model->audioFocus);
+        writer->WriteInt32("accessibility_cue_volume", model->accessibilityCueVolume);
     }
 
     static void ReadNetwork(IIniReader* reader)

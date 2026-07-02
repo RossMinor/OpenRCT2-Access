@@ -258,7 +258,8 @@ namespace OpenRCT2::Ui::Windows
             {
                 const int32_t mask = 1 << i;
                 const bool enabled = (gameState.researchUncompletedCategories & mask) != 0;
-                const char* state = !enabled ? "fully researched" : ((gameState.researchPriorities & mask) ? "on" : "off");
+                const char* state = !enabled ? "fully researched"
+                                             : ((gameState.researchPriorities & mask) ? "checked" : "unchecked");
                 items.push_back(
                     { OpenRCT2::FormatStringID(kLabels[i]) + ", " + state + ", checkbox", i, enabled });
             }
@@ -289,24 +290,27 @@ namespace OpenRCT2::Ui::Windows
                 const int32_t newLevel = (gameState.researchFundingLevel + 1) & 3;
                 auto action = GameActions::ParkSetResearchFundingAction(gameState.researchPriorities, newLevel);
                 GameActions::Execute(&action, getGameState());
+
+                // The action applies immediately in single player; re-read the funding row so the
+                // new level is heard.
+                const auto updated = buildFundingItems();
+                if (_accessFundingIndex >= 0 && _accessFundingIndex < static_cast<int32_t>(updated.size()))
+                    Accessibility::ScreenReaderSpeak(updated[_accessFundingIndex].label);
             }
             else if (!it.enabled)
             {
                 Accessibility::ScreenReaderSpeak("That category is fully researched and cannot be changed");
-                return;
             }
             else
             {
                 const uint8_t newPriorities = gameState.researchPriorities ^ static_cast<uint8_t>(1u << it.category);
                 auto action = GameActions::ParkSetResearchFundingAction(newPriorities, gameState.researchFundingLevel);
                 GameActions::Execute(&action, getGameState());
-            }
 
-            // The action applies immediately in single player; re-read the focused row so the new
-            // funding level or checkbox state is heard.
-            const auto updated = buildFundingItems();
-            if (_accessFundingIndex >= 0 && _accessFundingIndex < static_cast<int32_t>(updated.size()))
-                Accessibility::ScreenReaderSpeak(updated[_accessFundingIndex].label);
+                // Announce just the resulting checkbox state, matching the other settings windows.
+                const bool nowChecked = (getGameState().researchPriorities & (1u << it.category)) != 0;
+                Accessibility::ScreenReaderSpeak(nowChecked ? "checked" : "unchecked");
+            }
         }
 
         std::optional<ScreenRect> getAccessibilityFocusRect() override

@@ -777,6 +777,33 @@ namespace OpenRCT2::Ui::Windows
             return true; // consume the key even when nothing matches
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto& lw = widgets[WIDX_RIDE_LIST];
+            if (lw.type == WidgetType::empty)
+                return std::nullopt;
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+
+            // On the ride-category tabs, box the focused ride icon in the grid; elsewhere box the list.
+            const int32_t count = getRideListCount();
+            if (_currentTab >= RESEARCH_TAB || _accessRideCursor < 0 || _accessRideCursor >= count)
+                return ScreenRect{ windowPos + ScreenCoordsXY{ lw.left, lw.top },
+                                   windowPos + ScreenCoordsXY{ lw.right, lw.bottom } };
+
+            const int32_t itemsPerRow = std::max(1, static_cast<int32_t>(getNumImagesPerRow()));
+            const int32_t col = _accessRideCursor % itemsPerRow;
+            const int32_t row = _accessRideCursor / itemsPerRow;
+            const int32_t cellLeft = windowPos.x + lw.left + col * kScrollItemSize;
+            const int32_t cellTop = viewTop + row * kScrollItemSize - scrolls[0].contentOffsetY;
+            int32_t top = std::max(cellTop, viewTop);
+            int32_t bottom = std::min(cellTop + kScrollItemSize, viewBottom);
+            if (bottom <= top) // scrolled out of view: box the whole list
+                return ScreenRect{ windowPos + ScreenCoordsXY{ lw.left, lw.top },
+                                   windowPos + ScreenCoordsXY{ lw.right, lw.bottom } };
+            return ScreenRect{ { cellLeft, top }, { cellLeft + kScrollItemSize, bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // The Research tab is read-only info duplicated by the Research window; only the

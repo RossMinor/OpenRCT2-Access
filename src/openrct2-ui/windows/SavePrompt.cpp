@@ -161,6 +161,16 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeak(text);
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto buttons = getPromptButtons();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(buttons.size()))
+                return std::nullopt;
+            const auto& wd = widgets[buttons[_accessIndex]];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             const auto buttons = getPromptButtons();

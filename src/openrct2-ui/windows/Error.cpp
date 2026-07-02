@@ -123,7 +123,9 @@ namespace OpenRCT2::Ui::Windows
             return nullptr;
         }
 
-        // Read the error aloud for screen-reader users.
+        // Read the error aloud for screen-reader users - unless error feedback is being suppressed
+        // (e.g. bulk area operations, where per-tile failures are expected and would spam speech).
+        if (!gDisableErrorWindowSound)
         {
             std::string spoken(title);
             if (!message.empty())

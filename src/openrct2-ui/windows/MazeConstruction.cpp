@@ -9,6 +9,8 @@
 
 #include "../ride/Construction.h"
 
+#include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -119,6 +121,7 @@ namespace OpenRCT2::Ui::Windows
             WindowInitScrollWidgets(*this);
             rideId = _currentRideIndex;
             ShowGridlines();
+            Accessibility::ScreenReaderSpeak(axHelpText());
         }
 
         void onClose() override
@@ -310,7 +313,148 @@ namespace OpenRCT2::Ui::Windows
             drawWidgets(rt);
         }
 
+        // Keyboard maze construction. The map cursor (plain arrow keys) chooses where to build;
+        // Ctrl+Up/Down pick the action, Ctrl+Enter performs it at the cursor, Ctrl+B reads help,
+        // Escape exits. Routed here via HandleRideConstructionAccessKey (shared with track rides,
+        // since the maze window uses WindowClass::rideConstruction).
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                case AccessibilityAction::moveDown:
+                {
+                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
+                    _accessField = (_accessField + delta + kAccessFieldCount) % kAccessFieldCount;
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
+                    return true;
+                }
+                case AccessibilityAction::moveLeft:
+                case AccessibilityAction::moveRight:
+                    // The maze actions have no left/right values; just re-announce the current one.
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
+                    return true;
+                case AccessibilityAction::activate:
+                    axActivateField(_accessField);
+                    return true;
+                case AccessibilityAction::announce:
+                    Accessibility::ScreenReaderSpeak(axHelpText());
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
     private:
+        enum
+        {
+            kAccessBuild,
+            kAccessEntrance,
+            kAccessExit,
+            kAccessFieldCount,
+        };
+        int32_t _accessField = kAccessBuild;
+
+        static std::string axFieldLabel(int32_t field)
+        {
+            switch (field)
+            {
+                case kAccessBuild:
+                    return "Build maze section. Press Control Enter to build at the map cursor";
+                case kAccessEntrance:
+                    return "Place entrance. Press Control Enter to place it at the map cursor";
+                case kAccessExit:
+                    return "Place exit. Press Control Enter to place it at the map cursor";
+            }
+            return {};
+        }
+
+        std::string axHelpText() const
+        {
+            return "Maze construction. Arrow keys move the map cursor. Control up and down choose "
+                   "an action, Control Enter performs it at the cursor. Current action, "
+                + axFieldLabel(_accessField);
+        }
+
+        void axActivateField(int32_t field)
+        {
+            switch (field)
+            {
+                case kAccessBuild:
+                    axBuildAtCursor();
+                    break;
+                case kAccessEntrance:
+                    axPlaceEntranceExit(false);
+                    break;
+                case kAccessExit:
+                    axPlaceEntranceExit(true);
+                    break;
+            }
+        }
+
+        // Builds a maze section at the keyboard map cursor's tile, exactly as a mouse click on that
+        // tile would (the construct tool always builds a maze block). Success/failure is read out.
+        void axBuildAtCursor()
+        {
+            const auto screenPos = Accessibility::GetMapCursorScreenPos();
+            if (!screenPos)
+            {
+                Accessibility::ScreenReaderSpeak("Move the map cursor to where you want to build first");
+                return;
+            }
+            // If the entrance/exit tool is armed, return to build mode and re-arm the construct tool.
+            if (_rideConstructionState == RideConstructionState::EntranceExit)
+            {
+                ToolCancel();
+                WindowMazeConstructionBuildModeMousedown(RideConstructionState::MazeBuild);
+                ToolSet(*this, WIDX_MAZE_DIRECTION_GROUPBOX, Tool::crosshair);
+            }
+            onToolUpdate(WIDX_MAZE_DIRECTION_GROUPBOX, *screenPos); // position the ghost at the cursor
+            onToolDown(WIDX_MAZE_DIRECTION_GROUPBOX, *screenPos);   // build there
+            // The maze tooldown leaves the state at Place when the build was rejected, MazeBuild on success.
+            if (_rideConstructionState == RideConstructionState::Place)
+                Accessibility::ScreenReaderSpeak("Cannot build a maze section here");
+            else
+                Accessibility::ScreenReaderSpeak("Maze section built");
+        }
+
+        // Places the maze's entrance (or exit) at the map cursor, driving the vanilla entrance/exit
+        // tool with the cursor's screen position the same way ride construction does.
+        void axPlaceEntranceExit(bool exit)
+        {
+            auto* ride = GetRide(_currentRideIndex);
+            if (ride == nullptr)
+                return;
+            const auto screenPos = Accessibility::GetMapCursorScreenPos();
+            if (!screenPos)
+            {
+                Accessibility::ScreenReaderSpeak("Move the map cursor next to the maze first");
+                return;
+            }
+
+            // Arm the entrance/exit tool if it isn't already, then force the type we want.
+            if (_rideConstructionState != RideConstructionState::EntranceExit)
+                WindowMazeConstructionEntranceMouseup(exit ? WIDX_MAZE_EXIT : WIDX_MAZE_ENTRANCE);
+            gRideEntranceExitPlaceType = exit ? ENTRANCE_TYPE_RIDE_EXIT : ENTRANCE_TYPE_RIDE_ENTRANCE;
+
+            const WidgetIndex toolWidget = exit ? WIDX_MAZE_EXIT : WIDX_MAZE_ENTRANCE;
+            onToolUpdate(toolWidget, *screenPos); // resolve the maze-edge position/direction
+            onToolDown(toolWidget, *screenPos);   // place it
+
+            const auto& st = ride->getStation(StationIndex::FromUnderlying(0));
+            if (exit)
+                Accessibility::ScreenReaderSpeak(
+                    st.Exit.IsNull() ? "Could not place exit. Move the cursor onto a tile next to the maze."
+                                     : "Exit placed" + Accessibility::DescribeEntranceExitConnection(st.Exit));
+            else
+                Accessibility::ScreenReaderSpeak(
+                    st.Entrance.IsNull() ? "Could not place entrance. Move the cursor onto a tile next to the maze."
+                                         : "Entrance placed" + Accessibility::DescribeEntranceExitConnection(st.Entrance));
+        }
+
         void WindowMazeConstructionEntranceMouseup(WidgetIndex widgetIndex)
         {
             if (ToolSet(*this, widgetIndex, Tool::crosshair))

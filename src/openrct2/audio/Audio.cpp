@@ -215,6 +215,11 @@ namespace OpenRCT2::Audio
 
     void Play3D(SoundId soundId, const CoordsXYZ& loc)
     {
+        Play3D(soundId, loc, 0);
+    }
+
+    void Play3D(SoundId soundId, const CoordsXYZ& loc, int32_t volumeAdjust)
+    {
         if (!IsAvailable())
             return;
 
@@ -223,7 +228,8 @@ namespace OpenRCT2::Audio
         if (baseAudioObject != nullptr)
         {
             auto params = GetParametersFromLocation(baseAudioObject, sampleIndex, loc);
-            if (params.in_range)
+            params.volume += volumeAdjust;
+            if (params.in_range && params.volume >= -10000)
             {
                 auto source = baseAudioObject->GetSample(sampleIndex);
                 if (source != nullptr)

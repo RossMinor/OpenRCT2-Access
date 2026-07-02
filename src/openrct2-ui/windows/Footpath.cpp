@@ -9,6 +9,7 @@
 
 #include <openrct2-ui/ProvisionalElements.h>
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/input/ShortcutIds.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -32,6 +33,7 @@
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/network/NetworkAction.h>
 #include <openrct2/object/FootpathObject.h>
 #include <openrct2/object/FootpathRailingsObject.h>
@@ -252,6 +254,8 @@ namespace OpenRCT2::Ui::Windows
 
             _footpathPlaceCtrlState = false;
             _footpathPlaceShiftState = false;
+            _accessIndex = 0;
+            Accessibility::ScreenReaderSpeak("Footpath construction");
         }
 
         void onClose() override
@@ -620,6 +624,282 @@ namespace OpenRCT2::Ui::Windows
         }
 
 #pragma endregion
+
+        // --- Screen-reader keyboard navigation (Part 1: options) ---------------------------------
+        // A vertical list of the footpath options: footpath (surface) type, queue type, railings,
+        // and build mode. Up/Down move; Left/Right cycle the focused option; Escape closes. These
+        // set the same gFootpathSelection the map-cursor building (Space) uses, so the choices apply
+        // everywhere. The directional/elevated bridge construction is a separate (later) step.
+    public:
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            WidgetIndex w = WIDX_FOOTPATH_TYPE;
+            switch (_accessIndex)
+            {
+                case kAxFootpathType:
+                    w = WIDX_FOOTPATH_TYPE;
+                    break;
+                case kAxQueueType:
+                    w = WIDX_QUEUELINE_TYPE;
+                    break;
+                case kAxRailings:
+                    w = WIDX_RAILINGS_TYPE;
+                    break;
+                case kAxBuildMode:
+                    if (_footpathConstructionMode == PathConstructionMode::dragArea)
+                        w = WIDX_CONSTRUCT_DRAG_AREA;
+                    else if (
+                        _footpathConstructionMode == PathConstructionMode::bridgeOrTunnel
+                        || _footpathConstructionMode == PathConstructionMode::bridgeOrTunnelPick)
+                        w = WIDX_CONSTRUCT_BRIDGE_OR_TUNNEL;
+                    else
+                        w = WIDX_CONSTRUCT_ON_LAND;
+                    break;
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    _accessIndex = (_accessIndex - 1 + kAxItemCount) % kAxItemCount;
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::moveDown:
+                    _accessIndex = (_accessIndex + 1) % kAxItemCount;
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    axAdjust(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    axAdjust(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    if (_accessIndex == kAxBuildMode)
+                        axCycleMode(0); // re-activate the current mode's tool
+                    else if (_accessIndex == kAxFootpathType)
+                        axSelectMode(false); // build footpaths (like clicking the footpath button)
+                    else if (_accessIndex == kAxQueueType)
+                        axSelectMode(true); // build queues (like clicking the queue button)
+                    else
+                        axAnnounce();
+                    return true;
+                case AccessibilityAction::announce:
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true; // own the navigation keys while open
+            }
+        }
+
+    private:
+        enum
+        {
+            kAxFootpathType,
+            kAxQueueType,
+            kAxRailings,
+            kAxBuildMode,
+            kAxItemCount,
+        };
+        int32_t _accessIndex = 0;
+
+        static std::string axPathName(ObjectEntryIndex surface)
+        {
+            const auto* e = GetPathSurfaceEntry(surface);
+            return e != nullptr ? OpenRCT2::FormatStringID(e->NameStringId) : std::string("none");
+        }
+
+        static std::string axRailingsName(ObjectEntryIndex railings)
+        {
+            const auto* e = GetPathRailingsEntry(railings);
+            return e != nullptr ? OpenRCT2::FormatStringID(e->NameStringId) : std::string("none");
+        }
+
+        std::string axModeName() const
+        {
+            switch (_footpathConstructionMode)
+            {
+                case PathConstructionMode::bridgeOrTunnel:
+                case PathConstructionMode::bridgeOrTunnelPick:
+                    return "bridge or tunnel";
+                case PathConstructionMode::dragArea:
+                    return "drag area";
+                default:
+                    return "on land";
+            }
+        }
+
+        std::string axLabel(int32_t index)
+        {
+            switch (index)
+            {
+                case kAxFootpathType:
+                    return "Footpath type, " + axPathName(gFootpathSelection.normalSurface)
+                        + (gFootpathSelection.isQueueSelected ? "" : ", selected");
+                case kAxQueueType:
+                    return "Queue type, " + axPathName(gFootpathSelection.queueSurface)
+                        + (gFootpathSelection.isQueueSelected ? ", selected" : "");
+                case kAxRailings:
+                    return "Railings, " + axRailingsName(gFootpathSelection.railings);
+                case kAxBuildMode:
+                    return "Build mode, " + axModeName();
+            }
+            return {};
+        }
+
+        void axAnnounce()
+        {
+            Accessibility::ScreenReaderSpeakItem(axLabel(_accessIndex), _accessIndex, kAxItemCount);
+        }
+
+        std::vector<ObjectEntryIndex> axSurfaceOptions(bool queue)
+        {
+            std::vector<ObjectEntryIndex> options;
+            const bool showEditorPaths = (gLegacyScene == LegacyScene::scenarioEditor || getGameState().cheats.sandboxMode);
+            for (ObjectEntryIndex i = 0; i < kMaxFootpathSurfaceObjects; i++)
+            {
+                const auto* e = GetPathSurfaceEntry(i);
+                if (e == nullptr)
+                    continue;
+                const bool isQueue = (e->Flags & FOOTPATH_ENTRY_FLAG_IS_QUEUE) != 0;
+                if (isQueue != queue)
+                    continue;
+                if ((e->Flags & FOOTPATH_ENTRY_FLAG_SHOW_ONLY_IN_SCENARIO_EDITOR) && !showEditorPaths)
+                    continue;
+                options.push_back(i);
+            }
+            return options;
+        }
+
+        std::vector<ObjectEntryIndex> axRailingsOptions()
+        {
+            std::vector<ObjectEntryIndex> options;
+            for (ObjectEntryIndex i = 0; i < kMaxFootpathRailingsObjects; i++)
+                if (GetPathRailingsEntry(i) != nullptr)
+                    options.push_back(i);
+            return options;
+        }
+
+        void axCycleSurface(bool queue, int32_t dir)
+        {
+            auto options = axSurfaceOptions(queue);
+            if (options.empty())
+            {
+                Accessibility::ScreenReaderSpeak("No path type available");
+                return;
+            }
+            const ObjectEntryIndex current = queue ? gFootpathSelection.queueSurface : gFootpathSelection.normalSurface;
+            int32_t idx = 0;
+            for (size_t k = 0; k < options.size(); k++)
+                if (options[k] == current)
+                {
+                    idx = static_cast<int32_t>(k);
+                    break;
+                }
+            const int32_t count = static_cast<int32_t>(options.size());
+            idx = (idx + dir + count) % count;
+            const ObjectEntryIndex chosen = options[idx];
+
+            gFootpathSelection.isQueueSelected = queue;
+            gFootpathSelection.legacyPath = kObjectEntryIndexNull;
+            if (queue)
+                gFootpathSelection.queueSurface = chosen;
+            else
+                gFootpathSelection.normalSurface = chosen;
+            FootpathUpdateProvisional();
+            _windowFootpathCost = kMoney64Undefined;
+            invalidate();
+            Accessibility::ScreenReaderSpeakItem(
+                (queue ? "Queue type, " : "Footpath type, ") + axPathName(chosen), idx, count);
+        }
+
+        // Makes footpaths or queues the active build selection (like clicking the footpath vs queue
+        // button in the sighted window) without changing which type is chosen. Announces the mode.
+        void axSelectMode(bool queue)
+        {
+            gFootpathSelection.isQueueSelected = queue;
+            gFootpathSelection.legacyPath = kObjectEntryIndexNull;
+            FootpathUpdateProvisional();
+            _windowFootpathCost = kMoney64Undefined;
+            invalidate();
+            const ObjectEntryIndex surface = queue ? gFootpathSelection.queueSurface
+                                                   : gFootpathSelection.normalSurface;
+            Accessibility::ScreenReaderSpeak(
+                (queue ? "Building queues, " : "Building footpaths, ") + axPathName(surface));
+        }
+
+        void axCycleRailings(int32_t dir)
+        {
+            auto options = axRailingsOptions();
+            if (options.empty())
+            {
+                Accessibility::ScreenReaderSpeak("No railings available");
+                return;
+            }
+            int32_t idx = 0;
+            for (size_t k = 0; k < options.size(); k++)
+                if (options[k] == gFootpathSelection.railings)
+                {
+                    idx = static_cast<int32_t>(k);
+                    break;
+                }
+            const int32_t count = static_cast<int32_t>(options.size());
+            idx = (idx + dir + count) % count;
+            gFootpathSelection.railings = options[idx];
+            FootpathUpdateProvisional();
+            _windowFootpathCost = kMoney64Undefined;
+            invalidate();
+            Accessibility::ScreenReaderSpeakItem("Railings, " + axRailingsName(options[idx]), idx, count);
+        }
+
+        void axCycleMode(int32_t dir)
+        {
+            static const WidgetIndex modeWidgets[] = { WIDX_CONSTRUCT_ON_LAND, WIDX_CONSTRUCT_BRIDGE_OR_TUNNEL,
+                                                       WIDX_CONSTRUCT_DRAG_AREA };
+            int32_t cur = 0;
+            if (_footpathConstructionMode == PathConstructionMode::dragArea)
+                cur = 2;
+            else if (
+                _footpathConstructionMode == PathConstructionMode::bridgeOrTunnel
+                || _footpathConstructionMode == PathConstructionMode::bridgeOrTunnelPick)
+                cur = 1;
+            if (dir != 0)
+                cur = (cur + dir + 3) % 3;
+            onMouseUp(modeWidgets[cur]);
+            Accessibility::ScreenReaderSpeakItem("Build mode, " + axModeName(), cur, 3);
+        }
+
+        void axAdjust(int32_t dir)
+        {
+            switch (_accessIndex)
+            {
+                case kAxFootpathType:
+                    axCycleSurface(false, dir);
+                    break;
+                case kAxQueueType:
+                    axCycleSurface(true, dir);
+                    break;
+                case kAxRailings:
+                    axCycleRailings(dir);
+                    break;
+                case kAxBuildMode:
+                    axCycleMode(dir);
+                    break;
+                default:
+                    axAnnounce();
+                    break;
+            }
+        }
 
     private:
         /**

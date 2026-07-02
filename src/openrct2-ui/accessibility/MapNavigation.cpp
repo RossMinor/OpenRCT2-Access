@@ -9,6 +9,7 @@
 
 #include "MapNavigation.h"
 
+#include "MenuNavigation.h"
 #include "RidePlacement.h"
 #include "SceneryPlacement.h"
 #include "ScreenReader.h"
@@ -17,10 +18,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <unordered_set>
+#include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/UiStringIds.h>
+#include <openrct2-ui/input/ShortcutManager.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
 #include <openrct2/actions/GameActionRunner.h>
@@ -37,6 +42,9 @@
 #include <openrct2/audio/AudioMixer.h>
 #include <openrct2/core/MemoryStream.h>
 #include <openrct2/Date.h>
+#include <openrct2/entity/EntityList.h>
+#include <openrct2/entity/Guest.h>
+#include <openrct2/entity/Peep.h>
 #include <openrct2/Game.h>
 #include <openrct2/GameState.h>
 #include <openrct2/Input.h>
@@ -62,12 +70,14 @@
 #include <openrct2/ride/TrackIteration.h>
 #include <openrct2/ride/ted/TrackElementDescriptor.h>
 #include <openrct2/ui/WindowManager.h>
+#include <openrct2/windows/Intent.h>
 #include <openrct2/world/Banner.h>
 #include <openrct2/world/Footpath.h>
 #include <openrct2/world/Location.hpp>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/MapLimits.h>
 #include <openrct2/world/MapSelection.h>
+#include <openrct2/world/TileElementsView.h>
 #include <openrct2/world/tile_element/BannerElement.h>
 #include <openrct2/world/tile_element/EntranceElement.h>
 #include <openrct2/world/tile_element/LargeSceneryElement.h>
@@ -153,10 +163,10 @@ namespace OpenRCT2::Ui::Accessibility
     // press so the cursor snaps back and forth between the two markers.
     static int32_t _snapTarget = 0;
 
-    // Numbered waypoints: bookmarks on the map. Shift + number (1-9) drops or moves the waypoint in
-    // that slot at the cursor; pressing the plain number warps the cursor to it. Session-only - they
-    // are cleared on park load, like the terraform markers.
-    static constexpr int32_t kWaypointCount = 9;
+    // Numbered waypoints: bookmarks on the map. Shift + number drops or moves the waypoint in that
+    // slot at the cursor; Ctrl + number warps the cursor to it. Slots are the digit keys 1-9 then 0
+    // (the tenth). Session-only - cleared on park load, like the terraform markers.
+    static constexpr int32_t kWaypointCount = 10;
     static TileCoordsXY _waypoints[kWaypointCount]{};
     static bool _waypointSet[kWaypointCount] = {};
 
@@ -174,6 +184,13 @@ namespace OpenRCT2::Ui::Accessibility
         down,
     };
     static SlopeMode _slopeMode = SlopeMode::flat;
+
+    // Footpath build height, in path steps above the ground under the cursor. 0 = build on the
+    // terrain as before. When raised (comma/period keys), the build-path key lays a flat elevated
+    // deck (or a ramp, per _slopeMode) at that height, so bridges can cross water and gaps at a
+    // chosen elevation. The game generates the supporting columns automatically.
+    static int32_t _buildHeightOffset = 0;
+    static constexpr int32_t kMaxBuildHeightOffset = 32; // ~64 land steps; well past any sane bridge
 
     // Elevation tone: a short sine beep whose pitch rises with terrain height. It plays only
     // when the cursor moves onto a tile at a different elevation, so scanning flat ground stays
@@ -290,6 +307,21 @@ namespace OpenRCT2::Ui::Accessibility
     }
 
     static std::string DescribeTrackPiece(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted);
+    static bool IsRideConstructionWindowOpen();
+    static const char* WorldDirectionName(Direction dir);
+
+    // Ride name plus its footprint size in tiles, e.g. "Wooden Roller Coaster, 9 by 5". Used when
+    // the map cursor passes over a finished ride outside build mode, so it reads as one ride rather
+    // than a string of individual track pieces.
+    static std::string RideNameWithDimensions(RideId rideId)
+    {
+        auto ride = GetRide(rideId);
+        std::string name = ride != nullptr ? std::string(ride->getName()) : std::string("Ride");
+        TileCoordsXY mn, mx;
+        if (ComputeRideBounds(rideId, mn, mx))
+            name += ", " + std::to_string(mx.x - mn.x + 1) + " by " + std::to_string(mx.y - mn.y + 1);
+        return name;
+    }
 
     // Describes everything on a tile, read from the top down so a blind player learns what is
     // stacked on it (e.g. a ride bridging over a path, or a bench on a path), not just the topmost
@@ -302,16 +334,29 @@ namespace OpenRCT2::Ui::Accessibility
         // topmost feature is announced first.
         std::vector<std::string> parts;
 
+        // In build mode (the ride construction window is open) read each placed track piece's
+        // shape/slope/bank for detailed construction; otherwise read the ride as a whole - its name
+        // and footprint size - once, however many of its pieces sit on this tile.
+        const bool buildMode = IsRideConstructionWindowOpen();
+        RideId namedRide = RideId::GetNull();
+
         for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
         {
-            // Read placed track pieces (shape, slope, bank) with no ride name; skip the construction
-            // preview ghost so the not-yet-built next piece never reads here.
+            // Skip the construction preview ghost so the not-yet-built next piece never reads here.
             if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
             {
-                std::string piece
-                    = DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType()));
-                if (!piece.empty())
-                    parts.push_back(piece);
+                if (buildMode)
+                {
+                    std::string piece
+                        = DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType()));
+                    if (!piece.empty())
+                        parts.push_back(piece);
+                }
+                else if (const RideId rid = track->GetRideIndex(); rid != namedRide)
+                {
+                    namedRide = rid; // only announce the ride once per tile, not per piece
+                    parts.push_back(RideNameWithDimensions(rid));
+                }
             }
             else if (auto* entrance = el->asEntrance(); entrance != nullptr)
             {
@@ -321,10 +366,16 @@ namespace OpenRCT2::Ui::Accessibility
                         parts.push_back("Park entrance");
                         break;
                     case ENTRANCE_TYPE_RIDE_ENTRANCE:
-                        parts.push_back("Ride entrance");
+                        // The doorway (where guests enter) faces opposite the element's stored
+                        // direction, which points toward the station platform.
+                        parts.push_back(
+                            std::string("Ride entrance, facing ")
+                            + WorldDirectionName(DirectionReverse(entrance->getDirection())));
                         break;
                     case ENTRANCE_TYPE_RIDE_EXIT:
-                        parts.push_back("Ride exit");
+                        parts.push_back(
+                            std::string("Ride exit, facing ")
+                            + WorldDirectionName(DirectionReverse(entrance->getDirection())));
                         break;
                 }
             }
@@ -767,13 +818,15 @@ namespace OpenRCT2::Ui::Accessibility
             announcedCrossing = true;
         }
 
-        // On a ride's track, announce the piece on EVERY move (no change suppression) so the player
-        // can trace a layout tile by tile - each tile reads its piece name. Off the track, announce
-        // the tile only when its description changes from the previous tile. If we just announced a
-        // boundary crossing, queue the read (interrupt = false) so both are heard, but skip the
+        // In build mode (the ride construction window is open), tracing a layout tile by tile is
+        // useful, so on a ride's track announce the individual piece on EVERY move (no change
+        // suppression). Outside build mode the track reads as the ride's name and dimensions like
+        // any other feature, announced only when the tile description changes. If we just announced
+        // a boundary crossing, queue the read (interrupt = false) so both are heard, but skip the
         // bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
         std::string description = GetTileDescription(_cursor);
-        if (std::string track = GetTrackReadout(_cursor); !track.empty())
+        std::string track = IsRideConstructionWindowOpen() ? GetTrackReadout(_cursor) : std::string();
+        if (!track.empty())
         {
             ScreenReaderSpeak(track, !announcedCrossing);
             _lastTileDescription = std::move(description); // keep baseline coherent for leaving the track
@@ -877,7 +930,8 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak((spent ? "Spent " : "Earned ") + money, false);
     }
 
-    static void AnnounceDateTime()
+    // The in-game date as spoken text, e.g. "Monday 1st March, Year 1", plus ", paused" when paused.
+    static std::string DateText()
     {
         auto& date = GetDate();
         const int32_t year = date.GetYear() + 1;
@@ -893,7 +947,12 @@ namespace OpenRCT2::Ui::Accessibility
 
         if (GameIsPaused())
             text += ", paused";
-        ScreenReaderSpeak(text);
+        return text;
+    }
+
+    [[maybe_unused]] static void AnnounceDateTime()
+    {
+        ScreenReaderSpeak(DateText());
     }
 
     static WindowBase* GetToolbar()
@@ -929,6 +988,87 @@ namespace OpenRCT2::Ui::Accessibility
         if (auto* toolbar = GetToolbar(); toolbar != nullptr)
             toolbar->onAccessibilityAction(AccessibilityAction::cancel);
         _menuMode = false;
+    }
+
+    // --- Bottom-toolbar status readout (T key) ---------------------------------------------------
+    // A small read-only "menu" of the figures on the game's bottom toolbar: date, park rating,
+    // guests in park, cash, and access to recent messages. T opens it, Up/Down (or Left/Right)
+    // cycle the items, Enter on "Recent messages" opens the news window, and Escape (or T) leaves.
+    static bool _statusMode = false;
+    static int32_t _statusIndex = 0;
+    static constexpr int32_t kStatusItemCount = 5;
+
+    static std::string StatusItemText(int32_t index)
+    {
+        auto& park = getGameState().park;
+        switch (index)
+        {
+            case 0:
+                return "Date, " + DateText();
+            case 1:
+                return "Park rating, " + std::to_string(park.rating) + " out of 999";
+            case 2:
+                return std::to_string(park.numGuestsInPark)
+                    + (park.numGuestsInPark == 1 ? " guest in park" : " guests in park");
+            case 3:
+            {
+                const StringId id = park.cash < 0 ? STR_BOTTOM_TOOLBAR_CASH_NEGATIVE : STR_BOTTOM_TOOLBAR_CASH;
+                return "Cash, " + OpenRCT2::FormatStringID(id, park.cash);
+            }
+            case 4:
+                return "Recent messages, press Enter to open";
+        }
+        return {};
+    }
+
+    static void AnnounceStatusItem()
+    {
+        ScreenReaderSpeakItem(StatusItemText(_statusIndex), _statusIndex, kStatusItemCount);
+    }
+
+    static void EnterStatusMode()
+    {
+        _statusMode = true;
+        _statusIndex = 0;
+        AnnounceStatusItem();
+    }
+
+    // Handles keys while the status readout is open. Returns true if the key was consumed.
+    static bool HandleStatusModeKey(uint32_t key)
+    {
+        switch (key)
+        {
+            case SDLK_ESCAPE:
+            case SDLK_t:
+                _statusMode = false;
+                ScreenReaderSpeak("Closed");
+                return true;
+            case SDLK_UP:
+            case SDLK_LEFT:
+                _statusIndex = (_statusIndex - 1 + kStatusItemCount) % kStatusItemCount;
+                AnnounceStatusItem();
+                return true;
+            case SDLK_DOWN:
+            case SDLK_RIGHT:
+                _statusIndex = (_statusIndex + 1) % kStatusItemCount;
+                AnnounceStatusItem();
+                return true;
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER:
+                if (_statusIndex == 4) // Recent messages
+                {
+                    _statusMode = false;
+                    ContextOpenWindow(WindowClass::recentNews);
+                    ScreenReaderSpeak("Recent messages");
+                }
+                else
+                {
+                    AnnounceStatusItem();
+                }
+                return true;
+            default:
+                return true; // swallow other keys while the readout is open
+        }
     }
 
     static bool HandleMenuModeKey(uint32_t key)
@@ -1034,6 +1174,32 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    // Raises (+1) or lowers (-1) the footpath build height and announces it. At ground level the
+    // path follows the terrain as usual; above it, the build-path key lays an elevated deck/ramp at
+    // that many tiles above the ground under the cursor, letting the player span water and gaps.
+    static void ChangeBuildHeight(int32_t delta)
+    {
+        const int32_t previous = _buildHeightOffset;
+        _buildHeightOffset = std::clamp(_buildHeightOffset + delta, 0, kMaxBuildHeightOffset);
+        if (_buildHeightOffset == previous)
+        {
+            ScreenReaderSpeak(delta > 0 ? "Build height at maximum" : "Build height, ground level");
+            return;
+        }
+        if (_buildHeightOffset == 0)
+            ScreenReaderSpeak("Build height, ground level");
+        else
+            ScreenReaderSpeak(
+                "Build height, " + std::to_string(_buildHeightOffset)
+                + (_buildHeightOffset == 1 ? " tile above ground" : " tiles above ground"));
+    }
+
+    // Defined later in the file; declared here so the path commands can act on a marked area.
+    static bool HasMarkedArea();
+    static void GetTerraformBounds(int32_t& ax, int32_t& ay, int32_t& bx, int32_t& by);
+    static void BuildPathArea(ObjectEntryIndex type, PathConstructFlags flags);
+    static void RemovePathArea();
+
     static void BuildPath()
     {
         // Ensure a valid default path type is selected.
@@ -1053,6 +1219,14 @@ namespace OpenRCT2::Ui::Accessibility
             type = gFootpathSelection.legacyPath;
         }
 
+        // With a marked rectangle active, pave the whole area (flat, terrain-following) rather than a
+        // single tile - the same area the land/water tools and scenery clearing act on.
+        if (HasMarkedArea())
+        {
+            BuildPathArea(type, flags);
+            return;
+        }
+
         const auto world = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
         const Direction dir = _lastMoveDir & 3;
         const auto behindEdge = BehindPathEdgeHeight(dir);
@@ -1062,7 +1236,36 @@ namespace OpenRCT2::Ui::Accessibility
         Direction actionDir = kInvalidDirection;
         std::string what;
 
-        if (_slopeMode == SlopeMode::flat)
+        if (_buildHeightOffset > 0)
+        {
+            // Elevated build: lay a deck (or ramp) at a fixed height above the ground under the
+            // cursor, so a bridge can cross water or a gap. Supports are generated by the game.
+            auto* surface = MapGetSurfaceElementAt(_cursor);
+            if (surface == nullptr)
+            {
+                ScreenReaderSpeak("Cannot build a path here");
+                return;
+            }
+            const int32_t elevatedZ = surface->getBaseZ() + _buildHeightOffset * kPathHeightStep;
+            baseZ = elevatedZ;
+            actionDir = dir;
+            if (_slopeMode == SlopeMode::up)
+            {
+                slope = { FootpathSlopeType::sloped, dir };
+                what = std::string("Elevated ramp up to the ") + WorldDirectionName(dir);
+            }
+            else if (_slopeMode == SlopeMode::down)
+            {
+                slope = { FootpathSlopeType::sloped, DirectionReverse(dir) };
+                what = std::string("Elevated ramp down to the ") + WorldDirectionName(dir);
+            }
+            else
+            {
+                slope = { FootpathSlopeType::flat, 0 };
+                what = gFootpathSelection.isQueueSelected ? "Elevated queue built" : "Elevated path built";
+            }
+        }
+        else if (_slopeMode == SlopeMode::flat)
         {
             auto placement = FootpathGetOnTerrainPlacement(_cursor);
             // Prefer connecting to a higher path behind the cursor (e.g. a flat landing at the top
@@ -1138,84 +1341,6 @@ namespace OpenRCT2::Ui::Accessibility
             ScreenReaderSpeak(what);
         }
         // Failures are spoken automatically via the error window.
-    }
-
-    // Cycles the selected footpath surface (the current normal or queue set) to the next
-    // loaded type and announces it. direction is +1 (next) or -1 (previous).
-    static void CyclePathType(int32_t direction)
-    {
-        if (!Windows::WindowFootpathSelectDefault())
-        {
-            ScreenReaderSpeak("No path type available");
-            return;
-        }
-
-        auto& objManager = GetContext()->GetObjectManager();
-        const bool queue = gFootpathSelection.isQueueSelected;
-        const bool showEditorPaths = (gLegacyScene == LegacyScene::scenarioEditor || getGameState().cheats.sandboxMode);
-
-        std::vector<ObjectEntryIndex> options;
-        for (ObjectEntryIndex i = 0; i < kMaxFootpathSurfaceObjects; i++)
-        {
-            const auto* obj = objManager.GetLoadedObject<FootpathSurfaceObject>(i);
-            if (obj == nullptr)
-                continue;
-            const bool isQueue = (obj->Flags & FOOTPATH_ENTRY_FLAG_IS_QUEUE) != 0;
-            if (isQueue != queue)
-                continue;
-            if ((obj->Flags & FOOTPATH_ENTRY_FLAG_SHOW_ONLY_IN_SCENARIO_EDITOR) && !showEditorPaths)
-                continue;
-            options.push_back(i);
-        }
-
-        if (options.empty())
-        {
-            ScreenReaderSpeak("No path type available");
-            return;
-        }
-
-        const ObjectEntryIndex current = queue ? gFootpathSelection.queueSurface : gFootpathSelection.normalSurface;
-        int32_t index = 0;
-        for (size_t k = 0; k < options.size(); k++)
-        {
-            if (options[k] == current)
-            {
-                index = static_cast<int32_t>(k);
-                break;
-            }
-        }
-        const int32_t count = static_cast<int32_t>(options.size());
-        index = (index + direction + count) % count;
-        const ObjectEntryIndex chosen = options[index];
-
-        // Use the modern surface-based selection rather than a combined legacy path object.
-        gFootpathSelection.legacyPath = kObjectEntryIndexNull;
-        if (queue)
-            gFootpathSelection.queueSurface = chosen;
-        else
-            gFootpathSelection.normalSurface = chosen;
-
-        std::string name = GetObjectName(ObjectType::footpathSurface, chosen);
-        ScreenReaderSpeakItem(name.empty() ? "Path type" : name, index, count);
-    }
-
-    // Switches between building normal paths and queue paths, announcing the new mode.
-    static void ToggleQueueMode()
-    {
-        if (!Windows::WindowFootpathSelectDefault())
-        {
-            ScreenReaderSpeak("No path type available");
-            return;
-        }
-
-        gFootpathSelection.isQueueSelected = !gFootpathSelection.isQueueSelected;
-        gFootpathSelection.legacyPath = kObjectEntryIndexNull;
-
-        std::string mode = gFootpathSelection.isQueueSelected ? "Queue paths" : "Normal paths";
-        std::string name = GetObjectName(ObjectType::footpathSurface, gFootpathSelection.getSelectedSurface());
-        if (!name.empty())
-            mode += ", " + name;
-        ScreenReaderSpeak(mode);
     }
 
     // World-coordinate bounds of the brush square centred on the cursor, clamped to the usable
@@ -1421,6 +1546,307 @@ namespace OpenRCT2::Ui::Accessibility
         // Failures are spoken automatically via the error window.
     }
 
+    // Paves every tile in the marked rectangle with a flat, terrain-following path. Slope mode does
+    // not apply to an area fill - it lays flat paths, not ramps. Tiles where a path cannot sit (too
+    // uneven, already occupied, or off the player's land) are skipped, and the total is announced.
+    static void BuildPathArea(ObjectEntryIndex type, PathConstructFlags flags)
+    {
+        int32_t ax, ay, bx, by;
+        GetTerraformBounds(ax, ay, bx, by);
+
+        int32_t built = 0;
+        // Tiles that already hold a path or are otherwise occupied fail to build; each failure would
+        // sound the error window, stacking into a painful blast across an area, so silence it for the
+        // sweep (the tile counts below already report how many actually paved).
+        const bool prevErrorSound = Windows::gDisableErrorWindowSound;
+        Windows::gDisableErrorWindowSound = true;
+        for (int32_t wy = ay; wy <= by; wy += kCoordsXYStep)
+        {
+            for (int32_t wx = ax; wx <= bx; wx += kCoordsXYStep)
+            {
+                const TileCoordsXY tile{ wx / kCoordsXYStep, wy / kCoordsXYStep };
+                auto placement = FootpathGetOnTerrainPlacement(tile);
+                if (!placement.isValid() || placement.slope.type == FootpathSlopeType::irregular)
+                    continue;
+
+                const CoordsXYZ loc{ wx, wy, placement.baseZ };
+                auto action = GameActions::FootpathPlaceAction(
+                    loc, placement.slope, type, gFootpathSelection.railings, kInvalidDirection, flags);
+                if (GameActions::Execute(&action, getGameState()).error == GameActions::Status::ok)
+                    built++;
+            }
+        }
+        Windows::gDisableErrorWindowSound = prevErrorSound;
+
+        _lastTileDescription.clear();
+        if (built > 0)
+            ScreenReaderSpeak(
+                (gFootpathSelection.isQueueSelected ? "Marked area queued, " : "Marked area paved, ")
+                + std::to_string(built) + (built == 1 ? " tile" : " tiles"));
+        else
+            ScreenReaderSpeak("Could not build any paths in the marked area");
+    }
+
+    // Counts the non-ghost path elements across the tile rectangle [ax,ay]..[bx,by] (world coords).
+    static int32_t CountPathsInArea(int32_t ax, int32_t ay, int32_t bx, int32_t by)
+    {
+        int32_t count = 0;
+        for (int32_t wy = ay; wy <= by; wy += kCoordsXYStep)
+        {
+            for (int32_t wx = ax; wx <= bx; wx += kCoordsXYStep)
+            {
+                const TileCoordsXY tile{ wx / kCoordsXYStep, wy / kCoordsXYStep };
+                for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
+                {
+                    if (auto* p = el->asPath(); p != nullptr && !p->isGhost())
+                        count++;
+                    if (el->isLastForTile())
+                        break;
+                    el++;
+                }
+            }
+        }
+        return count;
+    }
+
+    // Removes every path from every tile in the marked rectangle. Uses a single ClearAction (the
+    // same command the clear-scenery tool uses), which removes each path through a NESTED action -
+    // so, unlike a per-tile loop of top-level FootpathRemoveActions, it never opens a per-tile error
+    // window. That matters because each such error window plays the error sound and is read aloud;
+    // across an area those stacked into a painfully loud blast. Announces the number actually removed.
+    static void RemovePathArea()
+    {
+        int32_t ax, ay, bx, by;
+        GetTerraformBounds(ax, ay, bx, by);
+
+        const int32_t before = CountPathsInArea(ax, ay, bx, by);
+
+        auto action = GameActions::ClearAction(
+            MapRange(ax, ay, bx, by), GameActions::CLEARABLE_ITEMS::kSceneryFootpath);
+        GameActions::Execute(&action, getGameState());
+
+        const int32_t removed = before - CountPathsInArea(ax, ay, bx, by);
+
+        _lastTileDescription.clear();
+        if (removed > 0)
+            ScreenReaderSpeak(
+                "Marked area paths removed, " + std::to_string(removed) + (removed == 1 ? " path" : " paths"));
+        else
+            ScreenReaderSpeak("No paths in the marked area");
+    }
+
+    // ---- Lost-guest rescue (Ctrl+H) -----------------------------------------------------------
+    //
+    // Blind players cannot see when a guest is stranded on a footpath that has been cut off from the
+    // rest of the park (a common accident when editing paths). Such guests spin their "I want to go
+    // home / I'm lost / I can't find ..." thoughts forever without ever reaching the exit. Ctrl+H
+    // finds every guest with one of those thoughts, checks whether a walkable footpath route still
+    // connects them to a park entrance, and teleports the ones that are genuinely trapped.
+
+    // Packs a path-tile coordinate into a single key for the visited set. Tile x/y fit in 10 bits each
+    // (map is at most 1000 tiles) and baseHeight in 8 bits, so this is collision-free in practice.
+    static uint32_t PackTileKey(int32_t x, int32_t y, int32_t z)
+    {
+        return (static_cast<uint32_t>(x) & 0x3FF) | ((static_cast<uint32_t>(y) & 0x3FF) << 10)
+            | ((static_cast<uint32_t>(z) & 0xFFF) << 20);
+    }
+
+    // True if the guest currently holds a thought that means "I'm trying to leave / find my way but
+    // can't": "I want to go home", "I'm lost!", "I can't find X", or "I can't find the park exit".
+    static bool GuestHasLostThought(const Guest& guest)
+    {
+        for (const auto& thought : guest.thoughts)
+        {
+            if (thought.type == PeepThoughtType::none)
+                break;
+            switch (thought.type)
+            {
+                case PeepThoughtType::goHome:
+                case PeepThoughtType::lost:
+                case PeepThoughtType::cantFind:
+                case PeepThoughtType::cantFindExit:
+                    return true;
+                default:
+                    break;
+            }
+        }
+        return false;
+    }
+
+    // Flood-fills the footpath network outward from every park entrance and returns the set of path
+    // tiles (packed keys) reachable on foot. A guest standing on a tile NOT in this set has no walking
+    // route to any exit. Traversal mirrors the guest pathfinder: it follows a path element's permitted
+    // edges and honours sloped tiles via FootpathIsZAndDirectionValid, so slopes and bridges are
+    // handled the same way a guest would walk them.
+    static std::unordered_set<uint32_t> ComputeEntranceReachablePaths()
+    {
+        std::unordered_set<uint32_t> reachable;
+        std::vector<TileCoordsXYZ> stack;
+
+        const auto enqueue = [&](const TileCoordsXYZ& tile) {
+            const uint32_t key = PackTileKey(tile.x, tile.y, tile.z);
+            if (reachable.insert(key).second)
+                stack.push_back(tile);
+        };
+
+        // Seed from the path tiles directly connected to each park entrance (i.e. the tiles a guest
+        // would step onto as they walk in through the entrance).
+        for (const auto& entrance : getGameState().park.entrances)
+        {
+            const TileCoordsXYZ entranceTile{ entrance };
+            for (Direction dir : kAllDirections)
+            {
+                const TileCoordsXY neighbour{ entranceTile.x + TileDirectionDelta[dir].x,
+                                              entranceTile.y + TileDirectionDelta[dir].y };
+                for (auto* path : TileElementsView<PathElement>(neighbour.ToCoordsXY()))
+                {
+                    if (path->isGhost())
+                        continue;
+                    if (!FootpathIsZAndDirectionValid(*path, entranceTile.z, dir))
+                        continue;
+                    enqueue(TileCoordsXYZ{ neighbour.x, neighbour.y, path->baseHeight });
+                }
+            }
+        }
+
+        // Expand across connected footpaths.
+        while (!stack.empty())
+        {
+            const TileCoordsXYZ loc = stack.back();
+            stack.pop_back();
+
+            auto* path = MapGetPathElementAt(loc);
+            if (path == nullptr)
+                continue;
+
+            uint8_t edges = path->GetEdges();
+            for (Direction dir : kAllDirections)
+            {
+                if (!(edges & (1 << dir)))
+                    continue;
+
+                int32_t arrivalZ = loc.z;
+                if (path->IsSloped() && path->GetSlopeDirection() == dir)
+                    arrivalZ += 2;
+
+                const TileCoordsXY neighbour{ loc.x + TileDirectionDelta[dir].x, loc.y + TileDirectionDelta[dir].y };
+                for (auto* nextPath : TileElementsView<PathElement>(neighbour.ToCoordsXY()))
+                {
+                    if (nextPath->isGhost())
+                        continue;
+                    if (!FootpathIsZAndDirectionValid(*nextPath, arrivalZ, dir))
+                        continue;
+                    enqueue(TileCoordsXYZ{ neighbour.x, neighbour.y, nextPath->baseHeight });
+                }
+            }
+        }
+
+        return reachable;
+    }
+
+    // Drops the guest onto (or as close as possible to) the park entrance nearest to their current
+    // position. Returns true if the teleport succeeded. Restores the guest's happiness so the rescue
+    // does not carry the usual pick-up-and-drop penalty.
+    static bool TeleportGuestToNearestEntrance(Guest& guest)
+    {
+        const auto& entrances = getGameState().park.entrances;
+        if (entrances.empty())
+            return false;
+
+        // Pick the nearest entrance by Manhattan distance.
+        const CoordsXYZD* nearest = nullptr;
+        int32_t bestDist = std::numeric_limits<int32_t>::max();
+        for (const auto& entrance : entrances)
+        {
+            const int32_t dist = std::abs(entrance.x - guest.x) + std::abs(entrance.y - guest.y);
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                nearest = &entrance;
+            }
+        }
+        if (nearest == nullptr)
+            return false;
+
+        const TileCoordsXYZ entranceTile{ *nearest };
+
+        // Try the entrance tile itself first, then its immediate neighbours (where the connecting path
+        // usually is), so we land the guest somewhere walkable.
+        std::vector<TileCoordsXYZ> candidates;
+        candidates.push_back(entranceTile);
+        for (Direction dir : kAllDirections)
+            candidates.push_back(
+                TileCoordsXYZ{ entranceTile.x + TileDirectionDelta[dir].x, entranceTile.y + TileDirectionDelta[dir].y,
+                               entranceTile.z });
+
+        const int32_t happinessBefore = guest.happinessTarget;
+        for (const auto& candidate : candidates)
+        {
+            if (guest.Place(candidate, false).error != GameActions::Status::ok)
+                continue;
+            [[maybe_unused]] auto placed = guest.Place(candidate, true);
+            guest.happinessTarget = happinessBefore;
+            guest.happiness = happinessBefore;
+            return true;
+        }
+        return false;
+    }
+
+    // Ctrl+H: rescue every guest that is stranded (has a "lost / go home / can't find" thought and no
+    // walking route to a park entrance) by teleporting them to the nearest entrance, then report how
+    // many were moved.
+    static void RescueLostGuests()
+    {
+        if (getGameState().park.entrances.empty())
+        {
+            ScreenReaderSpeak("There is no park entrance to send lost guests to");
+            return;
+        }
+
+        const auto reachable = ComputeEntranceReachablePaths();
+
+        int32_t rescued = 0;
+        int32_t lost = 0;
+        for (auto* guest : EntityList<Guest>())
+        {
+            if (guest->outsideOfPark)
+                continue;
+            if (guest->State != PeepState::walking && guest->State != PeepState::sitting)
+                continue;
+            if (!GuestHasLostThought(*guest))
+                continue;
+
+            lost++;
+
+            // A guest standing on a footpath can reach an exit only if that tile is part of the
+            // network we flooded out from the entrances. A guest NOT on any footpath (wandered onto
+            // grass, marooned by deleted paths) has nothing to walk on at all, so they are stranded
+            // by definition - teleport them too.
+            const TileCoordsXYZ guestTile{ guest->NextLoc };
+            const auto* pathAtGuest = MapGetPathElementAt(guestTile);
+            if (pathAtGuest != nullptr && reachable.count(PackTileKey(guestTile.x, guestTile.y, guestTile.z)) != 0)
+                continue; // on a path that still reaches an exit on its own
+
+            if (TeleportGuestToNearestEntrance(*guest))
+                rescued++;
+        }
+
+        if (rescued > 0)
+        {
+            ScreenReaderSpeak(
+                std::to_string(rescued) + (rescued == 1 ? " stranded guest was" : " stranded guests were")
+                + " teleported to the park entrance");
+        }
+        else if (lost > 0)
+        {
+            ScreenReaderSpeak("No stranded guests, every lost guest can still reach an exit");
+        }
+        else
+        {
+            ScreenReaderSpeak("No lost guests to rescue");
+        }
+    }
+
     // Raises or lowers the whole brush area by one step, keeping tiles flat (full-tile mode).
     // One-line description of a single tile element for the Z-axis scan: its kind, and a name
     // for paths, rides and scenery. Mirrors the per-element classification in GetTileDescription.
@@ -1486,7 +1912,9 @@ namespace OpenRCT2::Ui::Accessibility
     // Read-only vertical scan: steps the probe to the next tile element above (dir > 0) or below
     // (dir < 0) the current scan height on the cursor's tile, reporting its type and height. Plays
     // the elevation tone at that height so the player can feel where it sits.
-    static void ScanZLevel(int32_t dir)
+    // Vertical (Z-axis) tile scan. Formerly on plain Page Up/Down, which now raise/lower land; this
+    // is kept (currently unbound) so it can be reassigned to another key later.
+    [[maybe_unused]] static void ScanZLevel(int32_t dir)
     {
         TileElement* best = nullptr;
         int32_t bestHeight = (dir > 0) ? std::numeric_limits<int32_t>::max() : std::numeric_limits<int32_t>::min();
@@ -1695,6 +2123,13 @@ namespace OpenRCT2::Ui::Accessibility
 
     static void RemovePath()
     {
+        // With a marked rectangle active, strip paths from the whole area, like clearing scenery.
+        if (HasMarkedArea())
+        {
+            RemovePathArea();
+            return;
+        }
+
         PathElement* pathElement = nullptr;
         for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
         {
@@ -1807,8 +2242,146 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    // Opens a game window by class via the game's own window-open path and announces its name, so a
+    // blind player hears what just opened. Used by the Shift + letter window shortcuts.
+    static void OpenGameWindow(WindowClass wc, const char* name)
+    {
+        ContextOpenWindow(wc);
+        ScreenReaderSpeak(name);
+    }
+
+    // The ride or stall occupying the cursor tile, found from a track piece or a ride entrance/exit
+    // on the tile (stalls are track elements too). Null if the tile holds no ride.
+    static RideId RideIdAtCursor()
+    {
+        for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
+        {
+            if (auto* track = el->asTrack(); track != nullptr)
+                return track->GetRideIndex();
+            if (auto* entrance = el->asEntrance(); entrance != nullptr)
+            {
+                const auto type = entrance->GetEntranceType();
+                if (type == ENTRANCE_TYPE_RIDE_ENTRANCE || type == ENTRANCE_TYPE_RIDE_EXIT)
+                    return entrance->GetRideIndex();
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        return RideId::GetNull();
+    }
+
+    // True if the cursor tile holds the park entrance gate.
+    static bool CursorOnParkEntrance()
+    {
+        for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
+        {
+            if (auto* entrance = el->asEntrance();
+                entrance != nullptr && entrance->GetEntranceType() == ENTRANCE_TYPE_PARK_ENTRANCE)
+                return true;
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        return false;
+    }
+
+    // Opens the edit window for a banner or sign on the cursor tile, mirroring the click behaviour
+    // (banners, wall signs, and large-scenery signs each open their detail window). Returns true if
+    // one was found and opened.
+    static bool OpenBannerOrSignAtCursor()
+    {
+        for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
+        {
+            if (auto* banner = el->asBanner(); banner != nullptr)
+            {
+                ContextOpenDetailWindow(WindowDetail::banner, banner->GetIndex().ToUnderlying());
+                ScreenReaderSpeak("Banner");
+                return true;
+            }
+            if (auto* wall = el->asWall(); wall != nullptr && !wall->GetBannerIndex().IsNull())
+            {
+                ContextOpenDetailWindow(WindowDetail::signSmall, wall->GetBannerIndex().ToUnderlying());
+                ScreenReaderSpeak("Sign");
+                return true;
+            }
+            if (auto* large = el->asLargeScenery(); large != nullptr && !large->GetBannerIndex().IsNull())
+            {
+                ContextOpenDetailWindow(WindowDetail::sign, large->GetBannerIndex().ToUnderlying());
+                ScreenReaderSpeak("Sign");
+                return true;
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        return false;
+    }
+
+    // Enter on the map cursor: open the information window of the ride/stall under the cursor, the
+    // edit window of a banner/sign, or park information for the park entrance gate. Announces when
+    // there is nothing to open.
+    static void OpenRideOrGateInfoAtCursor()
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        const RideId rid = RideIdAtCursor();
+        if (!rid.IsNull())
+        {
+            auto* ride = GetRide(rid);
+            auto intent = Intent(WindowClass::ride);
+            intent.PutExtra(INTENT_EXTRA_RIDE_ID, rid.ToUnderlying());
+            ContextOpenIntent(&intent);
+            ScreenReaderSpeak(ride != nullptr ? std::string(ride->getName()) : std::string("Ride"));
+            return;
+        }
+        if (OpenBannerOrSignAtCursor())
+            return;
+        if (CursorOnParkEntrance())
+        {
+            OpenGameWindow(WindowClass::parkInformation, "Park information");
+            return;
+        }
+        ScreenReaderSpeak("No ride, sign, or gate here");
+    }
+
+    // Ctrl+Enter on the map cursor: open the ride/stall under the cursor in construction mode, using
+    // the game's own construction window so all the built-in build tools work.
+    static void EnterRideConstructionAtCursor()
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        const RideId rid = RideIdAtCursor();
+        auto* ride = rid.IsNull() ? nullptr : GetRide(rid);
+        if (ride == nullptr)
+        {
+            ScreenReaderSpeak("No ride here to build on");
+            return;
+        }
+        RideInitialiseConstructionWindow(*ride);
+        ScreenReaderSpeak(std::string(ride->getName()) + ", construction");
+    }
+
+    // Shift+Page Up/Down: zoom the main view (matching the game's own zoom) and announce the level.
+    static void ZoomView(bool zoomIn)
+    {
+        Windows::MainWindowZoom(zoomIn, false);
+        int32_t level = 0;
+        if (auto* w = WindowGetMain(); w != nullptr && w->viewport != nullptr)
+            level = static_cast<int32_t>(static_cast<int8_t>(w->viewport->zoom));
+        ScreenReaderSpeak("Zoom level " + std::to_string(level));
+    }
+
     static bool HandleMapCursorKey(uint32_t key, uint32_t modifiers)
     {
+        // The mod uses no Alt-modified keys, so let any Alt combination fall through to the game's
+        // own shortcuts (e.g. Ctrl+Alt+C opens the Cheats window). Without this, a bare-letter map
+        // command like 'c' (read coordinates) would swallow the letter before the shortcut fires.
+        if (modifiers & KMOD_ALT)
+            return false;
+
         // During pre-built ride placement, dedicated keys rotate / build / cancel the design.
         // Arrow keys and the rest fall through so the map cursor still positions the ride.
         if (Windows::WindowTrackPlaceIsActive())
@@ -1926,25 +2499,94 @@ namespace OpenRCT2::Ui::Accessibility
             return true;
         }
 
-        // Number keys 1-9 are waypoints: Shift+N drops/moves waypoint N at the cursor, plain N
-        // warps to it. (SDL reports the digit keycode with KMOD_SHIFT set, so both share this key.)
-        if (key >= SDLK_1 && key <= SDLK_9)
+        // Shift + a letter opens the game window that the bare letter used to open (the bare letters
+        // now drive mod functions on the map cursor). We open the window here, via the game's own
+        // window-open path, so it works regardless of the player's saved shortcut config.
+        if (modifiers & KMOD_SHIFT)
+        {
+            switch (key)
+            {
+                case SDLK_f:
+                    OpenGameWindow(WindowClass::finances, "Finances");
+                    return true;
+                case SDLK_m:
+                    OpenGameWindow(WindowClass::recentNews, "Recent messages");
+                    return true;
+                case SDLK_d:
+                    ContextOpenWindowView(WindowView::rideResearch);
+                    ScreenReaderSpeak("Research");
+                    return true;
+                case SDLK_r:
+                    OpenGameWindow(WindowClass::rideList, "Rides");
+                    return true;
+                case SDLK_p:
+                    OpenGameWindow(WindowClass::parkInformation, "Park information");
+                    return true;
+                case SDLK_g:
+                    OpenGameWindow(WindowClass::guestList, "Guest list");
+                    return true;
+                case SDLK_s:
+                    OpenGameWindow(WindowClass::staffList, "Staff");
+                    return true;
+            }
+        }
+
+        // Enter opens the information window of the ride/stall/gate under the cursor. Shift+Enter
+        // rotates the camera (like Shift+arrows); Ctrl+Enter opens the ride/stall in construction
+        // mode. Placement modes handle Enter themselves above, so this only runs on the free cursor.
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER)
         {
             if (!_initialised)
                 InitialiseCursor();
-            const int32_t slot = static_cast<int32_t>(key - SDLK_1);
             if (modifiers & KMOD_SHIFT)
-                SetWaypoint(slot);
+            {
+                ViewportRotateAll(1);
+                ReportFacing();
+            }
+            else if (modifiers & KMOD_CTRL)
+                EnterRideConstructionAtCursor();
             else
-                JumpToWaypoint(slot);
+                OpenRideOrGateInfoAtCursor();
             return true;
+        }
+
+        // Number keys: Shift + number drops/moves the waypoint in that slot at the cursor; Ctrl +
+        // number warps to it. Slots are 1-9 then 0 (the tenth). A plain number is left for the game's
+        // own view-toggle shortcut, so we don't consume it. (SDL reports the digit keycode with the
+        // modifier flag set, so all three share the key.)
+        {
+            int32_t slot = -1;
+            if (key >= SDLK_1 && key <= SDLK_9)
+                slot = static_cast<int32_t>(key - SDLK_1);
+            else if (key == SDLK_0)
+                slot = kWaypointCount - 1;
+
+            if (slot >= 0)
+            {
+                if (modifiers & KMOD_SHIFT)
+                {
+                    if (!_initialised)
+                        InitialiseCursor();
+                    SetWaypoint(slot);
+                    return true;
+                }
+                if (modifiers & KMOD_CTRL)
+                {
+                    if (!_initialised)
+                        InitialiseCursor();
+                    JumpToWaypoint(slot);
+                    return true;
+                }
+                return false; // plain digit: let the game's view-toggle shortcut handle it
+            }
         }
 
         if (key != SDLK_UP && key != SDLK_DOWN && key != SDLK_LEFT && key != SDLK_RIGHT && key != SDLK_c
             && key != SDLK_t && key != SDLK_m && key != SDLK_SPACE && key != SDLK_d && key != SDLK_e
-            && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET && key != SDLK_p
-            && key != SDLK_q && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
-            && key != SDLK_k && key != SDLK_PAGEUP && key != SDLK_PAGEDOWN)
+            && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET
+            && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
+            && key != SDLK_k && key != SDLK_COMMA && key != SDLK_PERIOD && key != SDLK_PAGEUP
+            && key != SDLK_PAGEDOWN)
             return false;
 
         if (!_initialised)
@@ -1956,7 +2598,9 @@ namespace OpenRCT2::Ui::Accessibility
                 ReadCoordinates();
                 break;
             case SDLK_t:
-                AnnounceDateTime();
+                // Open the bottom-toolbar status readout: date, park rating, guests, cash, and
+                // recent messages. Arrow to cycle, Enter opens messages, Escape (or T) closes.
+                EnterStatusMode();
                 break;
             case SDLK_m:
                 AnnounceMoney();
@@ -1966,12 +2610,6 @@ namespace OpenRCT2::Ui::Accessibility
                 break;
             case SDLK_d:
                 RemovePath();
-                break;
-            case SDLK_p:
-                CyclePathType(1);
-                break;
-            case SDLK_q:
-                ToggleQueueMode();
                 break;
             case SDLK_x:
                 ClearSceneryAtCursor();
@@ -1985,24 +2623,32 @@ namespace OpenRCT2::Ui::Accessibility
                     ChangeLandOwnership(GameActions::LandBuyRightSetting::buyLand);
                 break;
             case SDLK_PAGEUP:
-                // Shift raises land, Ctrl raises water, no modifier scans up the Z axis.
+                // Plain raises land, Ctrl raises water, Shift zooms out (matching the game's
+                // Page Up = zoom out) and announces the level.
                 if (modifiers & KMOD_SHIFT)
-                    ChangeLandHeight(true);
+                    ZoomView(false);
                 else if (modifiers & KMOD_CTRL)
                     ChangeWaterHeight(true);
                 else
-                    ScanZLevel(1);
+                    ChangeLandHeight(true);
                 break;
             case SDLK_PAGEDOWN:
                 if (modifiers & KMOD_SHIFT)
-                    ChangeLandHeight(false);
+                    ZoomView(true);
                 else if (modifiers & KMOD_CTRL)
                     ChangeWaterHeight(false);
                 else
-                    ScanZLevel(-1);
+                    ChangeLandHeight(false);
                 break;
             case SDLK_l:
                 CycleSlopeMode();
+                break;
+            case SDLK_COMMA:
+                // Comma lowers, period raises the footpath build height (for bridges over water/gaps).
+                ChangeBuildHeight(-1);
+                break;
+            case SDLK_PERIOD:
+                ChangeBuildHeight(1);
                 break;
             case SDLK_b:
                 // Shift+B reports track breaks; plain B cycles the terraform/clear brush size.
@@ -2107,6 +2753,166 @@ namespace OpenRCT2::Ui::Accessibility
         return true;
     }
 
+    // Terraform/land tool option windows (Land, Water, Land Rights, Clear Scenery). Like ride
+    // construction, Ctrl+arrows navigate/adjust the window's options, Ctrl+Enter activates, Ctrl+B
+    // reads the current option, and Escape closes; plain arrows fall through so the map cursor keeps
+    // positioning the tool. Returns true if the key was consumed.
+    static bool HandleToolWindowAccessKey(uint32_t key, uint32_t modifiers)
+    {
+        auto* windowMgr = GetWindowManager();
+        if (windowMgr == nullptr)
+            return false;
+        WindowBase* w = windowMgr->FindByClass(WindowClass::land);
+        if (w == nullptr)
+            w = windowMgr->FindByClass(WindowClass::water);
+        if (w == nullptr)
+            w = windowMgr->FindByClass(WindowClass::landRights);
+        if (w == nullptr)
+            w = windowMgr->FindByClass(WindowClass::clearScenery);
+        if (w == nullptr)
+            return false;
+
+        std::optional<AccessibilityAction> action;
+        if (modifiers & KMOD_CTRL)
+        {
+            switch (key)
+            {
+                case SDLK_UP:
+                    action = AccessibilityAction::moveUp;
+                    break;
+                case SDLK_DOWN:
+                    action = AccessibilityAction::moveDown;
+                    break;
+                case SDLK_LEFT:
+                    action = AccessibilityAction::moveLeft;
+                    break;
+                case SDLK_RIGHT:
+                    action = AccessibilityAction::moveRight;
+                    break;
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER:
+                    action = AccessibilityAction::activate;
+                    break;
+                case SDLK_b:
+                    action = AccessibilityAction::announce;
+                    break;
+            }
+        }
+        if (key == SDLK_ESCAPE)
+            action = AccessibilityAction::cancel;
+
+        if (!action.has_value())
+            return false;
+
+        w->onAccessibilityAction(*action);
+        return true;
+    }
+
+    // Speaks a short summary of the controls available right now, triggered by F1. Contexts are
+    // checked most-specific first so the tips always match whatever the player is currently doing.
+    static void SpeakContextHelp()
+    {
+        auto* windowMgr = GetWindowManager();
+
+        // Placing a pre-built ride design.
+        if (Windows::WindowTrackPlaceIsActive())
+        {
+            ScreenReaderSpeak(
+                "Placing a ride design. Arrow keys move the cursor, Enter places it, R rotates it, "
+                "Escape cancels.");
+            return;
+        }
+        // Ride or maze construction (both use the ride construction window).
+        if (IsRideConstructionWindowOpen())
+        {
+            ScreenReaderSpeak(
+                "Construction. Arrow keys move the map cursor. Control up and down choose a build option, "
+                "Control left and right change it, Control Enter builds at the cursor, Control B reads the "
+                "build state, Escape exits.");
+            return;
+        }
+        // Keyboard-driven flat-ride placement.
+        if (IsAccessibleRidePlacementActive())
+        {
+            ScreenReaderSpeak(
+                "Placing a ride. Arrow keys move the cursor, Enter places it, R rotates, Escape cancels.");
+            return;
+        }
+        // Keyboard-driven scenery placement.
+        if (IsAccessibleSceneryPlacementActive())
+        {
+            ScreenReaderSpeak(
+                "Placing scenery. Arrow keys move the cursor, Enter places it at the cursor, Escape cancels.");
+            return;
+        }
+        // Terraform tool option windows (Land, Water, Land Rights, Clear Scenery).
+        if (windowMgr != nullptr
+            && (windowMgr->FindByClass(WindowClass::land) != nullptr
+                || windowMgr->FindByClass(WindowClass::water) != nullptr
+                || windowMgr->FindByClass(WindowClass::landRights) != nullptr
+                || windowMgr->FindByClass(WindowClass::clearScenery) != nullptr))
+        {
+            ScreenReaderSpeak(
+                "Land tool. Arrow keys move the map cursor; Page Up and Page Down raise and lower land, "
+                "hold Control for water. Control up and down choose a tool option, Control left and right "
+                "change it, Escape closes.");
+            return;
+        }
+        // Footpath window.
+        if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::footpath) != nullptr)
+        {
+            ScreenReaderSpeak(
+                "Footpath window. Up and down choose an option: path type, queue type, railings, or build "
+                "mode. Left and right change it, Enter selects. Escape closes the window; then build paths "
+                "with the map cursor and Space.");
+            return;
+        }
+        // Bottom-toolbar status readout (opened with T).
+        if (_statusMode)
+        {
+            ScreenReaderSpeak(
+                "Status readout. Up and down cycle through the date, park rating, guests, cash, and recent "
+                "messages. Enter opens messages, Escape closes.");
+            return;
+        }
+        // Top-toolbar menu (opened with Tab).
+        if (_menuMode)
+        {
+            ScreenReaderSpeak(
+                "Toolbar menu. Up and down move through the toolbar buttons, Enter opens the selected one, "
+                "Escape returns to the map.");
+            return;
+        }
+        // Any other navigable window (rides, guests, park, finances, options, cheats, shortcut keys, etc.).
+        if (GetActiveAccessibleWindow() != nullptr)
+        {
+            ScreenReaderSpeak(
+                "Menu open. Up and down move through items, left and right change values or switch tabs, "
+                "Enter activates, Escape closes.");
+            return;
+        }
+        // Free-mouse mode.
+        if (_mouseMode)
+        {
+            ScreenReaderSpeak("Mouse mode is on. Press Control Space to switch back to keyboard mode.");
+            return;
+        }
+        // Default: the free map cursor during play.
+        ScreenReaderSpeak(
+            "Map cursor. Arrow keys move around the park. C reads the current tile and coordinates. "
+            "T opens the status readout, M reads your cash. "
+            "Space builds a footpath, D removes one, L cycles the path slope, comma and period lower and "
+            "raise the build height for bridges. "
+            "Page Up and Page Down raise and lower land, hold Control for water or Shift to zoom. "
+            "X clears scenery, O buys land, B changes the brush size, K places markers. "
+            "Enter opens the ride, stall, or gate under the cursor, Control Enter starts building it. "
+            "Shift with a number sets a waypoint, Control with a number jumps to it. "
+            "Shift with F, R, P, G, S, D, or M opens finances, rides, park, guests, staff, research, or "
+            "messages. Tab opens the toolbar menu. Shift F1 opens the land tool. "
+            "Control H rescues guests stranded on cut-off paths, teleporting them to the park entrance. "
+            "Control F1 opens the accessibility settings.");
+    }
+
     bool HandleMapNavigationKey(const InputEvent& e)
     {
         if (e.deviceKind != InputDeviceKind::keyboard)
@@ -2117,6 +2923,7 @@ namespace OpenRCT2::Ui::Accessibility
         {
             _initialised = false;
             _menuMode = false;
+            _statusMode = false;
             _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
             std::fill(std::begin(_waypointSet), std::end(_waypointSet), false); // and any waypoints
             return false;
@@ -2135,6 +2942,28 @@ namespace OpenRCT2::Ui::Accessibility
             return false;
         }
 
+        // While rebinding a keyboard shortcut, let every key fall through to the shortcut manager so
+        // it captures the new binding (Escape-to-cancel is handled earlier in HandleMenuNavigationKey).
+        if (GetShortcutManager().isPendingShortcutChange())
+            return false;
+
+        // Ctrl+F1 opens the accessibility mod's own settings window.
+        if (key == SDLK_F1 && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)))
+        {
+            Windows::AccessibilityOptionsOpen();
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Bare F1 speaks context-sensitive help for whatever the player is currently doing. Any
+        // modified F1 (e.g. Shift+F1, now the land tool) falls through to the game's own shortcuts.
+        if (key == SDLK_F1 && !(e.modifiers & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT)))
+        {
+            SpeakContextHelp();
+            _lastHandledKey = key;
+            return true;
+        }
+
         // Ctrl+Space toggles between keyboard-cursor mode and free-mouse mode. Works in either
         // mode so the player can always switch back.
         if (key == SDLK_SPACE && (e.modifiers & KMOD_CTRL))
@@ -2142,6 +2971,15 @@ namespace OpenRCT2::Ui::Accessibility
             _mouseMode = !_mouseMode;
             _menuMode = false; // leave any open toolbar menu when switching
             ScreenReaderSpeak(_mouseMode ? "Mouse mode" : "Keyboard mode");
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Ctrl+H rescues guests who are stranded on footpaths cut off from any park exit, teleporting
+        // them to the nearest entrance. Available in any mode so the player can always trigger it.
+        if (key == SDLK_h && (e.modifiers & KMOD_CTRL))
+        {
+            RescueLostGuests();
             _lastHandledKey = key;
             return true;
         }
@@ -2155,6 +2993,13 @@ namespace OpenRCT2::Ui::Accessibility
             return true;
         }
 
+        // Terraform/land tool option windows: same Ctrl+arrow scheme, plain arrows stay with the cursor.
+        if (HandleToolWindowAccessKey(key, e.modifiers))
+        {
+            _lastHandledKey = key;
+            return true;
+        }
+
         // In mouse mode the keyboard cursor is inactive: let keys fall through to the game so
         // the mouse can drive everything normally. (Open windows are still navigable via the
         // separate menu-navigation handler.)
@@ -2162,6 +3007,14 @@ namespace OpenRCT2::Ui::Accessibility
         {
             _lastHandledKey = 0;
             return false;
+        }
+
+        // The bottom-toolbar status readout (opened with T) owns the keyboard while it is open.
+        if (_statusMode)
+        {
+            const bool handled = HandleStatusModeKey(key);
+            _lastHandledKey = handled ? key : 0;
+            return handled;
         }
 
         // Cursor-driven ride placement and ride construction own the keyboard; make sure a toolbar
@@ -2246,6 +3099,62 @@ namespace OpenRCT2::Ui::Accessibility
     std::string DescribeTile(const TileCoordsXY& tile)
     {
         return GetTileDescription(tile);
+    }
+
+    bool TileHasNonSceneryBlocker(const TileCoordsXY& tile)
+    {
+        for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
+        {
+            switch (el->getType())
+            {
+                case TileElementType::Path:
+                case TileElementType::Track:
+                case TileElementType::Entrance:
+                case TileElementType::Banner:
+                    return true;
+                default: // Surface, small/large scenery and walls/fences are clearable, so they don't count.
+                    break;
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        return false;
+    }
+
+    std::string DescribeEntranceExitConnection(const TileCoordsXYZD& loc)
+    {
+        if (loc.IsNull())
+            return {};
+
+        // A ride entrance/exit is stored facing toward its station platform; its doorway - where
+        // guests walk in and a queue/path connects - faces the opposite way.
+        const Direction doorway = DirectionReverse(loc.direction);
+        std::string text = std::string(", facing ") + WorldDirectionName(doorway);
+
+        // Is there a footpath on the doorway tile at roughly the entrance's height?
+        const auto entranceWorld = TileCoordsXYZ(loc.x, loc.y, loc.z).ToCoordsXYZ();
+        const CoordsXY doorTile = CoordsXY{ entranceWorld.x, entranceWorld.y } + CoordsDirectionDelta[doorway];
+        const TileCoordsXY doorTileCoords{ doorTile };
+
+        bool connected = false;
+        for (TileElement* el = MapGetFirstElementAt(doorTileCoords); el != nullptr;)
+        {
+            if (auto* path = el->asPath(); path != nullptr)
+            {
+                const int32_t dz = path->getBaseZ() - entranceWorld.z;
+                if ((dz < 0 ? -dz : dz) <= kPathHeightStep)
+                {
+                    connected = true;
+                    break;
+                }
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        text += connected ? ", path connected" : ", no path connected yet";
+        return text;
     }
 
     void UpdateMapCursorFromMouse()

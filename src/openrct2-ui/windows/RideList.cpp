@@ -371,6 +371,39 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto& lw = widgets[WIDX_LIST];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+
+            // Find the focused ride's position among the visible rows (rows are packed in order).
+            int32_t rowPos = -1;
+            if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_rideList.size())
+                && _rideList[_accessibilityIndex].Visible)
+            {
+                int32_t pos = 0;
+                for (int32_t i = 0; i < _accessibilityIndex; i++)
+                    if (_rideList[i].Visible)
+                        pos++;
+                rowPos = pos;
+            }
+            if (rowPos < 0) // nothing focused: box the whole list
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+
+            const int32_t rowTop = viewTop + rowPos * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            if (bottom <= top) // focused row scrolled out of view: box the whole list
+            {
+                top = viewTop;
+                bottom = viewBottom;
+            }
+            return ScreenRect{ { left, top }, { right, bottom } };
+        }
+
         void announceAccessibilityRide(int32_t index)
         {
             std::string text = _rideList[index].Name;

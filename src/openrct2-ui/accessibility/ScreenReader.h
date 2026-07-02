@@ -12,8 +12,21 @@
 #include <cstdint>
 #include <string_view>
 
+struct CoordsXYZ;
+
+namespace OpenRCT2::Audio
+{
+    enum class SoundId : uint8_t;
+}
+
 namespace OpenRCT2::Ui::Accessibility
 {
+    // Plays one of the accessibility mod's own sound cues (e.g. placement confirmation, error) at a
+    // world location, scaled by the mod's cue-volume setting (Config sound.accessibilityCueVolume).
+    // No-op when the cue volume is 0. Use this instead of Audio::Play3D for the mod's feedback sounds
+    // so they all honour the single volume control in the accessibility settings window.
+    void PlayCue(Audio::SoundId soundId, const CoordsXYZ& loc);
+
     // Loads the screen reader bridge (nvdaControllerClient64.dll on Windows).
     // Safe to call multiple times; only the first call has an effect.
     void ScreenReaderInit();

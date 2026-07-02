@@ -188,6 +188,7 @@
     <ClCompile Include="UiContext.Linux.cpp" />
     <ClCompile Include="UiContext.Win32.cpp" />
     <ClCompile Include="WindowManager.cpp" />
+    <ClCompile Include="windows\AccessibilityOptions.cpp" />
     <ClCompile Include="windows\About.cpp" />
     <ClCompile Include="windows\AssetPacks.cpp" />
     <ClCompile Include="windows\Banner.cpp" />

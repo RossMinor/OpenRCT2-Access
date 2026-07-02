@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/ShortcutManager.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2/SpriteIds.h>
@@ -19,6 +20,7 @@
 #include <openrct2/drawing/Rectangle.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/localisation/StringIds.h>
 #include <openrct2/ui/WindowManager.h>
 
@@ -91,6 +93,11 @@ namespace OpenRCT2::Ui::Windows
                     w->_shortcutLocalisedName = registeredShortcut->localisedName;
                     w->_shortcutCustomName = registeredShortcut->customName;
                     shortcutManager.setPendingShortcutChange(registeredShortcut->id);
+                    const std::string name = registeredShortcut->customName.empty()
+                        ? OpenRCT2::FormatStringID(registeredShortcut->localisedName)
+                        : registeredShortcut->customName;
+                    Accessibility::ScreenReaderSpeak(
+                        "Press the new key or key combination for " + name + ", or Escape to cancel.");
                     return w;
                 }
             }
@@ -190,6 +197,9 @@ namespace OpenRCT2::Ui::Windows
             initialiseTabs();
             initialiseWidgets();
             initialiseList();
+            axFocusFirstRow();
+            Accessibility::ScreenReaderSpeak(
+                "Shortcut keys. Up and down browse shortcuts, left and right change category, Enter to rebind.");
         }
 
         void onClose() override
@@ -299,6 +309,173 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        // --- Keyboard accessibility ---
+        // Up/Down browse the shortcut rows (skipping group separators), Left/Right switch category
+        // tabs, Enter opens the rebind window for the focused shortcut. Rebinding itself is captured
+        // by the shortcut manager (see the pending-change guard in the accessibility input handlers).
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    axMove(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    axMove(1);
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    axChangeTab(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    axChangeTab(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    axActivate();
+                    return true;
+                case AccessibilityAction::announce:
+                    axAnnounceRow();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto& lw = widgets[WIDX_SCROLL];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+            if (_accessRow < 0 || _accessRow >= static_cast<int32_t>(_list.size()))
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+            const int32_t rowTop = viewTop + 1 + _accessRow * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            if (bottom <= top)
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+            return ScreenRect{ { left, top }, { right, bottom } };
+        }
+
+    private:
+        int32_t _accessRow = -1;
+
+        static const char* axTabName(size_t tab)
+        {
+            static const char* kNames[] = { "Interface", "View", "Window", "Miscellaneous" };
+            return tab < std::size(kNames) ? kNames[tab] : "Shortcuts";
+        }
+
+        std::string axRowText(size_t row) const
+        {
+            const auto& item = _list[row];
+            std::string name = item.CustomString.empty() ? OpenRCT2::FormatStringID(item.StringId) : item.CustomString;
+            std::string binding = item.Binding.empty() ? "unbound" : item.Binding;
+            return name + ", " + binding;
+        }
+
+        // Counts non-separator entries and the focused row's position among them, for "n of m".
+        void axRowPosition(int32_t& pos, int32_t& total) const
+        {
+            pos = 0;
+            total = 0;
+            for (int32_t i = 0; i < static_cast<int32_t>(_list.size()); i++)
+            {
+                if (_list[i].ShortcutId.empty())
+                    continue;
+                if (i == _accessRow)
+                    pos = total;
+                total++;
+            }
+        }
+
+        void axAnnounceRow()
+        {
+            if (_accessRow < 0 || _accessRow >= static_cast<int32_t>(_list.size()))
+                return;
+            int32_t pos, total;
+            axRowPosition(pos, total);
+            Accessibility::ScreenReaderSpeakItem(axRowText(_accessRow), pos, total);
+        }
+
+        void axScrollToRow()
+        {
+            const auto& lw = widgets[WIDX_SCROLL];
+            const int32_t viewHeight = lw.bottom - lw.top - 1;
+            const int32_t rowTop = 1 + _accessRow * kScrollableRowHeight;
+            const int32_t rowBottom = rowTop + kScrollableRowHeight;
+            if (rowTop < scrolls[0].contentOffsetY)
+                scrolls[0].contentOffsetY = rowTop;
+            else if (rowBottom > scrolls[0].contentOffsetY + viewHeight)
+                scrolls[0].contentOffsetY = rowBottom - viewHeight;
+            invalidate();
+        }
+
+        void axMove(int32_t dir)
+        {
+            if (_list.empty())
+            {
+                Accessibility::ScreenReaderSpeak("No shortcuts");
+                return;
+            }
+            int32_t idx = _accessRow;
+            for (int32_t steps = 0; steps < static_cast<int32_t>(_list.size()); steps++)
+            {
+                idx += dir;
+                if (idx < 0)
+                    idx = static_cast<int32_t>(_list.size()) - 1;
+                else if (idx >= static_cast<int32_t>(_list.size()))
+                    idx = 0;
+                if (!_list[idx].ShortcutId.empty())
+                    break;
+            }
+            if (_list[idx].ShortcutId.empty())
+                return;
+            _accessRow = idx;
+            _highlightedItem = static_cast<int_fast16_t>(idx);
+            axScrollToRow();
+            axAnnounceRow();
+        }
+
+        void axFocusFirstRow()
+        {
+            _accessRow = -1;
+            for (int32_t i = 0; i < static_cast<int32_t>(_list.size()); i++)
+                if (!_list[i].ShortcutId.empty())
+                {
+                    _accessRow = i;
+                    break;
+                }
+            _highlightedItem = static_cast<int_fast16_t>(_accessRow);
+        }
+
+        void axChangeTab(int32_t dir)
+        {
+            const int32_t n = static_cast<int32_t>(_tabs.size());
+            if (n == 0)
+                return;
+            const size_t t = static_cast<size_t>((static_cast<int32_t>(_currentTabIndex) + dir + n) % n);
+            SetTab(t);
+            axFocusFirstRow();
+            std::string text = std::string(axTabName(t)) + " category";
+            if (_accessRow >= 0)
+                text += ", " + axRowText(_accessRow);
+            Accessibility::ScreenReaderSpeak(text);
+        }
+
+        void axActivate()
+        {
+            if (_accessRow < 0 || _accessRow >= static_cast<int32_t>(_list.size()))
+                return;
+            if (_list[_accessRow].ShortcutId.empty())
+                return;
+            ChangeShortcutWindow::Open(_list[_accessRow].ShortcutId);
+        }
+
+    public:
         void onScrollDraw(int32_t scrollIndex, RenderTarget& rt) override
         {
             auto rtCoords = ScreenCoordsXY{ rt.x, rt.y };

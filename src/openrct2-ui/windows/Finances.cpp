@@ -426,7 +426,8 @@ namespace OpenRCT2::Ui::Windows
             {
                 const int32_t mask = 1 << i;
                 const bool enabled = (gameState.researchUncompletedCategories & mask) != 0;
-                const char* state = !enabled ? "fully researched" : ((gameState.researchPriorities & mask) ? "on" : "off");
+                const char* state = !enabled ? "fully researched"
+                                             : ((gameState.researchPriorities & mask) ? "checked" : "unchecked");
                 items.push_back(
                     { OpenRCT2::FormatStringID(kLabels[i]) + ", " + state + ", checkbox", i, enabled });
             }
@@ -458,23 +459,27 @@ namespace OpenRCT2::Ui::Windows
                 const int32_t newLevel = (gameState.researchFundingLevel + 1) & 3;
                 auto action = GameActions::ParkSetResearchFundingAction(gameState.researchPriorities, newLevel);
                 GameActions::Execute(&action, getGameState());
+
+                // The action applies immediately in single player; re-read the funding row so the
+                // new level is heard.
+                const auto updated = buildResearchItems();
+                if (_accessResearchIndex >= 0 && _accessResearchIndex < static_cast<int32_t>(updated.size()))
+                    Accessibility::ScreenReaderSpeak(updated[_accessResearchIndex].label);
             }
             else if (!it.enabled)
             {
                 Accessibility::ScreenReaderSpeak("That category is fully researched and cannot be changed");
-                return;
             }
             else
             {
                 // Route through the window's own mouse-up handler, the exact path a checkbox click
                 // takes (WindowResearchFundingMouseUp), so the toggle matches the game precisely.
                 onMouseUp(static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + it.category));
-            }
 
-            // The action applies immediately in single player; re-read the focused row.
-            const auto updated = buildResearchItems();
-            if (_accessResearchIndex >= 0 && _accessResearchIndex < static_cast<int32_t>(updated.size()))
-                Accessibility::ScreenReaderSpeak(updated[_accessResearchIndex].label);
+                // Announce just the resulting checkbox state, matching the other settings windows.
+                const bool nowChecked = (getGameState().researchPriorities & (1 << it.category)) != 0;
+                Accessibility::ScreenReaderSpeak(nowChecked ? "checked" : "unchecked");
+            }
         }
 
         void changeAccessibilityTab(int32_t delta)

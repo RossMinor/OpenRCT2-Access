@@ -665,6 +665,27 @@ namespace OpenRCT2::Ui::Windows
             return true;
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto& lw = widgets[WIDX_GUEST_LIST];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+
+            // Only the individual-guest list has per-row focus; otherwise box the whole list.
+            if (_selectedTab != TabId::Individual || _accessibilityIndex < 0
+                || _accessibilityIndex >= static_cast<int32_t>(_guestList.size()))
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+
+            const int32_t rowTop = viewTop + _accessibilityIndex * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            if (bottom <= top)
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+            return ScreenRect{ { left, top }, { right, bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // The opening action just initialises and announces the first category.

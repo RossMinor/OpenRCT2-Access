@@ -50,7 +50,11 @@ namespace OpenRCT2::Graph
             const ScreenCoordsXY cursorPos = ContextGetCursorPositionScaled();
 
             int32_t i = -1;
-            if (internalBounds.Contains(cursorPos))
+            // xStepPx is only set once the graph has been laid out (RecalculateLayout, during draw
+            // prep). If the hover index is queried before then - e.g. onUpdate running from setPage
+            // before the first draw - the props are still zero, and a zero-sized internalBounds at
+            // the origin "contains" a (0,0) cursor. Guard the divide so that never divides by zero.
+            if (xStepPx > 0 && internalBounds.Contains(cursorPos))
             {
                 i = (numPoints - 1) - (cursorPos.x - internalBounds.GetLeft() + (xStepPx / 2)) / xStepPx;
                 if (i < 0)

@@ -9,6 +9,11 @@
 
 #include "ScreenReader.h"
 
+#include <algorithm>
+#include <cmath>
+#include <openrct2/audio/Audio.h>
+#include <openrct2/config/Config.h>
+#include <openrct2/world/Location.hpp>
 #include <string>
 #include <vector>
 
@@ -193,5 +198,20 @@ namespace OpenRCT2::Ui::Accessibility
 
         _historyCursor = next;
         ScreenReaderSpeak(_history[_historyCursor]);
+    }
+
+    void PlayCue(Audio::SoundId soundId, const CoordsXYZ& loc)
+    {
+        const int32_t pct = Config::Get().sound.accessibilityCueVolume;
+        if (pct <= 0)
+            return; // cues muted
+
+        // Convert the 0-100% setting into a DirectSound-style volume offset (hundredths of a decibel).
+        // 100% -> 0 (unchanged); quieter percentages give a negative offset. Clamped to silence.
+        int32_t volumeAdjust = 0;
+        if (pct < 100)
+            volumeAdjust = std::max(-10000, static_cast<int32_t>(std::lround(2000.0 * std::log10(pct / 100.0))));
+
+        Audio::Play3D(soundId, loc, volumeAdjust);
     }
 } // namespace OpenRCT2::Ui::Accessibility

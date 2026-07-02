@@ -49,6 +49,9 @@ namespace OpenRCT2::Ui::Windows
     // About
     WindowBase* AboutOpen();
 
+    // AccessibilityOptions (settings window for the accessibility mod)
+    WindowBase* AccessibilityOptionsOpen();
+
     // AssetPacks
     WindowBase* AssetPacksOpen();
 

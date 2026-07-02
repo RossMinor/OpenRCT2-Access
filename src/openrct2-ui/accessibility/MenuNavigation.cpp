@@ -13,6 +13,8 @@
 #include "ScreenReader.h"
 
 #include <SDL.h>
+#include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/input/ShortcutManager.h>
 #include <algorithm>
 #include <openrct2/drawing/Colour.h>
 #include <openrct2/drawing/Rectangle.h>
@@ -67,7 +69,7 @@ namespace OpenRCT2::Ui::Accessibility
 
     // The window that currently owns accessible keyboard navigation, chosen front-to-back
     // among the windows we know how to navigate.
-    static WindowBase* GetActiveAccessibleWindow()
+    WindowBase* GetActiveAccessibleWindow()
     {
         auto* windowMgr = GetWindowManager();
         if (windowMgr == nullptr)
@@ -87,6 +89,10 @@ namespace OpenRCT2::Ui::Accessibility
         // Fire-staff confirmation.
         if (auto* w = windowMgr->FindByClass(WindowClass::firePrompt))
             return w;
+        // The accessibility mod's own settings window (opened with Ctrl+F1) is a deliberately focused
+        // dialog, so it takes the keyboard while open.
+        if (auto* w = windowMgr->FindByClass(WindowClass::accessibilityOptions))
+            return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::serverList))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::scenarioSelect))
@@ -95,6 +101,14 @@ namespace OpenRCT2::Ui::Accessibility
         if (auto* w = windowMgr->FindByClass(WindowClass::trackDesignList))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::titleMenu))
+            return w;
+        // A placed banner or sign's edit window (both use WindowClass::banner) is a focused detail
+        // window, so it takes priority while open.
+        if (auto* w = windowMgr->FindByClass(WindowClass::banner))
+            return w;
+        // The footpath construction window: its options (surface, queue, railings, build mode) are
+        // keyboard-navigable while open.
+        if (auto* w = windowMgr->FindByClass(WindowClass::footpath))
             return w;
         // In-game navigable windows take focus while open.
         if (auto* w = windowMgr->FindByClass(WindowClass::constructRide))
@@ -108,6 +122,13 @@ namespace OpenRCT2::Ui::Accessibility
         if (auto* w = windowMgr->FindByClass(WindowClass::scenery))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::options))
+            return w;
+        if (auto* w = windowMgr->FindByClass(WindowClass::cheats))
+            return w;
+        // The keyboard-shortcut list; while its rebind sub-window is open, keys must pass through
+        // to the shortcut manager (see the pending-change guard in HandleMenuNavigationKey), so this
+        // only captures navigation when no rebind is in progress.
+        if (auto* w = windowMgr->FindByClass(WindowClass::keyboardShortcutList))
             return w;
         if (auto* w = windowMgr->FindByClass(WindowClass::rideList))
             return w;
@@ -301,6 +322,26 @@ namespace OpenRCT2::Ui::Accessibility
     {
         if (e.deviceKind != InputDeviceKind::keyboard)
             return false;
+
+        // While a shortcut rebind is pending (the Change Shortcut window is open), the next key
+        // press is captured by the shortcut manager as the new binding. Let every key fall through
+        // to it, except Escape, which we use to cancel the rebind (Escape is otherwise a valid
+        // binding, so the shortcut manager would bind it).
+        if (auto& sm = GetShortcutManager(); sm.isPendingShortcutChange())
+        {
+            if (e.button == SDLK_ESCAPE)
+            {
+                if (e.state == InputEventState::down)
+                {
+                    if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                        windowMgr->CloseByClass(WindowClass::changeKeyboardShortcut);
+                    ScreenReaderSpeak("Rebind cancelled");
+                }
+                _lastHandledKey = e.button;
+                return true;
+            }
+            return false;
+        }
 
         const auto action = MapKeyToAction(e.button, e.modifiers);
         if (!action.has_value())

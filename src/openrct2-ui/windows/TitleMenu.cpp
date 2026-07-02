@@ -356,6 +356,16 @@ namespace OpenRCT2::Ui::Windows
             return true;
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto items = getMenuItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                return std::nullopt;
+            const auto& wd = widgets[items[_accessIndex]];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             if (_accessDropdownOpen)

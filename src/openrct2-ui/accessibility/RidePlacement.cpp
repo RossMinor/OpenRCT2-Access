@@ -9,6 +9,7 @@
 
 #include "RidePlacement.h"
 
+#include "MapNavigation.h"
 #include "ScreenReader.h"
 
 #include <openrct2/Context.h>
@@ -21,9 +22,11 @@
 #include <openrct2/actions/ride/RideDemolishAction.h>
 #include <openrct2/actions/ride/RideEntranceExitPlaceAction.h>
 #include <openrct2/actions/ride/RideSetStatusAction.h>
+#include <openrct2/actions/terraform/ClearAction.h>
 #include <openrct2/actions/track/TrackPlaceAction.h>
 #include <openrct2/audio/Audio.h>
 #include <openrct2/config/Config.h>
+#include <openrct2/core/Money.hpp>
 #include <openrct2/core/Numerics.hpp>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/ride/Ride.h>
@@ -146,16 +149,13 @@ namespace OpenRCT2::Ui::Accessibility
         return true;
     }
 
-    // Finds a base height where the whole footprint fits at `origin`, querying with the given flags.
-    // Starts at the highest terrain (or water) under the footprint and searches upward, mirroring
-    // the construction tool. Returns the height, or nullopt if none fits within range.
-    static std::optional<int32_t> FindFootprintBaseZ(const CoordsXY& origin)
+    // The natural ground height under the footprint: the highest terrain (or water) corner, which is
+    // where a ride sits when nothing forces it upward. Returns nullopt if there is no surface here.
+    static std::optional<int32_t> FootprintGroundZ(const CoordsXY& origin)
     {
-        const auto offsets = FootprintOffsets();
-
         int32_t baseZ = 0;
         bool haveSurface = false;
-        for (const auto& off : offsets)
+        for (const auto& off : FootprintOffsets())
         {
             auto* surface = MapGetSurfaceElementAt(CoordsXY{ origin.x + off.x, origin.y + off.y });
             if (surface == nullptr)
@@ -171,15 +171,32 @@ namespace OpenRCT2::Ui::Accessibility
         }
         if (!haveSurface)
             return std::nullopt;
+        return baseZ;
+    }
 
+    // Dry-run a footprint placement at a specific height and report the engine's verdict.
+    static GameActions::Status QueryFootprintAt(const CoordsXY& origin, int32_t z)
+    {
+        const CoordsXYZD loc{ origin.x, origin.y, z, _direction };
+        auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, loc, 0, 0, 0, {}, false);
+        return GameActions::Query(&query, getGameState()).error;
+    }
+
+    // Finds a base height where the whole footprint fits at `origin`. Starts at ground level and
+    // searches upward, mirroring the construction tool. Returns the height, or nullopt if none fits.
+    static std::optional<int32_t> FindFootprintBaseZ(const CoordsXY& origin)
+    {
+        auto ground = FootprintGroundZ(origin);
+        if (!ground.has_value())
+            return std::nullopt;
+
+        int32_t baseZ = *ground;
         for (int32_t i = 0; i < 7; i++, baseZ += kCoordsZStep)
         {
-            const CoordsXYZD loc{ origin.x, origin.y, baseZ, _direction };
-            auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, loc, 0, 0, 0, {}, false);
-            auto res = GameActions::Query(&query, getGameState());
-            if (res.error == GameActions::Status::ok)
+            const auto err = QueryFootprintAt(origin, baseZ);
+            if (err == GameActions::Status::ok)
                 return baseZ;
-            if (res.error == GameActions::Status::insufficientFunds)
+            if (err == GameActions::Status::insufficientFunds)
                 break; // raising height won't help
         }
         return std::nullopt;
@@ -298,7 +315,7 @@ namespace OpenRCT2::Ui::Accessibility
     {
         auto* windowMgr = GetWindowManager();
         windowMgr->CloseByClass(WindowClass::error);
-        Audio::Play3D(Audio::SoundId::placeItem, trackLoc);
+        PlayCue(Audio::SoundId::placeItem, trackLoc);
 
         if (_needsEntranceExit)
         {
@@ -325,39 +342,110 @@ namespace OpenRCT2::Ui::Accessibility
         Finish();
     }
 
+    // Clears small and large scenery on every tile the footprint occupies, so the ride can be built
+    // without manually removing trees and decorations first. Limited to the ride's own footprint:
+    // each occupied tile is cleared individually (not a bounding box) so nothing outside the ride is
+    // touched. Returns the total cost, or kMoney64Undefined if nothing was clearable.
+    static money64 ClearFootprintScenery(const CoordsXY& origin)
+    {
+        const GameActions::ClearableItems items = GameActions::CLEARABLE_ITEMS::kScenerySmall
+            | GameActions::CLEARABLE_ITEMS::kSceneryLarge;
+
+        money64 total = kMoney64Undefined;
+        for (const auto& o : FootprintOffsets())
+        {
+            const CoordsXY tile{ origin.x + o.x, origin.y + o.y };
+            auto clear = GameActions::ClearAction(MapRange(tile, tile), items);
+            auto res = GameActions::Execute(&clear, getGameState());
+            if (res.error == GameActions::Status::ok)
+                total = (total == kMoney64Undefined ? 0 : total) + res.cost;
+        }
+        return total;
+    }
+
+    // True if any footprint tile holds a non-scenery blocker (a path, another ride, an entrance/exit
+    // or a banner) - something clearing scenery would not resolve. Walls/fences are clearable.
+    static bool FootprintHasHardBlocker(const CoordsXY& origin)
+    {
+        for (const auto& o : FootprintOffsets())
+        {
+            const CoordsXY tile{ origin.x + o.x, origin.y + o.y };
+            if (TileHasNonSceneryBlocker(TileCoordsXY{ tile }))
+                return true;
+        }
+        return false;
+    }
+
+    // Plays the error sound and reports why the footprint cannot be built at `z`, leaving placement
+    // active so the player can try another tile.
+    static void AnnounceFootprintError(const CoordsXY& origin, int32_t z)
+    {
+        PlayCue(Audio::SoundId::error, { origin, z });
+        const CoordsXYZD failLoc = { origin.x, origin.y, z, _direction };
+        auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, failLoc, 0, 0, 0, {}, false);
+        auto res = GameActions::Query(&query, getGameState());
+        GetWindowManager()->ShowError(res.getErrorTitle(), res.getErrorMessage());
+    }
+
+    // Builds the footprint at `baseZ`. On success, sweeps any scenery still sharing the ride's tiles
+    // (some small scenery does not block a ride, so it survives placement otherwise) and announces.
+    static void ExecuteFootprintPlace(const CoordsXY& origin, int32_t baseZ)
+    {
+        const CoordsXYZD trackLoc = { origin.x, origin.y, baseZ, _direction };
+        const CoordsXYZ placedLoc = { origin.x, origin.y, baseZ };
+        auto place = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, trackLoc, 0, 0, 0, {}, false);
+        place.SetCallback([placedLoc, origin](const GameActions::GameAction*, const GameActions::Result* result) {
+            if (result->error != GameActions::Status::ok)
+                return;
+            // Sweep any scenery still sharing the ride's tiles (some small scenery does not block a
+            // ride, so it survives placement otherwise).
+            ClearFootprintScenery(origin);
+            OnFootprintPlaced(placedLoc);
+        });
+        GameActions::Execute(&place, getGameState());
+    }
+
     static void PlaceFootprint(const CoordsXY& cursor)
     {
         // The cursor marks the footprint's bottom-left corner; derive the real placement origin.
         const CoordsXY origin = AnchorOriginFromCursor(cursor);
 
-        if (MapGetSurfaceElementAt(origin) == nullptr && MapGetSurfaceElementAt(cursor) == nullptr)
+        auto ground = FootprintGroundZ(origin);
+        if (!ground.has_value())
         {
             ScreenReaderSpeak("Cannot build here");
             return;
         }
 
-        if (auto baseZ = FindFootprintBaseZ(origin); baseZ.has_value())
+        const bool hardBlocker = FootprintHasHardBlocker(origin);
+        const auto groundErr = QueryFootprintAt(origin, *ground);
+
+        // Case A: it already builds at ground level. Place it, then sweep any coexisting scenery so
+        // nothing is left under it.
+        if (groundErr == GameActions::Status::ok)
         {
-            const CoordsXYZD trackLoc = { origin.x, origin.y, *baseZ, _direction };
-            const CoordsXYZ placedLoc = { origin.x, origin.y, *baseZ };
-            auto place = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, trackLoc, 0, 0, 0, {}, false);
-            place.SetCallback([placedLoc](const GameActions::GameAction*, const GameActions::Result* result) {
-                if (result->error == GameActions::Status::ok)
-                    OnFootprintPlaced(placedLoc);
-            });
-            GameActions::Execute(&place, getGameState());
+            ExecuteFootprintPlace(origin, *ground);
             return;
         }
 
-        // No valid height found: announce the error and stay active for another attempt.
-        auto* surface = MapGetSurfaceElementAt(origin);
-        int32_t baseZ = surface != nullptr ? floor2(surface->getBaseZ(), kCoordsZStep) : 0;
-        Audio::Play3D(Audio::SoundId::error, { origin, baseZ });
-        auto* windowMgr = GetWindowManager();
-        const CoordsXYZD failLoc = { origin.x, origin.y, baseZ, _direction };
-        auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, failLoc, 0, 0, 0, {}, false);
-        auto res = GameActions::Query(&query, getGameState());
-        windowMgr->ShowError(res.getErrorTitle(), res.getErrorMessage());
+        // Case B: blocked by something other than scenery (a path, wall, fence or another ride).
+        // Clearing scenery would not make it buildable, so report the reason and leave scenery alone.
+        if (hardBlocker)
+        {
+            AnnounceFootprintError(origin, *ground);
+            return;
+        }
+
+        // Case C: only scenery (or uneven terrain) is in the way. Clear the footprint scenery first
+        // so the ride sits at ground level instead of floating above it, then build (raising it as
+        // the construction tool would if the terrain is uneven).
+        ClearFootprintScenery(origin);
+        if (auto baseZ = FindFootprintBaseZ(origin); baseZ.has_value())
+        {
+            ExecuteFootprintPlace(origin, *baseZ);
+            return;
+        }
+        AnnounceFootprintError(origin, *ground);
     }
 
     // If `tile` is a valid square to place an entrance/exit on, returns the direction from that
@@ -420,32 +508,42 @@ namespace OpenRCT2::Ui::Accessibility
         action.SetCallback([isExit](const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
             {
-                Audio::Play3D(Audio::SoundId::error, result->position);
+                PlayCue(Audio::SoundId::error, result->position);
                 auto* windowMgr = GetWindowManager();
                 windowMgr->ShowError(result->getErrorTitle(), result->getErrorMessage());
                 return;
             }
 
-            Audio::Play3D(Audio::SoundId::placeItem, result->position);
+            PlayCue(Audio::SoundId::placeItem, result->position);
 
             auto ride = GetRide(_rideId);
+            // Describe the just-placed entrance/exit: which way its doorway faces and whether a path
+            // already connects there, so the player knows where guests will enter and what to build.
+            std::string conn;
+            if (ride != nullptr)
+            {
+                const auto& station = ride->getStation(_station);
+                conn = DescribeEntranceExitConnection(isExit ? station.Exit : station.Entrance);
+            }
+            const std::string what = isExit ? "Exit placed" : "Entrance placed";
+
             const bool complete = ride != nullptr && RideAreAllPossibleEntrancesAndExitsBuilt(*ride).Successful;
             if (complete)
             {
-                ScreenReaderSpeak(_rideName + " complete");
+                ScreenReaderSpeak(what + conn + ". " + _rideName + " complete.");
                 OpenRideWindow();
                 Finish();
             }
             else if (!isExit)
             {
                 _stage = Stage::exit;
-                ScreenReaderSpeak("Entrance placed. Now place the exit the same way.");
+                ScreenReaderSpeak(what + conn + ". Now place the exit the same way.");
             }
             else
             {
                 // Exit placed but more entrances/exits remain (unusual for flat rides): keep going.
                 _stage = Stage::entrance;
-                ScreenReaderSpeak("Exit placed. Place the next entrance.");
+                ScreenReaderSpeak(what + conn + ". Place the next entrance.");
             }
         });
         GameActions::Execute(&action, getGameState());

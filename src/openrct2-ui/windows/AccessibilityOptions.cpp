@@ -1,0 +1,276 @@
+/*****************************************************************************
+ * Copyright (c) 2014-2026 OpenRCT2 developers
+ *
+ * For a complete list of all authors, please refer to contributors.md
+ * Interested in contributing? Visit https://github.com/OpenRCT2/OpenRCT2
+ *
+ * OpenRCT2 is licensed under the GNU General Public License version 3.
+ *****************************************************************************/
+
+// Settings window for the blind-accessibility mod. Opened with Ctrl+F1. It is drawn like a native
+// OpenRCT2 window (so sighted helpers can read it) and is fully keyboard/screen-reader navigable.
+// It currently exposes two controls: a slider for the accessibility sound-cue volume (in 5%
+// increments) and a button that opens the author's Patreon page.
+
+#include <algorithm>
+#include <cmath>
+#include <optional>
+#include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
+#include <openrct2-ui/windows/Windows.h>
+#include <openrct2/Context.h>
+#include <openrct2/config/Config.h>
+#include <openrct2/drawing/Drawing.h>
+#include <openrct2/drawing/Text.h>
+#include <openrct2/localisation/StringIds.h>
+#include <openrct2/ui/UiContext.h>
+#include <openrct2/ui/WindowManager.h>
+#include <string>
+
+namespace OpenRCT2::Ui::Windows
+{
+    static constexpr ScreenSize kWindowSize = { 400, 100 };
+    static constexpr int32_t kVolumeStep = 5;
+    static constexpr const char* kPatreonUrl = "https://www.patreon.com/rossminor";
+
+    enum WindowAccessibilityOptionsWidgetIdx : WidgetIndex
+    {
+        WIDX_BACKGROUND,
+        WIDX_TITLE,
+        WIDX_CLOSE,
+        WIDX_VOLUME_SLIDER,
+        WIDX_SUPPORT_BUTTON,
+    };
+
+    // clang-format off
+    static constexpr auto kWidgets = makeWidgets(
+        makeWindowShim(kStringIdNone, kWindowSize),
+        makeWidget({ 180, 24 }, { 150, 13 },                   WidgetType::scroll, WindowColour::secondary, SCROLL_HORIZONTAL), // Cue volume slider
+        makeWidget({   8, 58 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
+    );
+    // clang-format on
+
+    class AccessibilityOptionsWindow final : public Window
+    {
+    private:
+        // 0 = volume slider, 1 = support button.
+        int32_t _accessIndex = 0;
+
+        // The support button is a two-step confirm: the first Enter reads the thank-you message and
+        // arms it; the second Enter actually opens the browser. Reset whenever focus moves away.
+        bool _supportArmed = false;
+
+        // Backing storage for the caption / button captions (setString stores a pointer, so the
+        // strings must outlive the window's draws).
+        static const char* getTitleText()
+        {
+            static const std::string s = "Accessibility Sounds Volume";
+            return s.c_str();
+        }
+        static const char* getSupportText()
+        {
+            static const std::string s = "Support Ross's work (opens Patreon)";
+            return s.c_str();
+        }
+
+    public:
+        void onOpen() override
+        {
+            setWidgets(kWidgets);
+            widgets[WIDX_TITLE].setString(getTitleText());
+            widgets[WIDX_SUPPORT_BUTTON].setString(getSupportText());
+            initScrollWidgets();
+
+            _accessIndex = 0;
+            initialiseScrollPosition(WIDX_VOLUME_SLIDER, 0, Config::Get().sound.accessibilityCueVolume);
+
+            Accessibility::ScreenReaderSpeak("Accessibility Sounds Volume. " + focusText());
+        }
+
+        void onMouseUp(WidgetIndex widgetIndex) override
+        {
+            switch (widgetIndex)
+            {
+                case WIDX_CLOSE:
+                    close();
+                    break;
+                case WIDX_SUPPORT_BUTTON:
+                    openSupportPage();
+                    break;
+            }
+        }
+
+        void onUpdate() override
+        {
+            // Fold any mouse-drag of the slider back into the config, snapped to 5% increments.
+            const uint8_t pct = snapVolume(GetScrollPercentage(widgets[WIDX_VOLUME_SLIDER], scrolls[0]));
+            if (pct != Config::Get().sound.accessibilityCueVolume)
+            {
+                Config::Get().sound.accessibilityCueVolume = pct;
+                Config::Save();
+                invalidateWidget(WIDX_VOLUME_SLIDER);
+            }
+        }
+
+        void onDraw(Drawing::RenderTarget& rt) override
+        {
+            drawWidgets(rt);
+
+            // Slider label.
+            const auto labelPos = windowPos + ScreenCoordsXY{ 8, 27 };
+            drawText(rt, labelPos, "Accessibility sounds volume", { colours[1] });
+
+            // Current percentage, just right of the slider.
+            const auto pctText = std::to_string(Config::Get().sound.accessibilityCueVolume) + "%";
+            const auto pctPos = windowPos + ScreenCoordsXY{ widgets[WIDX_VOLUME_SLIDER].right + 6, 27 };
+            drawText(rt, pctPos, pctText, { colours[1] });
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    _supportArmed = false; // moving off the support button cancels the pending confirm
+                    _accessIndex = std::max(0, _accessIndex - 1);
+                    announceFocus();
+                    return true;
+                case AccessibilityAction::moveDown:
+                    _supportArmed = false;
+                    _accessIndex = std::min(1, _accessIndex + 1);
+                    announceFocus();
+                    return true;
+                case AccessibilityAction::moveLeft:
+                case AccessibilityAction::moveRight:
+                    _supportArmed = false;
+                    if (_accessIndex == 0)
+                    {
+                        const int32_t delta = (action == AccessibilityAction::moveRight) ? kVolumeStep : -kVolumeStep;
+                        const int32_t pct = std::clamp<int32_t>(
+                            Config::Get().sound.accessibilityCueVolume + delta, 0, 100);
+                        setVolume(static_cast<uint8_t>(pct));
+                    }
+                    announceFocus();
+                    return true;
+                case AccessibilityAction::activate:
+                    if (_accessIndex == 1)
+                    {
+                        if (_supportArmed)
+                        {
+                            _supportArmed = false;
+                            openSupportPage();
+                        }
+                        else
+                        {
+                            // First Enter: read the thank-you message and wait for a confirming Enter.
+                            _supportArmed = true;
+                            Accessibility::ScreenReaderSpeak(
+                                "Thank you for the support! It allows me to keep paying for Claude Pro, run "
+                                "the Accessibility Gaming Wiki server, and continue working in the gaming "
+                                "industry. Press Enter to continue.");
+                        }
+                    }
+                    else
+                    {
+                        announceFocus();
+                    }
+                    return true;
+                case AccessibilityAction::cancel:
+                    _supportArmed = false;
+                    close();
+                    return true;
+                case AccessibilityAction::announce:
+                    announceFocus();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*letterKey*/) override
+        {
+            // This is a settings dialog, not an item list; swallow letters so they don't leak to the
+            // toolbar behind the window.
+            return true;
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const WidgetIndex w = (_accessIndex == 0) ? WIDX_VOLUME_SLIDER : WIDX_SUPPORT_BUTTON;
+            const auto& widget = widgets[w];
+            const auto tl = windowPos + ScreenCoordsXY{ widget.left, widget.top };
+            const auto br = windowPos + ScreenCoordsXY{ widget.right, widget.bottom };
+            return ScreenRect{ tl, br };
+        }
+
+    private:
+        void openSupportPage()
+        {
+            GetContext()->GetUiContext().OpenURL(kPatreonUrl);
+            Accessibility::ScreenReaderSpeak("Opening the Patreon page in your browser.");
+        }
+
+        std::string focusText()
+        {
+            if (_accessIndex == 0)
+            {
+                return "Accessibility sounds volume, " + std::to_string(Config::Get().sound.accessibilityCueVolume)
+                    + " percent";
+            }
+            return "Support Ross's work, button";
+        }
+
+        void announceFocus()
+        {
+            Accessibility::ScreenReaderSpeak(focusText());
+        }
+
+        void setVolume(uint8_t pct)
+        {
+            if (pct == Config::Get().sound.accessibilityCueVolume)
+                return;
+            Config::Get().sound.accessibilityCueVolume = pct;
+            Config::Save();
+            initialiseScrollPosition(WIDX_VOLUME_SLIDER, 0, pct);
+            invalidate();
+        }
+
+        static uint8_t snapVolume(int32_t pct)
+        {
+            pct = std::clamp(pct, 0, 100);
+            return static_cast<uint8_t>(((pct + kVolumeStep / 2) / kVolumeStep) * kVolumeStep);
+        }
+
+        // Mirrors the audio-slider helpers in Options.cpp: read/write a scroll widget as a 0-100%
+        // value, with a fixed content width of 500.
+        ScreenSize onScrollGetSize(int32_t /*scrollIndex*/) override
+        {
+            return { 500, 0 };
+        }
+
+        uint8_t GetScrollPercentage(const Widget& widget, const ScrollArea& scroll)
+        {
+            const uint8_t w = widget.width() - 2;
+            return static_cast<uint8_t>(static_cast<float>(scroll.contentOffsetX) / (scroll.contentWidth - w) * 100);
+        }
+
+        void initialiseScrollPosition(WidgetIndex widgetIndex, int32_t scrollId, uint8_t volume)
+        {
+            const auto& widget = widgets[widgetIndex];
+            auto& scroll = scrolls[scrollId];
+
+            const int32_t widgetSize = scroll.contentWidth - (widget.width() - 2);
+            scroll.contentOffsetX = static_cast<int32_t>(std::ceil(volume / 100.0f * widgetSize));
+
+            widgetScrollUpdateThumbs(*this, widgetIndex);
+        }
+    };
+
+    WindowBase* AccessibilityOptionsOpen()
+    {
+        auto* windowMgr = GetWindowManager();
+        return windowMgr->FocusOrCreate<AccessibilityOptionsWindow>(
+            WindowClass::accessibilityOptions, kWindowSize, WindowFlag::centreScreen);
+    }
+} // namespace OpenRCT2::Ui::Windows

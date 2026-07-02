@@ -237,6 +237,16 @@ namespace OpenRCT2::Audio
     void Play3D(SoundId soundId, const CoordsXYZ& loc);
 
     /**
+     * Plays the specified sound at a virtual location, attenuated by an additional volume offset.
+     * @param soundId The sound effect to play.
+     * @param loc The coordinates of the location.
+     * @param volumeAdjust A DirectSound-style volume offset in hundredths of a decibel (0 = no change,
+     * negative = quieter) added to the distance-based volume. If the result falls below silence the
+     * sound is skipped.
+     */
+    void Play3D(SoundId soundId, const CoordsXYZ& loc, int32_t volumeAdjust);
+
+    /**
      * Populates the gAudioDevices array with the available audio devices.
      */
     void PopulateDevices();

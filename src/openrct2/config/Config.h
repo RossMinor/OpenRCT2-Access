@@ -162,6 +162,9 @@ namespace OpenRCT2::Config
         bool rideMusicEnabled;
         uint8_t rideMusicVolume;
         bool audioFocus;
+        // Volume (0-100%) of the accessibility mod's own sound cues, adjustable from the mod's
+        // settings window (Ctrl+F1). Independent of the game's sound-effect volume.
+        uint8_t accessibilityCueVolume;
     };
 
     struct Network

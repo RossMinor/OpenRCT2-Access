@@ -1718,6 +1718,45 @@ namespace OpenRCT2::Ui::Windows
             return true;
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto& lw = widgets[WIDX_SCENERY_LIST];
+            if (lw.type == WidgetType::empty)
+                return std::nullopt;
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const auto boxWholeList = [&]() {
+                return ScreenRect{ windowPos + ScreenCoordsXY{ lw.left, lw.top },
+                                   windowPos + ScreenCoordsXY{ lw.right, lw.bottom } };
+            };
+
+            const auto selected = GetSelectedScenery(_activeTabIndex);
+            if (selected.IsUndefined())
+                return boxWholeList();
+
+            // Locate the focused item's grid cell within the current tab's filtered entries.
+            int32_t idx = -1;
+            for (size_t i = 0; i < _filteredSceneryTab.Entries.size(); i++)
+                if (_filteredSceneryTab.Entries[i] == selected)
+                {
+                    idx = static_cast<int32_t>(i);
+                    break;
+                }
+            if (idx < 0)
+                return boxWholeList();
+
+            const int32_t numColumns = std::max(1, GetNumColumns());
+            const int32_t col = idx % numColumns;
+            const int32_t row = idx / numColumns;
+            const int32_t cellLeft = windowPos.x + lw.left + col * kSceneryButtonWidth;
+            const int32_t cellTop = viewTop + row * kSceneryButtonHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(cellTop, viewTop);
+            int32_t bottom = std::min(cellTop + kSceneryButtonHeight, viewBottom);
+            if (bottom <= top)
+                return boxWholeList();
+            return ScreenRect{ { cellLeft, top }, { cellLeft + kSceneryButtonWidth, bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             switch (action)

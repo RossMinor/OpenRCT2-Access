@@ -1497,12 +1497,13 @@ namespace OpenRCT2::Ui::Windows
             if (placingExit)
                 Accessibility::ScreenReaderSpeak(
                     st.Exit.IsNull() ? "Could not place exit. Move the cursor onto a tile next to the station platform."
-                                     : "Exit placed");
+                                     : "Exit placed" + Accessibility::DescribeEntranceExitConnection(st.Exit));
             else
                 Accessibility::ScreenReaderSpeak(
                     st.Entrance.IsNull()
                         ? "Could not place entrance. Move the cursor onto a tile next to the station platform."
-                        : "Entrance placed. Now place the exit.");
+                        : "Entrance placed" + Accessibility::DescribeEntranceExitConnection(st.Entrance)
+                            + ". Now place the exit.");
         }
 
         void axActivate(AxField field)
@@ -1535,6 +1536,61 @@ namespace OpenRCT2::Ui::Windows
                 default:
                     break; // selectors change via Ctrl+Left/Right, not activate
             }
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto fields = axBuildFields();
+            if (_accessFieldIndex < 0 || _accessFieldIndex >= static_cast<int32_t>(fields.size()))
+                return std::nullopt;
+
+            // The curve/slope/bank fields highlight their currently selected option button.
+            const auto pickSelector = [&](const std::vector<AxOption>& opts, uint8_t value) -> WidgetIndex {
+                const int32_t ci = axCurrentOption(opts, value);
+                if (ci >= 0 && ci < static_cast<int32_t>(opts.size()))
+                    return opts[ci].widget;
+                return opts.empty() ? WIDX_CONSTRUCT : opts[0].widget;
+            };
+
+            WidgetIndex w = WIDX_CONSTRUCT;
+            switch (fields[_accessFieldIndex])
+            {
+                case AxField::direction:
+                    w = WIDX_ROTATE;
+                    break;
+                case AxField::curve:
+                    w = pickSelector(axCurveOptions(), static_cast<uint8_t>(_currentlySelectedTrack.curve));
+                    break;
+                case AxField::slope:
+                    w = pickSelector(axSlopeOptions(), static_cast<uint8_t>(_currentTrackPitchEnd));
+                    break;
+                case AxField::bank:
+                    w = pickSelector(axBankOptions(), static_cast<uint8_t>(_currentTrackRollEnd));
+                    break;
+                case AxField::chain:
+                    w = WIDX_CHAIN_LIFT;
+                    break;
+                case AxField::construct:
+                    w = WIDX_CONSTRUCT;
+                    break;
+                case AxField::demolish:
+                    w = WIDX_DEMOLISH;
+                    break;
+                case AxField::back:
+                    w = WIDX_PREVIOUS_SECTION;
+                    break;
+                case AxField::forward:
+                    w = WIDX_NEXT_SECTION;
+                    break;
+                case AxField::station:
+                    w = WIDX_ENTRANCE;
+                    break;
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
         }
 
         bool onAccessibilityAction(AccessibilityAction action) override

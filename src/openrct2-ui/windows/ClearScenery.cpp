@@ -9,6 +9,7 @@
 
 #include "../interface/Viewport.h"
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -65,6 +66,48 @@ namespace OpenRCT2::Ui::Windows
         bool _clearLargeScenery = false;
         bool _clearFootpath = false;
         money64 _clearSceneryCost = kMoney64Undefined;
+
+        enum
+        {
+            kAxBrush,
+            kAxSmall,
+            kAxLarge,
+            kAxFootpath,
+            kAxFieldCount,
+        };
+        int32_t _accessField = kAxBrush;
+
+        std::string axFieldLabel(int32_t field) const
+        {
+            const auto onOff = [](bool b) { return b ? ", on" : ", off"; };
+            switch (field)
+            {
+                case kAxBrush:
+                    return "Brush size " + std::to_string(gLandToolSize);
+                case kAxSmall:
+                    return std::string("Clear small scenery") + onOff(_clearSmallScenery);
+                case kAxLarge:
+                    return std::string("Clear large scenery") + onOff(_clearLargeScenery);
+                case kAxFootpath:
+                    return std::string("Clear footpaths") + onOff(_clearFootpath);
+            }
+            return {};
+        }
+
+        void axAdjustBrush(int32_t dir)
+        {
+            onMouseDown(dir < 0 ? WIDX_DECREMENT : WIDX_INCREMENT);
+            Accessibility::ScreenReaderSpeak(axFieldLabel(kAxBrush));
+        }
+
+        void axToggle(int32_t field)
+        {
+            const WidgetIndex widget = (field == kAxSmall) ? WIDX_SMALL_SCENERY
+                : (field == kAxLarge)                      ? WIDX_LARGE_SCENERY
+                                                           : WIDX_FOOTPATH;
+            onMouseUp(widget);
+            Accessibility::ScreenReaderSpeak(axFieldLabel(field));
+        }
 
     public:
         void onOpen() override
@@ -170,6 +213,47 @@ namespace OpenRCT2::Ui::Windows
             // Close window if another tool is open
             if (!isToolActive(WindowClass::clearScenery, WIDX_BACKGROUND))
                 close();
+        }
+
+        // Keyboard access: Ctrl+Up/Down move between the brush size and the three "what to clear"
+        // toggles; Ctrl+Left/Right (or Ctrl+Enter) adjust/toggle the focused option; Ctrl+B reads it.
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                case AccessibilityAction::moveDown:
+                {
+                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
+                    _accessField = (_accessField + delta + kAxFieldCount) % kAxFieldCount;
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
+                    return true;
+                }
+                case AccessibilityAction::moveLeft:
+                    if (_accessField == kAxBrush)
+                        axAdjustBrush(-1);
+                    else
+                        axToggle(_accessField);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    if (_accessField == kAxBrush)
+                        axAdjustBrush(1);
+                    else
+                        axToggle(_accessField);
+                    return true;
+                case AccessibilityAction::activate:
+                    if (_accessField != kAxBrush)
+                        axToggle(_accessField);
+                    else
+                        Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
+                    return true;
+            }
         }
 
         void onPrepareDraw() override

@@ -592,6 +592,25 @@ namespace OpenRCT2::Ui::Windows
             return true;
         }
 
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            const auto& lw = widgets[WIDX_TRACK_LIST];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+
+            if (selectedListItem < 0 || selectedListItem >= accessibleItemCount())
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+
+            const int32_t rowTop = viewTop + selectedListItem * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            if (bottom <= top)
+                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
+            return ScreenRect{ { left, top }, { right, bottom } };
+        }
+
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // While the extended-statistics list is open, the arrow keys step through it, Escape

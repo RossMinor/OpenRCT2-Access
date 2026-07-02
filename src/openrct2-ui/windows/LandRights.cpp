@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -30,6 +31,9 @@
 #include <openrct2/world/MapSelection.h>
 #include <openrct2/world/Park.h>
 #include <openrct2/world/tile_element/SurfaceElement.h>
+
+#include <string>
+#include <vector>
 
 namespace OpenRCT2::Ui::Windows
 {
@@ -276,6 +280,41 @@ namespace OpenRCT2::Ui::Windows
             }
             else if (IsOwnershipMode() && inRightsMode)
                 SwitchToMode(LandRightsMode::SetLandUnowned);
+        }
+
+        // Keyboard access: Ctrl+Up/Down move between the brush size and the mode selector;
+        // Ctrl+Left/Right adjust the brush or cycle the ownership/rights mode.
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                case AccessibilityAction::moveDown:
+                {
+                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
+                    _accessField = (_accessField + delta + kAxFieldCount) % kAxFieldCount;
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
+                    return true;
+                }
+                case AccessibilityAction::moveLeft:
+                    if (_accessField == kAxBrush)
+                        axAdjustBrush(-1);
+                    else
+                        axCycleMode(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    if (_accessField == kAxBrush)
+                        axAdjustBrush(1);
+                    else
+                        axCycleMode(1);
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
+                    return true;
+            }
         }
 
         void PrepareDrawInGame()
@@ -590,6 +629,77 @@ namespace OpenRCT2::Ui::Windows
             ft.Add<uint16_t>(kLandToolMaximumSize);
             WindowTextInputOpen(
                 this, WIDX_PREVIEW, STR_SELECTION_SIZE, STR_ENTER_SELECTION_SIZE, ft, kStringIdNone, kStringIdNone, 3);
+        }
+
+        // --- Keyboard accessibility ---
+        enum
+        {
+            kAxBrush,
+            kAxMode,
+            kAxFieldCount,
+        };
+        int32_t _accessField = kAxBrush;
+
+        static std::string axModeName(LandRightsMode mode)
+        {
+            switch (mode)
+            {
+                case LandRightsMode::BuyLand:
+                    return "buy land";
+                case LandRightsMode::BuyConstructionRights:
+                    return "buy construction rights";
+                case LandRightsMode::SetLandOwned:
+                    return "set land owned";
+                case LandRightsMode::SetLandForSale:
+                    return "set land for sale";
+                case LandRightsMode::SetConstructionRightsOwned:
+                    return "set construction rights owned";
+                case LandRightsMode::SetConstructionRightsForSale:
+                    return "set construction rights for sale";
+                case LandRightsMode::SetLandUnowned:
+                    return "set land not owned";
+            }
+            return {};
+        }
+
+        std::vector<LandRightsMode> axModeList() const
+        {
+            if (IsOwnershipMode())
+                return { LandRightsMode::SetLandOwned, LandRightsMode::SetLandForSale,
+                         LandRightsMode::SetConstructionRightsOwned, LandRightsMode::SetConstructionRightsForSale,
+                         LandRightsMode::SetLandUnowned };
+            return { LandRightsMode::BuyLand, LandRightsMode::BuyConstructionRights };
+        }
+
+        std::string axFieldLabel(int32_t field) const
+        {
+            if (field == kAxBrush)
+                return "Brush size " + std::to_string(gLandToolSize);
+            return "Mode, " + axModeName(_landRightsMode);
+        }
+
+        void axAdjustBrush(int32_t dir)
+        {
+            onMouseDown(dir < 0 ? WIDX_DECREMENT : WIDX_INCREMENT);
+            Accessibility::ScreenReaderSpeak(axFieldLabel(kAxBrush));
+        }
+
+        void axCycleMode(int32_t dir)
+        {
+            const auto modes = axModeList();
+            if (modes.empty())
+                return;
+            int32_t cur = 0;
+            for (size_t i = 0; i < modes.size(); i++)
+                if (modes[i] == _landRightsMode)
+                {
+                    cur = static_cast<int32_t>(i);
+                    break;
+                }
+            const int32_t n = static_cast<int32_t>(modes.size());
+            cur = (cur + dir + n) % n;
+            SwitchToMode(modes[cur]);
+            Accessibility::ScreenReaderSpeak("Mode, " + axModeName(modes[cur]));
         }
     };
 

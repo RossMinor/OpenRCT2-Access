@@ -157,12 +157,12 @@ namespace OpenRCT2::Ui::Accessibility
         action->SetCallback([](const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
             {
-                Audio::Play3D(Audio::SoundId::error, result->position);
+                PlayCue(Audio::SoundId::error, result->position);
                 auto* windowMgr = GetWindowManager();
                 windowMgr->ShowError(result->getErrorTitle(), result->getErrorMessage());
                 return;
             }
-            Audio::Play3D(Audio::SoundId::placeItem, result->position);
+            PlayCue(Audio::SoundId::placeItem, result->position);
             ScreenReaderSpeak("Placed");
         });
         GameActions::Execute(action, getGameState());

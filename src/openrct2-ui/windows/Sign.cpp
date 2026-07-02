@@ -9,6 +9,7 @@
 
 #include "../UiStringIds.h"
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -21,7 +22,10 @@
 #include <openrct2/actions/scenery/SignSetNameAction.h>
 #include <openrct2/actions/scenery/SignSetStyleAction.h>
 #include <openrct2/actions/scenery/WallRemoveAction.h>
+#include <algorithm>
 #include <openrct2/config/Config.h>
+#include <openrct2/core/EnumUtils.hpp>
+#include <openrct2/drawing/Colour.h>
 #include <openrct2/object/LargeSceneryEntry.h>
 #include <openrct2/object/ObjectEntryManager.h>
 #include <openrct2/object/WallSceneryEntry.h>
@@ -30,6 +34,8 @@
 #include <openrct2/world/Scenery.h>
 #include <openrct2/world/tile_element/LargeSceneryElement.h>
 #include <openrct2/world/tile_element/WallElement.h>
+#include <string>
+#include <vector>
 
 namespace OpenRCT2::Ui::Windows
 {
@@ -323,6 +329,194 @@ namespace OpenRCT2::Ui::Windows
             if (viewport != nullptr)
                 viewport->flags = Config::Get().general.alwaysShowGridlines ? VIEWPORT_FLAG_GRIDLINES : VIEWPORT_FLAG_NONE;
             invalidate();
+        }
+
+        // --- Screen-reader keyboard navigation ---------------------------------------------------
+        // A single vertical list: change text, main colour, text colour, demolish. Up/Down move;
+        // Left/Right cycle the colour on a colour item; Enter changes text or demolishes.
+    private:
+        enum class AxKind
+        {
+            text,
+            mainColour,
+            textColour,
+            demolish,
+        };
+
+        int32_t _accessIndex = 0;
+
+        static std::string axColourName(Drawing::Colour c)
+        {
+            std::string s = Drawing::colourToString(c);
+            for (auto& ch : s)
+                if (ch == '_')
+                    ch = ' ';
+            return s;
+        }
+
+        std::vector<AxKind> buildAxItems()
+        {
+            std::vector<AxKind> items;
+            items.push_back(AxKind::text);
+            if (widgets[WIDX_MAIN_COLOUR].type == WidgetType::colourBtn)
+                items.push_back(AxKind::mainColour);
+            if (widgets[WIDX_TEXT_COLOUR].type == WidgetType::colourBtn)
+                items.push_back(AxKind::textColour);
+            items.push_back(AxKind::demolish);
+            return items;
+        }
+
+        std::string axLabel(AxKind kind)
+        {
+            switch (kind)
+            {
+                case AxKind::text:
+                {
+                    auto* banner = GetBanner(GetBannerIndex());
+                    std::string text = banner != nullptr ? std::string(banner->getText()) : std::string();
+                    return "Sign text, " + (text.empty() ? std::string("blank") : text);
+                }
+                case AxKind::mainColour:
+                    return "Main colour, " + axColourName(_mainColour);
+                case AxKind::textColour:
+                    return "Text colour, " + axColourName(_textColour);
+                case AxKind::demolish:
+                    return "Demolish sign";
+            }
+            return {};
+        }
+
+        void axAnnounce()
+        {
+            auto items = buildAxItems();
+            const int32_t n = static_cast<int32_t>(items.size());
+            if (n == 0)
+            {
+                Accessibility::ScreenReaderSpeak("Sign");
+                return;
+            }
+            _accessIndex = std::clamp(_accessIndex, 0, n - 1);
+            Accessibility::ScreenReaderSpeakItem(axLabel(items[_accessIndex]), _accessIndex, n);
+        }
+
+        void axApplyColours()
+        {
+            auto action = GameActions::SignSetStyleAction(GetBannerIndex(), _mainColour, _textColour, !_isSmall);
+            GameActions::Execute(&action, getGameState());
+            invalidate();
+        }
+
+        void axAdjust(int32_t dir)
+        {
+            auto items = buildAxItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+            {
+                axAnnounce();
+                return;
+            }
+            switch (items[_accessIndex])
+            {
+                case AxKind::mainColour:
+                    _mainColour = static_cast<Drawing::Colour>(
+                        (EnumValue(_mainColour) + dir + Drawing::kColourNumNormal) % Drawing::kColourNumNormal);
+                    axApplyColours();
+                    Accessibility::ScreenReaderSpeak("Main colour, " + axColourName(_mainColour));
+                    break;
+                case AxKind::textColour:
+                    _textColour = static_cast<Drawing::Colour>(
+                        (EnumValue(_textColour) + dir + Drawing::kColourNumNormal) % Drawing::kColourNumNormal);
+                    axApplyColours();
+                    Accessibility::ScreenReaderSpeak("Text colour, " + axColourName(_textColour));
+                    break;
+                default:
+                    axAnnounce();
+                    break;
+            }
+        }
+
+        void axActivate()
+        {
+            auto items = buildAxItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                return;
+            switch (items[_accessIndex])
+            {
+                case AxKind::text:
+                    ShowTextInput(); // opens the (accessible) text-input window
+                    break;
+                case AxKind::demolish:
+                    onMouseUp(WIDX_SIGN_DEMOLISH); // removes the sign and closes the window
+                    break;
+                default:
+                    axAnnounce(); // colours use Left/Right
+                    break;
+            }
+        }
+
+    public:
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            auto items = buildAxItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                return std::nullopt;
+            WidgetIndex w;
+            switch (items[_accessIndex])
+            {
+                case AxKind::text:
+                    w = WIDX_SIGN_TEXT;
+                    break;
+                case AxKind::mainColour:
+                    w = WIDX_MAIN_COLOUR;
+                    break;
+                case AxKind::textColour:
+                    w = WIDX_TEXT_COLOUR;
+                    break;
+                case AxKind::demolish:
+                default:
+                    w = WIDX_SIGN_DEMOLISH;
+                    break;
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            auto items = buildAxItems();
+            const int32_t n = static_cast<int32_t>(items.size());
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    if (n > 0)
+                        _accessIndex = (_accessIndex - 1 + n) % n;
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::moveDown:
+                    if (n > 0)
+                        _accessIndex = (_accessIndex + 1) % n;
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    axAdjust(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    axAdjust(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    axActivate();
+                    return true;
+                case AccessibilityAction::announce:
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true; // own all navigation keys while open
+            }
         }
     };
 

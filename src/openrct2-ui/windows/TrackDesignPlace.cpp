@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -21,6 +22,7 @@
 #include <openrct2/Input.h>
 #include <openrct2/SpriteIds.h>
 #include <openrct2/actions/GameActionRunner.h>
+#include <openrct2/actions/terraform/ClearAction.h>
 #include <openrct2/actions/track/TrackDesignAction.h>
 #include <openrct2/audio/Audio.h>
 #include <openrct2/config/Config.h>
@@ -42,6 +44,7 @@
 #include <openrct2/world/Park.h>
 #include <openrct2/world/tile_element/Slope.h>
 #include <openrct2/world/tile_element/SurfaceElement.h>
+#include <algorithm>
 #include <vector>
 
 using namespace OpenRCT2::Numerics;
@@ -312,6 +315,9 @@ namespace OpenRCT2::Ui::Windows
                 if (result->error != GameActions::Status::ok)
                 {
                     Audio::Play3D(Audio::SoundId::error, result->position);
+                    auto* windowMgr = GetWindowManager();
+                    windowMgr->ShowError(result->getErrorTitle(), result->getErrorMessage());
+                    announcePlacementFailure(result->error, CoordsXY{ trackLoc }, trackLoc.z);
                     _placingTrackDesign = false;
                     return;
                 }
@@ -450,6 +456,315 @@ namespace OpenRCT2::Ui::Windows
                 std::string("Rotated, facing ") + kDirections[(_currentTrackPieceDirection + GetCurrentRotation()) & 3]);
         }
 
+        // Plain-language "why and how to fix" for a placement failure, from the engine's status
+        // code. Pre-built rides usually fail because the ground is not flat and clear across the
+        // whole footprint, so the generic case spells that out.
+        static const char* PlacementAdvice(GameActions::Status status)
+        {
+            switch (status)
+            {
+                case GameActions::Status::notOwned:
+                    return "Part of the ride would sit on land you do not own. Buy the land first, or "
+                           "move the ride fully inside your park.";
+                case GameActions::Status::tooHigh:
+                    return "The ride will not fit this high. Try lower ground, or flatten and lower the "
+                           "land here.";
+                case GameActions::Status::tooLow:
+                    return "The ride sits too low here. Try higher ground, or raise the land.";
+                case GameActions::Status::noClearance:
+                    return "Something is in the way over the ride's footprint. Clear the trees, scenery "
+                           "or other rides around and above it.";
+                case GameActions::Status::itemAlreadyPlaced:
+                    return "Something is already built on the ride's footprint. Remove or move it first.";
+                case GameActions::Status::noFreeElements:
+                    return "This part of the map is too crowded to build more. Remove some scenery or "
+                           "rides nearby.";
+                case GameActions::Status::insufficientFunds:
+                    return "You cannot afford to build this ride right now.";
+                default:
+                    return "The ride cannot be built here. A pre-built ride needs a large, flat, empty "
+                           "area: clear any scenery and level the ground across the whole footprint, or "
+                           "rotate it with R, then try again.";
+            }
+        }
+
+        // Walks the track design's footprint (mirroring TrackDesignPlaceVirtual) from the given
+        // placement origin and the current rotation, returning each world-coordinate tile the track
+        // would occupy. Deduplicated.
+        std::vector<CoordsXY> footprintTiles(const CoordsXY& origin)
+        {
+            std::vector<CoordsXY> tiles;
+            if (_trackDesign == nullptr)
+                return tiles;
+
+            std::vector<int32_t> seen; // packed tile keys, to skip tiles the track revisits
+            CoordsXYZ newCoords{ origin.x, origin.y, 0 };
+            uint8_t rotation = _currentTrackPieceDirection;
+
+            for (const auto& track : _trackDesign->trackElements)
+            {
+                const auto& ted = GetTrackElementDescriptor(track.type);
+                for (uint8_t i = 0; i < ted.sequenceData.numSequences; i++)
+                {
+                    const auto& clearance = ted.sequenceData.sequences[i].clearance;
+                    const CoordsXY tile = CoordsXY{ newCoords } + CoordsXY{ clearance.x, clearance.y }.Rotate(rotation);
+                    if (!MapIsLocationValid(tile))
+                        continue;
+
+                    const TileCoordsXY tc{ tile };
+                    const int32_t key = (tc.x << 16) | (tc.y & 0xFFFF);
+                    if (std::find(seen.begin(), seen.end(), key) != seen.end())
+                        continue;
+                    seen.push_back(key);
+                    tiles.push_back(tile);
+                }
+
+                const auto& coords = ted.coordinates;
+                const CoordsXY offset = CoordsXY{ newCoords } + CoordsXY{ coords.x, coords.y }.Rotate(rotation);
+                newCoords = { offset, newCoords.z - coords.zBegin + coords.zEnd };
+                rotation = (rotation + coords.rotationEnd - coords.rotationBegin) & 3;
+                if (coords.rotationEnd & (1 << 2))
+                    rotation |= (1 << 2);
+                else
+                    newCoords += CoordsDirectionDelta[rotation];
+            }
+            return tiles;
+        }
+
+        // World-coordinate tiles where the design's entrances and exits will be built. A path or
+        // other blocker on one of these fails placement just as one on the track does, but they sit
+        // beyond the track footprint, so they must be checked separately. Mirrors how
+        // TrackDesignPlaceEntrances derives each entrance/exit tile from the placement origin.
+        std::vector<CoordsXY> entranceTiles(const CoordsXY& origin)
+        {
+            std::vector<CoordsXY> tiles;
+            if (_trackDesign == nullptr)
+                return tiles;
+
+            const uint8_t baseRotation = _currentTrackPieceDirection & 3;
+            for (const auto& entrance : _trackDesign->entranceElements)
+            {
+                const CoordsXY stationPos = entrance.location.ToCoordsXY().Rotate(baseRotation) + origin;
+                const uint8_t rotation = (baseRotation + entrance.location.direction) & 3;
+                const CoordsXY tile = stationPos + CoordsDirectionDelta[rotation];
+                if (MapIsLocationValid(tile))
+                    tiles.push_back(tile);
+            }
+            return tiles;
+        }
+
+        // Every tile the placement validates: the track footprint plus the entrance/exit tiles.
+        // Both the hard-blocker check and the obstruction report use this so a path on an exit tile
+        // (which is not part of the track footprint) is correctly detected, rather than silently
+        // clearing scenery for a placement that a path was always going to block.
+        std::vector<CoordsXY> validatedTiles(const CoordsXY& origin)
+        {
+            auto tiles = footprintTiles(origin);
+            for (const auto& tile : entranceTiles(origin))
+            {
+                const TileCoordsXY tc{ tile };
+                const bool alreadyListed = std::any_of(tiles.begin(), tiles.end(), [&](const CoordsXY& t) {
+                    const TileCoordsXY existing{ t };
+                    return existing.x == tc.x && existing.y == tc.y;
+                });
+                if (!alreadyListed)
+                    tiles.push_back(tile);
+            }
+            return tiles;
+        }
+
+        // Names only the un-clearable blockers on a tile - a path, another ride, an entrance/exit or
+        // a banner. Scenery and walls/fences are deliberately never named: they are auto-cleared
+        // before building, so they are not what is stopping placement. Returns empty if the tile has
+        // nothing un-clearable on it.
+        std::string describeTileBlockers(const TileCoordsXY& tc)
+        {
+            std::vector<std::string> parts;
+            bool namedRide = false;
+            for (TileElement* el = MapGetFirstElementAt(tc); el != nullptr;)
+            {
+                if (!el->isGhost())
+                {
+                    switch (el->getType())
+                    {
+                        case TileElementType::Path:
+                            parts.push_back("Path");
+                            break;
+                        case TileElementType::Track:
+                            if (!namedRide) // one mention per tile, however many pieces sit on it
+                            {
+                                namedRide = true;
+                                parts.push_back("Another ride");
+                            }
+                            break;
+                        case TileElementType::Entrance:
+                            parts.push_back("Ride entrance or exit");
+                            break;
+                        case TileElementType::Banner:
+                            parts.push_back("Banner");
+                            break;
+                        default: // Surface, scenery and walls/fences are clearable - not reported.
+                            break;
+                    }
+                }
+                if (el->isLastForTile())
+                    break;
+                el++;
+            }
+
+            std::string out;
+            for (size_t i = 0; i < parts.size(); i++)
+                out += (i == 0 ? "" : ", ") + parts[i];
+            return out;
+        }
+
+        // "X n, Y n: what's there" for each footprint tile that has an un-clearable blocker on it.
+        // Tiles whose only contents are scenery/walls are omitted, since those are auto-cleared and
+        // are not the reason a placement failed.
+        std::vector<std::string> findFootprintObstructions(const CoordsXY& origin)
+        {
+            std::vector<std::string> blockers;
+            for (const auto& tile : validatedTiles(origin))
+            {
+                const TileCoordsXY tc{ tile };
+                const std::string desc = describeTileBlockers(tc);
+                if (!desc.empty())
+                    blockers.push_back(Accessibility::SpokenTileCoordsText(tc) + ": " + desc);
+            }
+            return blockers;
+        }
+
+        // True if any footprint tile holds a non-scenery blocker (a path, another ride, an
+        // entrance/exit, or a banner) - i.e. something clearing scenery would NOT resolve. Walls and
+        // fences are clearable so they don't count. Used to avoid destroying scenery when the ride
+        // still couldn't be built anyway.
+        bool footprintHasHardBlocker(const CoordsXY& origin)
+        {
+            for (const auto& tile : validatedTiles(origin))
+            {
+                if (Accessibility::TileHasNonSceneryBlocker(TileCoordsXY{ tile }))
+                    return true;
+            }
+            return false;
+        }
+
+        // "X n, Y n: why" for each footprint tile whose bare ground cannot host the ride no matter
+        // what scenery is removed - sloped or missing ground, or ground rising higher than the
+        // placement can be raised to bridge. Clearing scenery will not fix these (the land needs
+        // levelling), so they are reported as the reason and never cleared.
+        std::vector<std::string> findUnlevelTiles(const CoordsXY& origin, int32_t cursorBaseZ)
+        {
+            std::vector<std::string> out;
+            for (const auto& tile : footprintTiles(origin))
+            {
+                const TileCoordsXY tc{ tile };
+                auto* surface = MapGetSurfaceElementAt(tile);
+                const char* why = nullptr;
+                if (surface == nullptr)
+                {
+                    why = "off the edge of the map";
+                }
+                else if (surface->GetSlope() != 0)
+                {
+                    why = "sloped ground";
+                }
+                else
+                {
+                    int32_t top = floor2(surface->getBaseZ(), kCoordsZStep);
+                    if (surface->GetWaterHeight() > 0)
+                        top = std::max<int32_t>(top, surface->GetWaterHeight());
+                    // findValidTrackDesignPlaceHeight only probes 7 steps up from the cursor's ground
+                    // height; ground higher than that range cannot be bridged by raising the ride.
+                    if ((top - cursorBaseZ) > 6 * static_cast<int32_t>(kCoordsZStep))
+                        why = "ground too high";
+                }
+                if (why != nullptr)
+                    out.push_back(Accessibility::SpokenTileCoordsText(tc) + ": " + why);
+            }
+            return out;
+        }
+
+        // True if the ground under the footprint cannot host the ride regardless of scenery, so
+        // clearing scenery would be pointless. See findUnlevelTiles for what counts.
+        bool footprintTerrainBlocks(const CoordsXY& origin, int32_t cursorBaseZ)
+        {
+            return !findUnlevelTiles(origin, cursorBaseZ).empty();
+        }
+
+        // True if any tile the placement validates is on land the player cannot build on (not owned
+        // and without construction rights, outside sandbox mode). The ride could never be built
+        // there, so scenery must not be cleared for it.
+        bool footprintOnUnbuildableLand(const CoordsXY& origin)
+        {
+            if (getGameState().cheats.sandboxMode)
+                return false;
+            for (const auto& tile : validatedTiles(origin))
+            {
+                if (!MapIsLocationOwnedOrHasRights(tile))
+                    return true;
+            }
+            return false;
+        }
+
+        // Removes small scenery, large scenery and walls/fences from exactly the tiles the placement
+        // validates (the track footprint plus the entrance/exit tiles). Clearing the same tiles the
+        // build is checked against means that, once hard blockers, terrain and ownership have been
+        // ruled out, nothing clearable is left to stop it. Track elements are never touched.
+        void clearFootprintScenery(const CoordsXY& origin)
+        {
+            const GameActions::ClearableItems items = GameActions::CLEARABLE_ITEMS::kScenerySmall
+                | GameActions::CLEARABLE_ITEMS::kSceneryLarge;
+            for (const auto& tile : validatedTiles(origin))
+            {
+                auto clear = GameActions::ClearAction(MapRange(tile, tile), items);
+                GameActions::Execute(&clear, getGameState());
+            }
+        }
+
+        // After the engine's error window has spoken the reason, queue plain guidance on how to fix
+        // it. For "something in the way" or "level the ground" failures, also name the exact footprint
+        // tiles at fault - hard obstructions (paths, rides) and un-level ground - so the player knows
+        // precisely what to clear or flatten and where.
+        void announcePlacementFailure(GameActions::Status status, const CoordsXY& origin, int32_t baseZ)
+        {
+            std::string spoken = PlacementAdvice(status);
+
+            // Name the exact tiles at fault - hard obstructions (paths, rides) and un-level ground.
+            // Both lists are empty when nothing on a tile is wrong, so this is safe for any failure.
+            auto blockers = findFootprintObstructions(origin);
+            for (auto& tile : findUnlevelTiles(origin, baseZ))
+                blockers.push_back(std::move(tile));
+
+            if (!blockers.empty())
+            {
+                spoken += " Problem tiles: ";
+                const size_t limit = std::min<size_t>(blockers.size(), 4);
+                for (size_t i = 0; i < limit; i++)
+                    spoken += (i == 0 ? "" : "; ") + blockers[i];
+                if (blockers.size() > limit)
+                    spoken += "; and " + std::to_string(blockers.size() - limit) + " more";
+                spoken += ".";
+            }
+
+            // interrupt = false so this follows the error message rather than cutting it off.
+            Accessibility::ScreenReaderSpeak(spoken, false);
+        }
+
+        // Plays the error sound and reports why a placement failed. Queries at the ground height the
+        // player actually aimed at (the upward height search otherwise reports a misleading "too
+        // high" from the top of its range) so the spoken reason and advice match where they tried.
+        void reportPlacementFailure(const CoordsXY& mapCoords, int32_t baseZ)
+        {
+            CoordsXYZD groundLoc{ mapCoords.x, mapCoords.y, baseZ, _currentTrackPieceDirection };
+            auto groundAction = GameActions::TrackDesignAction(
+                groundLoc, *_trackDesign, !gTrackDesignSceneryToggle, Config::Get().general.defaultInspectionInterval);
+            auto diag = GameActions::Query(&groundAction, getGameState());
+
+            Audio::Play3D(Audio::SoundId::error, { mapCoords, baseZ });
+            GetWindowManager()->ShowError(diag.getErrorTitle(), diag.getErrorMessage());
+            announcePlacementFailure(diag.error, mapCoords, baseZ);
+        }
+
         void placeAtTile(const CoordsXY& mapCoords)
         {
             if (_trackDesign == nullptr)
@@ -468,14 +783,35 @@ namespace OpenRCT2::Ui::Windows
             if (surface->GetWaterHeight() > 0)
                 baseZ = std::max<int32_t>(baseZ, surface->GetWaterHeight());
 
+            // Decide whether clearing scenery would actually let the ride build BEFORE destroying any.
+            // The engine auto-clears small scenery as it builds track, so a probe that still fails is
+            // blocked by something else: a hard blocker, large scenery, a wall, terrain, or land we
+            // cannot build on. We clear (large scenery and walls) only once everything that clearing
+            // could NOT fix has been ruled out, so scenery is never destroyed for a doomed placement.
+            CoordsXYZ probeLoc = { mapCoords, baseZ };
+            const auto asIs = findValidTrackDesignPlaceHeight(probeLoc, {});
+            if (asIs.error != GameActions::Status::ok)
+            {
+                //  - A path, another ride, or a banner on the footprint or an entrance/exit tile.
+                //  - Ground that is sloped or rises too high (needs levelling, not clearing).
+                //  - Land that is not owned and has no construction rights.
+                // Any of these means the ride can never go here, so report and clear nothing.
+                if (footprintHasHardBlocker(mapCoords) || footprintTerrainBlocks(mapCoords, baseZ)
+                    || footprintOnUnbuildableLand(mapCoords))
+                {
+                    reportPlacementFailure(mapCoords, baseZ);
+                    return;
+                }
+
+                // The only thing left that can be blocking is clearable large scenery or walls.
+                clearFootprintScenery(mapCoords);
+            }
+
             CoordsXYZ trackLoc = { mapCoords, baseZ };
             auto res = findValidTrackDesignPlaceHeight(trackLoc, {});
             if (res.error != GameActions::Status::ok)
             {
-                // The error window is announced automatically by the screen reader layer.
-                Audio::Play3D(Audio::SoundId::error, trackLoc);
-                auto windowManager = GetWindowManager();
-                windowManager->ShowError(res.getErrorTitle(), res.getErrorMessage());
+                reportPlacementFailure(mapCoords, baseZ);
                 return;
             }
 
@@ -487,6 +823,9 @@ namespace OpenRCT2::Ui::Windows
                 if (result->error != GameActions::Status::ok)
                 {
                     Audio::Play3D(Audio::SoundId::error, result->position);
+                    auto* windowMgr = GetWindowManager();
+                    windowMgr->ShowError(result->getErrorTitle(), result->getErrorMessage());
+                    announcePlacementFailure(result->error, CoordsXY{ trackLoc }, trackLoc.z);
                     _placingTrackDesign = false;
                     return;
                 }
@@ -499,6 +838,10 @@ namespace OpenRCT2::Ui::Windows
                     windowMgr->CloseByClass(WindowClass::error);
                     Audio::Play3D(Audio::SoundId::placeItem, trackLoc);
                     _currentRideIndex = rideId;
+                    // Sweep any scenery or walls still sharing the ride's tiles so nothing is left
+                    // under it. This runs only after a successful build, so it can never destroy
+                    // scenery for a placement that failed.
+                    clearFootprintScenery(CoordsXY{ trackLoc });
                     Accessibility::ScreenReaderSpeak("Ride placed");
 
                     if (TrackDesignAreEntranceAndExitPlaced())

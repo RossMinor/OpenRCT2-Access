@@ -10,6 +10,7 @@
 #include "../UiStringIds.h"
 
 #include <iterator>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -484,6 +485,442 @@ static StringId window_cheats_page_titles[] = {
                 onDropdownWeather(widgetIndex, selectedIndex);
             }
         }
+
+#pragma region Accessibility
+        // Screen-reader navigation. _accessIndex 0 = the tab selector; 1..n = the current page's
+        // controls. Up/Down move through them, Left/Right change tabs (on the selector) or adjust the
+        // focused control, Enter toggles/activates/opens. Modelled on the Options window.
+        int32_t _accessIndex = 0;
+        bool _accessDropdownOpen = false;
+        WidgetIndex _accessDropdownChevron = 0;
+
+        enum class AccessControlKind
+        {
+            skip,
+            checkbox,
+            dropdown,
+            spinner,
+            button,
+        };
+
+        AccessControlKind classifyAccessControl(WidgetIndex w) const
+        {
+            switch (widgets[w].type)
+            {
+                case WidgetType::checkbox:
+                    return AccessControlKind::checkbox;
+                case WidgetType::dropdownMenu:
+                    return AccessControlKind::dropdown;
+                case WidgetType::spinner:
+                    return AccessControlKind::spinner;
+                case WidgetType::button:
+                case WidgetType::flatBtn:
+                case WidgetType::imgBtn:
+                    if (widgets[w].text == STR_DROPDOWN_GLYPH)
+                        return AccessControlKind::skip; // dropdown chevron
+                    if (w >= WIDX_TAB_CONTENT + 1 && widgets[w - 1].type == WidgetType::spinner)
+                        return AccessControlKind::skip; // spinner up arrow
+                    if (w >= WIDX_TAB_CONTENT + 2 && widgets[w - 2].type == WidgetType::spinner)
+                        return AccessControlKind::skip; // spinner down arrow
+                    return AccessControlKind::button;
+                default:
+                    return AccessControlKind::skip; // groupboxes, labels, backgrounds
+            }
+        }
+
+        std::vector<WidgetIndex> getAccessControls() const
+        {
+            std::vector<WidgetIndex> controls;
+            for (WidgetIndex w = WIDX_TAB_CONTENT; w < static_cast<WidgetIndex>(widgets.size()); w++)
+            {
+                if (widgets[w].type == WidgetType::empty)
+                    continue;
+                if (classifyAccessControl(w) != AccessControlKind::skip)
+                    controls.push_back(w);
+            }
+            return controls;
+        }
+
+        static std::string guestParamLabel(WidgetIndex w)
+        {
+            switch (w)
+            {
+                case WIDX_GUEST_HAPPINESS_MAX:
+                    return "Happiness maximum";
+                case WIDX_GUEST_HAPPINESS_MIN:
+                    return "Happiness minimum";
+                case WIDX_GUEST_ENERGY_MAX:
+                    return "Energy maximum";
+                case WIDX_GUEST_ENERGY_MIN:
+                    return "Energy minimum";
+                case WIDX_GUEST_HUNGER_MAX:
+                    return "Hunger maximum";
+                case WIDX_GUEST_HUNGER_MIN:
+                    return "Hunger minimum";
+                case WIDX_GUEST_THIRST_MAX:
+                    return "Thirst maximum";
+                case WIDX_GUEST_THIRST_MIN:
+                    return "Thirst minimum";
+                case WIDX_GUEST_NAUSEA_MAX:
+                    return "Nausea maximum";
+                case WIDX_GUEST_NAUSEA_MIN:
+                    return "Nausea minimum";
+                case WIDX_GUEST_NAUSEA_TOLERANCE_MAX:
+                    return "Nausea tolerance maximum";
+                case WIDX_GUEST_NAUSEA_TOLERANCE_MIN:
+                    return "Nausea tolerance minimum";
+                case WIDX_GUEST_TOILET_MAX:
+                    return "Toilet maximum";
+                case WIDX_GUEST_TOILET_MIN:
+                    return "Toilet minimum";
+                case WIDX_GUEST_RIDE_INTENSITY_MORE_THAN_1:
+                    return "Preferred ride intensity above 1";
+                case WIDX_GUEST_RIDE_INTENSITY_LESS_THAN_15:
+                    return "Preferred ride intensity below 15";
+                case WIDX_GIVE_GUESTS_MONEY:
+                    return "Give guests money";
+            }
+            return {};
+        }
+
+        std::string accessControlLabel(WidgetIndex w, AccessControlKind kind) const
+        {
+            // Controls whose caption is drawn separately rather than stored in the widget.
+            switch (page)
+            {
+                case WINDOW_CHEATS_PAGE_MONEY:
+                    if (w == WIDX_MONEY_SPINNER)
+                        return "Money amount";
+                    break;
+                case WINDOW_CHEATS_PAGE_DATE:
+                    if (w == WIDX_YEAR_BOX)
+                        return "Year";
+                    if (w == WIDX_MONTH_BOX)
+                        return "Month";
+                    if (w == WIDX_DAY_BOX)
+                        return "Day";
+                    break;
+                case WINDOW_CHEATS_PAGE_PARK:
+                    if (w == WIDX_PARK_RATING_SPINNER)
+                        return "Park rating";
+                    break;
+                case WINDOW_CHEATS_PAGE_STAFF:
+                    if (w == WIDX_STAFF_SPEED)
+                        return "Staff speed";
+                    break;
+                case WINDOW_CHEATS_PAGE_WEATHER:
+                    if (w == WIDX_WEATHER)
+                        return "Weather";
+                    break;
+                case WINDOW_CHEATS_PAGE_GUESTS:
+                    if (auto s = guestParamLabel(w); !s.empty())
+                        return s;
+                    break;
+            }
+            const auto& wd = widgets[w];
+            if (wd.flags.has(WidgetFlag::textIsString) && wd.string != nullptr)
+                return std::string(wd.string);
+            if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
+                return OpenRCT2::FormatStringID(wd.text);
+            if (wd.tooltip != kStringIdNone && wd.tooltip != kStringIdEmpty)
+                return OpenRCT2::FormatStringID(wd.tooltip);
+            return "";
+        }
+
+        std::string accessControlValue(WidgetIndex w, AccessControlKind kind) const
+        {
+            switch (kind)
+            {
+                case AccessControlKind::checkbox:
+                    return widgetIsPressed(*this, w) ? "checked" : "unchecked";
+                case AccessControlKind::spinner:
+                    if (page == WINDOW_CHEATS_PAGE_MONEY && w == WIDX_MONEY_SPINNER)
+                        return OpenRCT2::FormatStringID(STR_CURRENCY_FORMAT, _moneySpinnerValue);
+                    if (page == WINDOW_CHEATS_PAGE_DATE && w == WIDX_YEAR_BOX)
+                        return std::to_string(_yearSpinnerValue);
+                    if (page == WINDOW_CHEATS_PAGE_DATE && w == WIDX_MONTH_BOX)
+                        return OpenRCT2::FormatStringID(STR_FORMAT_MONTH, _monthSpinnerValue - 1);
+                    if (page == WINDOW_CHEATS_PAGE_DATE && w == WIDX_DAY_BOX)
+                        return std::to_string(_daySpinnerValue);
+                    if (page == WINDOW_CHEATS_PAGE_PARK && w == WIDX_PARK_RATING_SPINNER)
+                        return std::to_string(_parkRatingSpinnerValue);
+                    return "";
+                case AccessControlKind::dropdown:
+                {
+                    const auto& gameState = getGameState();
+                    if (page == WINDOW_CHEATS_PAGE_STAFF)
+                        return OpenRCT2::FormatStringID(_staffSpeedNames[EnumValue(gameState.cheats.selectedStaffSpeed)]);
+                    if (page == WINDOW_CHEATS_PAGE_WEATHER)
+                        return OpenRCT2::FormatStringID(kWeatherTypes[EnumValue(gameState.weatherCurrent.weatherType)].label);
+                    return "";
+                }
+                case AccessControlKind::button:
+                    return widgetIsPressed(*this, w) ? "on" : "";
+                default:
+                    return "";
+            }
+        }
+
+        static const char* accessKindWord(AccessControlKind kind)
+        {
+            switch (kind)
+            {
+                case AccessControlKind::checkbox:
+                    return "checkbox";
+                case AccessControlKind::dropdown:
+                    return "combo box";
+                case AccessControlKind::spinner:
+                    return "spinner";
+                case AccessControlKind::button:
+                    return "button";
+                default:
+                    return "";
+            }
+        }
+
+        static const char* getAccessPageName(int32_t p)
+        {
+            static const char* kNames[] = { "Financial", "Date",  "Guests",       "Staff",
+                                            "Park",      "Rides", "Weather and nature" };
+            return (p >= 0 && p < WINDOW_CHEATS_PAGE_COUNT) ? kNames[p] : "Cheats";
+        }
+
+        void announceAccessFocus()
+        {
+            if (_accessDropdownOpen)
+                return;
+            onPrepareDraw(); // refresh dropdown value text before reading it
+
+            if (_accessIndex <= 0)
+            {
+                Accessibility::ScreenReaderSpeakItem(
+                    std::string(getAccessPageName(page)) + " tab", page, WINDOW_CHEATS_PAGE_COUNT);
+                return;
+            }
+            const auto controls = getAccessControls();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                return;
+            const WidgetIndex w = controls[ci];
+            const auto kind = classifyAccessControl(w);
+            std::string text = accessControlLabel(w, kind) + ", " + accessKindWord(kind);
+            const std::string value = accessControlValue(w, kind);
+            if (!value.empty())
+                text += ", " + value;
+            Accessibility::ScreenReaderSpeakItem(text, ci, static_cast<int32_t>(controls.size()));
+        }
+
+        void accessChangeTab(int32_t delta)
+        {
+            const int32_t p = (page + delta + WINDOW_CHEATS_PAGE_COUNT) % WINDOW_CHEATS_PAGE_COUNT;
+            setPage(p);
+            _accessIndex = 0;
+            announceAccessFocus();
+        }
+
+        void accessMove(int32_t delta)
+        {
+            const int32_t total = static_cast<int32_t>(getAccessControls().size()) + 1; // +1 for the tab selector
+            _accessIndex = (_accessIndex + delta + total) % total;
+            announceAccessFocus();
+        }
+
+        void accessCloseDropdown()
+        {
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->CloseByClass(WindowClass::dropdown);
+            _accessDropdownOpen = false;
+        }
+
+        void accessMoveDropdown(int32_t delta)
+        {
+            const int32_t n = gDropdown.numItems;
+            if (n <= 0)
+                return;
+            int32_t idx = std::max(0, gDropdown.highlightedIndex);
+            for (int32_t steps = 0; steps <= n; steps++)
+            {
+                idx = (idx + delta + n) % n;
+                if (!gDropdown.items[idx].isSeparator())
+                    break;
+                if (delta == 0)
+                    delta = 1;
+            }
+            if (gDropdown.items[idx].isSeparator())
+                return;
+            gDropdown.highlightedIndex = idx;
+            std::string text = gDropdown.items[idx].text;
+            if (gDropdown.items[idx].isChecked())
+                text += ", selected";
+            Accessibility::ScreenReaderSpeakItem(text, idx, n);
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+
+        void accessOpenDropdown(WidgetIndex chevronWidx)
+        {
+            onMouseDown(chevronWidx); // populates and shows gDropdown
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+                return;
+            _accessDropdownOpen = true;
+            _accessDropdownChevron = chevronWidx;
+            accessMoveDropdown(0);
+        }
+
+        void accessCommitDropdown()
+        {
+            const int32_t idx = gDropdown.highlightedIndex;
+            const WidgetIndex chevron = _accessDropdownChevron;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator();
+            accessCloseDropdown();
+            if (valid)
+                onDropdown(chevron, idx);
+            announceAccessFocus();
+        }
+
+        void accessActivate()
+        {
+            if (_accessIndex <= 0)
+                return;
+            const auto controls = getAccessControls();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                return;
+            const WidgetIndex w = controls[ci];
+            switch (classifyAccessControl(w))
+            {
+                case AccessControlKind::checkbox:
+                    onMouseUp(w);
+                    Accessibility::ScreenReaderSpeak(widgetIsPressed(*this, w) ? "checked" : "unchecked");
+                    break;
+                case AccessControlKind::dropdown:
+                    accessOpenDropdown(static_cast<WidgetIndex>(w + 1)); // chevron follows the value widget
+                    break;
+                case AccessControlKind::button:
+                    onMouseUp(w);
+                    break;
+                default:
+                    break; // spinners use Left/Right
+            }
+        }
+
+        void accessAdjust(int32_t delta)
+        {
+            if (_accessIndex <= 0)
+            {
+                accessChangeTab(delta);
+                return;
+            }
+            const auto controls = getAccessControls();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                return;
+            const WidgetIndex w = controls[ci];
+            switch (classifyAccessControl(w))
+            {
+                case AccessControlKind::spinner:
+                    onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (w + 1) : (w + 2))); // up : down
+                    announceAccessFocus();
+                    break;
+                case AccessControlKind::dropdown:
+                    accessOpenDropdown(static_cast<WidgetIndex>(w + 1));
+                    break;
+                default:
+                    announceAccessFocus(); // checkboxes/buttons just re-read
+                    break;
+            }
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true; // settings dialog: swallow letters so they don't leak to the toolbar behind
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            if (_accessDropdownOpen)
+                return std::nullopt;
+            WidgetIndex w;
+            if (_accessIndex <= 0)
+            {
+                w = WIDX_TAB_1 + page;
+            }
+            else
+            {
+                const auto controls = getAccessControls();
+                const int32_t ci = _accessIndex - 1;
+                if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                    return std::nullopt;
+                w = controls[ci];
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            if (_accessDropdownOpen)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveLeft:
+                        accessMoveDropdown(-1);
+                        return true;
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::moveRight:
+                        accessMoveDropdown(1);
+                        return true;
+                    case AccessibilityAction::activate:
+                        accessCommitDropdown();
+                        return true;
+                    case AccessibilityAction::cancel:
+                        accessCloseDropdown();
+                        announceAccessFocus();
+                        return true;
+                    default:
+                        return true;
+                }
+            }
+
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    accessMove(-1);
+                    return true;
+                case AccessibilityAction::moveDown:
+                    accessMove(1);
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    accessAdjust(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    accessAdjust(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    accessActivate();
+                    return true;
+                case AccessibilityAction::nextTab:
+                    accessChangeTab(1);
+                    return true;
+                case AccessibilityAction::prevTab:
+                    accessChangeTab(-1);
+                    return true;
+                case AccessibilityAction::announce:
+                    announceAccessFocus();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true;
+            }
+        }
+#pragma endregion
 
         void onPrepareDraw() override
         {

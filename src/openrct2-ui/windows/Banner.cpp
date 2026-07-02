@@ -9,6 +9,7 @@
 
 #include "../UiStringIds.h"
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -20,8 +21,11 @@
 #include <openrct2/actions/scenery/BannerRemoveAction.h>
 #include <openrct2/actions/scenery/BannerSetNameAction.h>
 #include <openrct2/actions/scenery/BannerSetStyleAction.h>
+#include <algorithm>
 #include <openrct2/config/Config.h>
+#include <openrct2/drawing/Colour.h>
 #include <openrct2/drawing/TextColour.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/object/BannerSceneryEntry.h>
 #include <openrct2/object/ObjectEntryManager.h>
 #include <openrct2/ui/WindowManager.h>
@@ -29,6 +33,8 @@
 #include <openrct2/world/Map.h>
 #include <openrct2/world/Scenery.h>
 #include <openrct2/world/tile_element/BannerElement.h>
+#include <string>
+#include <vector>
 
 namespace OpenRCT2::Ui::Windows
 {
@@ -304,6 +310,227 @@ namespace OpenRCT2::Ui::Windows
             colourBtn.image = getColourButtonImage(banner->colour);
             Widget& dropDownWidget = widgets[WIDX_TEXT_COLOUR_DROPDOWN];
             dropDownWidget.text = kBannerColouredTextFormats[EnumValue(banner->textColour)];
+        }
+
+        // --- Screen-reader keyboard navigation ---------------------------------------------------
+        // A single vertical list of the banner's controls (no tabs). Up/Down move; Left/Right cycle
+        // the colour on a colour item; Enter changes text, toggles no-entry, or demolishes.
+    private:
+        enum class AxKind
+        {
+            text,
+            noEntry,
+            mainColour,
+            textColour,
+            demolish,
+        };
+
+        int32_t _accessIndex = 0;
+
+        static std::string axColourName(Drawing::Colour c)
+        {
+            std::string s = Drawing::colourToString(c);
+            for (auto& ch : s)
+                if (ch == '_')
+                    ch = ' ';
+            return s;
+        }
+
+        std::vector<AxKind> buildAxItems()
+        {
+            std::vector<AxKind> items;
+            auto* banner = GetBanner(GetBannerIndex());
+            if (banner == nullptr)
+                return items;
+            const bool noEntry = banner->flags.has(BannerFlag::noEntry);
+            if (!noEntry)
+                items.push_back(AxKind::text);
+            items.push_back(AxKind::noEntry);
+            if (widgets[WIDX_MAIN_COLOUR].type == WidgetType::colourBtn)
+                items.push_back(AxKind::mainColour);
+            if (!noEntry)
+                items.push_back(AxKind::textColour);
+            items.push_back(AxKind::demolish);
+            return items;
+        }
+
+        std::string axLabel(AxKind kind)
+        {
+            auto* banner = GetBanner(GetBannerIndex());
+            switch (kind)
+            {
+                case AxKind::text:
+                {
+                    std::string text = banner != nullptr ? std::string(banner->getText()) : std::string();
+                    return "Banner text, " + (text.empty() ? std::string("blank") : text);
+                }
+                case AxKind::noEntry:
+                    return std::string("No entry banner, ")
+                        + (banner != nullptr && banner->flags.has(BannerFlag::noEntry) ? "on" : "off");
+                case AxKind::mainColour:
+                    return "Sign colour, " + (banner != nullptr ? axColourName(banner->colour) : std::string());
+                case AxKind::textColour:
+                    return "Text colour, "
+                        + (banner != nullptr ? OpenRCT2::FormatStringID(kBannerColouredTextFormats[EnumValue(banner->textColour)])
+                                             : std::string());
+                case AxKind::demolish:
+                    return "Demolish banner";
+            }
+            return {};
+        }
+
+        void axAnnounce()
+        {
+            auto items = buildAxItems();
+            const int32_t n = static_cast<int32_t>(items.size());
+            if (n == 0)
+            {
+                Accessibility::ScreenReaderSpeak("Banner");
+                return;
+            }
+            _accessIndex = std::clamp(_accessIndex, 0, n - 1);
+            Accessibility::ScreenReaderSpeakItem(axLabel(items[_accessIndex]), _accessIndex, n);
+        }
+
+        void axAdjust(int32_t dir)
+        {
+            auto items = buildAxItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+            {
+                axAnnounce();
+                return;
+            }
+            auto& gameState = getGameState();
+            switch (items[_accessIndex])
+            {
+                case AxKind::mainColour:
+                {
+                    auto* banner = GetBanner(GetBannerIndex());
+                    if (banner == nullptr)
+                        return;
+                    const int32_t v = (EnumValue(banner->colour) + dir + Drawing::kColourNumNormal)
+                        % Drawing::kColourNumNormal;
+                    auto action = GameActions::BannerSetStyleAction(
+                        GameActions::BannerSetStyleType::primaryColour, GetBannerIndex(), v);
+                    GameActions::Execute(&action, gameState);
+                    Accessibility::ScreenReaderSpeak("Sign colour, " + axColourName(static_cast<Drawing::Colour>(v)));
+                    break;
+                }
+                case AxKind::textColour:
+                {
+                    auto* banner = GetBanner(GetBannerIndex());
+                    if (banner == nullptr)
+                        return;
+                    // Selectable text colours are 1..13 (index 0, black, is not offered by the game).
+                    int32_t v = EnumValue(banner->textColour) + dir;
+                    if (v < 1)
+                        v = 13;
+                    else if (v > 13)
+                        v = 1;
+                    auto action = GameActions::BannerSetStyleAction(
+                        GameActions::BannerSetStyleType::textColour, GetBannerIndex(), v);
+                    GameActions::Execute(&action, gameState);
+                    Accessibility::ScreenReaderSpeak(
+                        "Text colour, " + OpenRCT2::FormatStringID(kBannerColouredTextFormats[v]));
+                    break;
+                }
+                default:
+                    axAnnounce();
+                    break;
+            }
+        }
+
+        void axActivate()
+        {
+            auto items = buildAxItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                return;
+            switch (items[_accessIndex])
+            {
+                case AxKind::text:
+                    onMouseUp(WIDX_BANNER_TEXT); // opens the (accessible) text-input window
+                    break;
+                case AxKind::noEntry:
+                    onMouseUp(WIDX_BANNER_NO_ENTRY);
+                    _accessIndex = 0; // the item list changes when no-entry hides text controls
+                    axAnnounce();
+                    break;
+                case AxKind::demolish:
+                    onMouseUp(WIDX_BANNER_DEMOLISH); // removes the banner and closes the window
+                    break;
+                default:
+                    axAnnounce(); // colours use Left/Right
+                    break;
+            }
+        }
+
+    public:
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            auto items = buildAxItems();
+            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
+                return std::nullopt;
+            WidgetIndex w;
+            switch (items[_accessIndex])
+            {
+                case AxKind::text:
+                    w = WIDX_BANNER_TEXT;
+                    break;
+                case AxKind::noEntry:
+                    w = WIDX_BANNER_NO_ENTRY;
+                    break;
+                case AxKind::mainColour:
+                    w = WIDX_MAIN_COLOUR;
+                    break;
+                case AxKind::textColour:
+                    w = WIDX_TEXT_COLOUR_DROPDOWN;
+                    break;
+                case AxKind::demolish:
+                default:
+                    w = WIDX_BANNER_DEMOLISH;
+                    break;
+            }
+            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            auto items = buildAxItems();
+            const int32_t n = static_cast<int32_t>(items.size());
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:
+                    if (n > 0)
+                        _accessIndex = (_accessIndex - 1 + n) % n;
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::moveDown:
+                    if (n > 0)
+                        _accessIndex = (_accessIndex + 1) % n;
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::moveLeft:
+                    axAdjust(-1);
+                    return true;
+                case AccessibilityAction::moveRight:
+                    axAdjust(1);
+                    return true;
+                case AccessibilityAction::activate:
+                    axActivate();
+                    return true;
+                case AccessibilityAction::announce:
+                    axAnnounce();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                default:
+                    return true; // own all navigation keys while open
+            }
         }
     };
 

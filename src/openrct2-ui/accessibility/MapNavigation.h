@@ -55,6 +55,17 @@ namespace OpenRCT2::Ui::Accessibility
     // cursor. Shared so features outside MapNavigation (e.g. ride construction) read identically.
     std::string SpokenTileCoordsText(const TileCoordsXY& tile);
 
+    // Describes a placed ride entrance or exit for speech: which compass way its doorway faces and
+    // whether a footpath is already connected there, e.g. ", facing East, path connected". Pass a
+    // ride station's Entrance or Exit. Empty if the location is null.
+    std::string DescribeEntranceExitConnection(const TileCoordsXYZD& loc);
+
+    // True if the tile holds something that would block building a ride and is NOT auto-clearable -
+    // a path, another ride's track, a ride entrance/exit, or a banner. Used to decide whether
+    // clearing would actually let a ride be placed (it won't if a path is in the way). Small/large
+    // scenery and walls/fences do not count, as the clear-scenery tool removes those automatically.
+    bool TileHasNonSceneryBlocker(const TileCoordsXY& tile);
+
     // The screen position of the keyboard map cursor's tile (the viewport centre, since the cursor
     // keeps the view centred on itself). Ride construction feeds this to the build tool so pieces
     // are placed where the map cursor is, not where the mouse is. Empty if the cursor isn't ready.
