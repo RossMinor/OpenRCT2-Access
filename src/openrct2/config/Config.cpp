@@ -453,6 +453,8 @@ namespace OpenRCT2::Config
             model->rideMusicVolume = reader->GetInt32("ride_music_volume", 100);
             model->audioFocus = reader->GetBoolean("audio_focus", false);
             model->accessibilityCueVolume = reader->GetInt32("accessibility_cue_volume", 100);
+            model->accessibilityStepSoundMode = reader->GetInt32("accessibility_step_sound_mode", 0);
+            model->accessibilityTileSpeechMode = reader->GetInt32("accessibility_tile_speech_mode", 1);
         }
     }
 
@@ -470,6 +472,8 @@ namespace OpenRCT2::Config
         writer->WriteInt32("ride_music_volume", model->rideMusicVolume);
         writer->WriteBoolean("audio_focus", model->audioFocus);
         writer->WriteInt32("accessibility_cue_volume", model->accessibilityCueVolume);
+        writer->WriteInt32("accessibility_step_sound_mode", model->accessibilityStepSoundMode);
+        writer->WriteInt32("accessibility_tile_speech_mode", model->accessibilityTileSpeechMode);
     }
 
     static void ReadNetwork(IIniReader* reader)

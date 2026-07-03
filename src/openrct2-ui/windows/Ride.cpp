@@ -825,6 +825,8 @@ namespace OpenRCT2::Ui::Windows
 
         void onUpdate() override
         {
+            axTickPendingAnnounce(); // deferred re-announce of a control whose value applies a tick late
+
             switch (page)
             {
                 case WINDOW_RIDE_PAGE_MAIN:
@@ -1064,7 +1066,8 @@ namespace OpenRCT2::Ui::Windows
         };
         struct AxItem
         {
-            std::string text;       // fully composed spoken text
+            std::string text;       // fully composed spoken text (label, kind, value)
+            std::string value;      // just the current value ("Bright red", "$1.10", "checked"), for change announcements
             AxKind kind = AxKind::data;
             WidgetIndex widget = 0; // dropdown chevron / spinner value / checkbox / button
         };
@@ -1072,6 +1075,13 @@ namespace OpenRCT2::Ui::Windows
         int32_t _accessIndex = 0; // 0 = tab selector; 1..n = page items
         bool _accessDropdownOpen = false;
         WidgetIndex _accessDropdownChevron = 0;
+
+        // Controls that change through a game action apply a tick later (UI-issued actions are queued),
+        // so reading the value immediately gives the old one. Instead we remember the pre-change text
+        // and re-announce the focused item from onUpdate once it actually changes (or after a timeout).
+        bool _axAnnouncePending = false;
+        std::string _axPrevValue;
+        int32_t _axPendingFrames = 0;
 
         static const char* axPageName(int32_t p)
         {
@@ -1085,7 +1095,7 @@ namespace OpenRCT2::Ui::Windows
             switch (k)
             {
                 case AxKind::dropdown:
-                    return "combo box";
+                    return "slider"; // combo boxes are driven like sliders: Left/Right cycle the value in place
                 case AxKind::spinner:
                     return "slider";
                 case AxKind::checkbox:
@@ -1102,6 +1112,53 @@ namespace OpenRCT2::Ui::Windows
             if (m == 0)
                 return "free";
             return OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, m);
+        }
+
+        // The name of the colour currently set for one of the colour-picker buttons (which have no
+        // caption text of their own), so it can be read aloud. Empty if the widget is not a colour button.
+        std::string axColourName(WidgetIndex w)
+        {
+            auto* ridePtr = GetRide(rideId);
+            if (ridePtr == nullptr)
+                return {};
+            auto& ride = *ridePtr;
+            std::optional<Drawing::Colour> colour;
+            switch (w)
+            {
+                case WIDX_TRACK_MAIN_COLOUR:
+                    colour = ride.trackColours[_rideColour].main;
+                    break;
+                case WIDX_TRACK_ADDITIONAL_COLOUR:
+                    colour = ride.trackColours[_rideColour].additional;
+                    break;
+                case WIDX_TRACK_SUPPORT_COLOUR:
+                    colour = ride.trackColours[_rideColour].supports;
+                    break;
+                case WIDX_VEHICLE_BODY_COLOUR:
+                    colour = RideGetVehicleColour(ride, _vehicleIndex).Body;
+                    break;
+                case WIDX_VEHICLE_TRIM_COLOUR:
+                    colour = RideGetVehicleColour(ride, _vehicleIndex).Trim;
+                    break;
+                case WIDX_VEHICLE_TERTIARY_COLOUR:
+                    colour = RideGetVehicleColour(ride, _vehicleIndex).Tertiary;
+                    break;
+                default:
+                    return {};
+            }
+            const StringId nameId = GetColourNameStringId(*colour);
+            return nameId != kStringIdNone ? OpenRCT2::FormatStringID(nameId) : std::string();
+        }
+
+        // The name of the ride's current station entrance style. The entrance-style widget paints a custom
+        // icon + label rather than storing its caption, so its text can't be read the generic way.
+        std::string axEntranceStyleName(const Ride& ride)
+        {
+            auto& objManager = GetContext()->GetObjectManager();
+            auto* stationObj = objManager.GetLoadedObject<StationObject>(ride.entranceStyle);
+            if (stationObj != nullptr && stationObj->NameStringId != kStringIdNone)
+                return OpenRCT2::FormatStringID(stationObj->NameStringId);
+            return {};
         }
 
         // Current display text of a widget (a literal string for runtime captions, else its StringId).
@@ -1161,13 +1218,13 @@ namespace OpenRCT2::Ui::Windows
 
             const auto data = [&](std::string t) {
                 if (!t.empty())
-                    items.push_back({ std::move(t), AxKind::data, 0 });
+                    items.push_back({ std::move(t), {}, AxKind::data, 0 });
             };
             const auto control = [&](std::string label, AxKind kind, WidgetIndex w, std::string value) {
                 std::string t = std::move(label) + ", " + axKindWord(kind);
                 if (!value.empty())
                     t += ", " + value;
-                items.push_back({ std::move(t), kind, w });
+                items.push_back({ std::move(t), std::move(value), kind, w });
             };
 
             switch (page)
@@ -1334,11 +1391,15 @@ namespace OpenRCT2::Ui::Windows
                             "Colour scheme", AxKind::dropdown, WIDX_TRACK_COLOUR_SCHEME_DROPDOWN,
                             axWidgetText(WIDX_TRACK_COLOUR_SCHEME));
                     if (widgets[WIDX_TRACK_MAIN_COLOUR].type == WidgetType::colourBtn)
-                        control("Main colour", AxKind::dropdown, WIDX_TRACK_MAIN_COLOUR, "");
+                        control("Main colour", AxKind::dropdown, WIDX_TRACK_MAIN_COLOUR, axColourName(WIDX_TRACK_MAIN_COLOUR));
                     if (widgets[WIDX_TRACK_ADDITIONAL_COLOUR].type == WidgetType::colourBtn)
-                        control("Additional colour", AxKind::dropdown, WIDX_TRACK_ADDITIONAL_COLOUR, "");
+                        control(
+                            "Additional colour", AxKind::dropdown, WIDX_TRACK_ADDITIONAL_COLOUR,
+                            axColourName(WIDX_TRACK_ADDITIONAL_COLOUR));
                     if (widgets[WIDX_TRACK_SUPPORT_COLOUR].type == WidgetType::colourBtn)
-                        control("Support colour", AxKind::dropdown, WIDX_TRACK_SUPPORT_COLOUR, "");
+                        control(
+                            "Support colour", AxKind::dropdown, WIDX_TRACK_SUPPORT_COLOUR,
+                            axColourName(WIDX_TRACK_SUPPORT_COLOUR));
                     if (widgets[WIDX_MAZE_STYLE].type == WidgetType::dropdownMenu)
                         control("Maze style", AxKind::dropdown, WIDX_MAZE_STYLE_DROPDOWN, axWidgetText(WIDX_MAZE_STYLE));
                     if (widgets[WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX].type == WidgetType::checkbox)
@@ -1348,7 +1409,7 @@ namespace OpenRCT2::Ui::Windows
                     if (widgets[WIDX_ENTRANCE_STYLE].type == WidgetType::dropdownMenu)
                         control(
                             "Station entrance style", AxKind::dropdown, WIDX_ENTRANCE_STYLE_DROPDOWN,
-                            axWidgetText(WIDX_ENTRANCE_STYLE));
+                            axEntranceStyleName(ride));
                     if (widgets[WIDX_VEHICLE_COLOUR_SCHEME].type == WidgetType::dropdownMenu)
                         control(
                             "Vehicle colour scheme", AxKind::dropdown, WIDX_VEHICLE_COLOUR_SCHEME_DROPDOWN,
@@ -1358,11 +1419,17 @@ namespace OpenRCT2::Ui::Windows
                             "Vehicle to modify", AxKind::dropdown, WIDX_VEHICLE_COLOUR_INDEX_DROPDOWN,
                             axWidgetText(WIDX_VEHICLE_COLOUR_INDEX));
                     if (widgets[WIDX_VEHICLE_BODY_COLOUR].type == WidgetType::colourBtn)
-                        control("Vehicle body colour", AxKind::dropdown, WIDX_VEHICLE_BODY_COLOUR, "");
+                        control(
+                            "Vehicle body colour", AxKind::dropdown, WIDX_VEHICLE_BODY_COLOUR,
+                            axColourName(WIDX_VEHICLE_BODY_COLOUR));
                     if (widgets[WIDX_VEHICLE_TRIM_COLOUR].type == WidgetType::colourBtn)
-                        control("Vehicle trim colour", AxKind::dropdown, WIDX_VEHICLE_TRIM_COLOUR, "");
+                        control(
+                            "Vehicle trim colour", AxKind::dropdown, WIDX_VEHICLE_TRIM_COLOUR,
+                            axColourName(WIDX_VEHICLE_TRIM_COLOUR));
                     if (widgets[WIDX_VEHICLE_TERTIARY_COLOUR].type == WidgetType::colourBtn)
-                        control("Vehicle tertiary colour", AxKind::dropdown, WIDX_VEHICLE_TERTIARY_COLOUR, "");
+                        control(
+                            "Vehicle tertiary colour", AxKind::dropdown, WIDX_VEHICLE_TERTIARY_COLOUR,
+                            axColourName(WIDX_VEHICLE_TERTIARY_COLOUR));
                     if (widgets[WIDX_RANDOMISE_VEHICLE_COLOURS].type == WidgetType::button)
                         control("Randomise vehicle colours", AxKind::button, WIDX_RANDOMISE_VEHICLE_COLOURS, "");
                     break;
@@ -1500,6 +1567,87 @@ namespace OpenRCT2::Ui::Windows
             axAnnounceFocus();
         }
 
+        // Just the value of the currently focused item right now (fresh read), or empty.
+        std::string axFocusedValue()
+        {
+            if (_accessIndex <= 0)
+                return {};
+            const auto items = buildAxItems();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
+                return {};
+            return items[ci].value;
+        }
+
+        // Arm a deferred announcement: remember the current (pre-change) value; onUpdate re-announces just
+        // the new value once it changes (the queued game action has applied) or after a short timeout.
+        void axPendAnnounce(std::string prevValue)
+        {
+            _axPrevValue = std::move(prevValue);
+            _axAnnouncePending = true;
+            _axPendingFrames = 0;
+        }
+
+        // Drives the deferred announcement each frame. Call from onUpdate. Speaks only the value the control
+        // jumped to (not the full label/position), so adjusting a slider/checkbox is terse.
+        void axTickPendingAnnounce()
+        {
+            if (!_axAnnouncePending)
+                return;
+            onPrepareDraw(); // refresh widget captions/state from the (now updated) ride
+            const std::string cur = axFocusedValue();
+            if (cur != _axPrevValue || ++_axPendingFrames >= 8)
+            {
+                _axAnnouncePending = false;
+                if (!cur.empty())
+                    Accessibility::ScreenReaderSpeak(cur);
+                else
+                    axAnnounceFocus(); // no value to read (e.g. a button) — fall back to the full item
+            }
+        }
+
+        // Cycles a combo box's value in place (no visible dropdown), like a slider: opens the dropdown to
+        // populate its items, steps to the next/previous selectable one, applies it, and closes. Works for
+        // both text dropdowns (current item is checked) and colour pickers (current is defaultIndex).
+        void axCycleDropdown(WidgetIndex chevron, int32_t delta)
+        {
+            onMouseDown(chevron); // populates and shows gDropdown
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+                return;
+
+            const int32_t n = gDropdown.numItems;
+            if (n <= 0)
+            {
+                axCloseDropdown();
+                return;
+            }
+
+            int32_t cur = -1;
+            for (int32_t i = 0; i < n; i++)
+                if (gDropdown.items[i].isChecked())
+                {
+                    cur = i;
+                    break;
+                }
+            if (cur < 0 && gDropdown.defaultIndex >= 0 && gDropdown.defaultIndex < n)
+                cur = gDropdown.defaultIndex; // colour pickers mark the current colour here
+            if (cur < 0)
+                cur = std::max(0, gDropdown.highlightedIndex);
+
+            int32_t idx = cur;
+            for (int32_t steps = 0; steps < n; steps++)
+            {
+                idx = (idx + delta + n) % n;
+                if (!gDropdown.items[idx].isSeparator() && !gDropdown.items[idx].isDisabled())
+                    break;
+            }
+            const bool valid = idx != cur && !gDropdown.items[idx].isSeparator() && !gDropdown.items[idx].isDisabled();
+            axCloseDropdown();
+            if (valid)
+                onDropdown(chevron, idx);
+        }
+
         void axAdjust(int32_t delta)
         {
             if (_accessIndex <= 0)
@@ -1515,11 +1663,13 @@ namespace OpenRCT2::Ui::Windows
             switch (it.kind)
             {
                 case AxKind::dropdown:
-                    axOpenDropdown(it.widget);
+                    // Combo boxes behave like sliders: Left/Right cycle the value in place, no open/close.
+                    axCycleDropdown(it.widget, delta);
+                    axPendAnnounce(it.value);
                     break;
                 case AxKind::spinner:
                     onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (it.widget + 1) : (it.widget + 2))); // up : down
-                    axAnnounceFocus();
+                    axPendAnnounce(it.value);
                     break;
                 default:
                     axAnnounceFocus(); // checkboxes/buttons/data: re-read only
@@ -1539,11 +1689,14 @@ namespace OpenRCT2::Ui::Windows
             switch (it.kind)
             {
                 case AxKind::checkbox:
+                    // The toggle applies a tick later, so announce the new state via the deferred path
+                    // rather than reading the (still stale) widget immediately.
                     onMouseUp(it.widget);
-                    Accessibility::ScreenReaderSpeak(widgetIsPressed(*this, it.widget) ? "checked" : "unchecked");
+                    axPendAnnounce(it.value);
                     break;
                 case AxKind::dropdown:
-                    axOpenDropdown(it.widget);
+                    // Combo boxes are sliders now: Enter just re-reads the current value (Left/Right change it).
+                    axAnnounceFocus();
                     break;
                 case AxKind::button:
                     onMouseUp(it.widget); // locate works immediately; demolish/refurbish open a prompt

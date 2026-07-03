@@ -13,6 +13,7 @@
 
 #include <SDL.h>
 #include <openrct2-ui/accessibility/AccessFollow.h>
+#include <openrct2-ui/accessibility/AccessSounds.h>
 #include <openrct2-ui/accessibility/AccessUpdate.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
@@ -219,6 +220,9 @@ void InputManager::process()
 
     // Notice when a followed NPC has despawned so the follow state doesn't stick.
     Accessibility::TickFollowEntity();
+
+    // Play a drowning sound the moment a guest starts to drown (detected by polling).
+    Accessibility::TickDrownWatch();
 
     // Announce money spent/earned by player-initiated transactions (build, demolish, land, etc.).
     Accessibility::TickMoneyAnnounce();

@@ -605,9 +605,48 @@ namespace OpenRCT2::Ui::Windows
         STR_COLOUR_VOID_TIP,
     };
 
+    // A permutation of the colour-dropdown indices that orders the normal colours by their RGB value
+    // (packed 0xRRGGBB of a representative shade), so visually similar colours sit next to each other
+    // in every colour picker. The special colours (invisible, void) are kept at the end. Built once
+    // from the loaded palette.
+    static const std::array<uint8_t, std::size(kColoursDropdownOrder)>& GetSortedColourOrder()
+    {
+        static std::array<uint8_t, std::size(kColoursDropdownOrder)> order{};
+        static bool built = false;
+        if (!built)
+        {
+            for (size_t i = 0; i < order.size(); i++)
+                order[i] = static_cast<uint8_t>(i);
+
+            const auto rgbKey = [](Colour c) -> uint32_t {
+                const auto shade = Drawing::getColourMap(c);
+                const auto& px = ::gPalette[EnumValue(shade.midLight)];
+                return (static_cast<uint32_t>(px.red) << 16) | (static_cast<uint32_t>(px.green) << 8) | px.blue;
+            };
+
+            const size_t normal = std::min<size_t>(kColourNumNormal, order.size());
+            std::stable_sort(order.begin(), order.begin() + normal, [&](uint8_t a, uint8_t b) {
+                return rgbKey(kColoursDropdownOrder[a]) < rgbKey(kColoursDropdownOrder[b]);
+            });
+            built = true;
+        }
+        return order;
+    }
+
     Colour ColourDropDownIndexToColour(uint8_t ddidx)
     {
+        const auto& order = GetSortedColourOrder();
+        if (ddidx < order.size())
+            return kColoursDropdownOrder[order[ddidx]];
         return kColoursDropdownOrder[ddidx];
+    }
+
+    StringId GetColourNameStringId(Colour colour)
+    {
+        for (size_t i = 0; i < std::size(kColoursDropdownOrder); i++)
+            if (kColoursDropdownOrder[i] == colour)
+                return kColourTooltips[i];
+        return kStringIdNone;
     }
 
     /**
@@ -639,7 +678,9 @@ namespace OpenRCT2::Ui::Windows
                                                                : ImageId(SPR_PALETTE_BTN, orderedColour);
             }
 
-            gDropdown.items[i] = { .type = Dropdown::ItemType::colour, .image = imageId, .tooltip = kColourTooltips[i] };
+            gDropdown.items[i] = { .type = Dropdown::ItemType::colour,
+                                   .image = imageId,
+                                   .tooltip = kColourTooltips[GetSortedColourOrder()[i]] };
         }
 
         // Show dropdown

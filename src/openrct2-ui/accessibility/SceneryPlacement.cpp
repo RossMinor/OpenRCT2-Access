@@ -9,6 +9,7 @@
 
 #include "SceneryPlacement.h"
 
+#include "AccessSounds.h"
 #include "ScreenReader.h"
 
 #include <openrct2/Context.h>
@@ -162,7 +163,7 @@ namespace OpenRCT2::Ui::Accessibility
                 windowMgr->ShowError(result->getErrorTitle(), result->getErrorMessage());
                 return;
             }
-            PlayCue(Audio::SoundId::placeItem, result->position);
+            PlayAccessSound(AccessSound::place);
             ScreenReaderSpeak("Placed");
         });
         GameActions::Execute(action, getGameState());

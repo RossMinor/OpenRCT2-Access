@@ -165,6 +165,12 @@ namespace OpenRCT2::Config
         // Volume (0-100%) of the accessibility mod's own sound cues, adjustable from the mod's
         // settings window (Ctrl+F1). Independent of the game's sound-effect volume.
         uint8_t accessibilityCueVolume;
+        // When the map cursor's footstep-style cues (path, water) play: 0 = every step, 1 = only when
+        // the tile type changes (like the spoken tile announcements), 2 = off. Set via Ctrl+F1.
+        uint8_t accessibilityStepSoundMode;
+        // When the screen reader announces the tile under the map cursor: 0 = every tile, 1 = only
+        // when the tile changes, 2 = off. Set via Ctrl+F1.
+        uint8_t accessibilityTileSpeechMode;
     };
 
     struct Network

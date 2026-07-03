@@ -9,8 +9,9 @@
 
 // Settings window for the blind-accessibility mod. Opened with Ctrl+F1. It is drawn like a native
 // OpenRCT2 window (so sighted helpers can read it) and is fully keyboard/screen-reader navigable.
-// It currently exposes two controls: a slider for the accessibility sound-cue volume (in 5%
-// increments) and a button that opens the author's Patreon page.
+// It exposes: a slider for the accessibility sound-cue volume (in 5% increments), a control for how
+// often the map-cursor step sounds play (every step / on change / off), and a button that opens the
+// author's Patreon page.
 
 #include <algorithm>
 #include <cmath>
@@ -30,9 +31,11 @@
 
 namespace OpenRCT2::Ui::Windows
 {
-    static constexpr ScreenSize kWindowSize = { 400, 100 };
+    static constexpr ScreenSize kWindowSize = { 400, 124 };
     static constexpr int32_t kVolumeStep = 5;
     static constexpr const char* kPatreonUrl = "https://www.patreon.com/rossminor";
+    static constexpr uint8_t kStepSoundModeCount = 3;
+    static constexpr uint8_t kTileSpeechModeCount = 3;
 
     enum WindowAccessibilityOptionsWidgetIdx : WidgetIndex
     {
@@ -40,6 +43,8 @@ namespace OpenRCT2::Ui::Windows
         WIDX_TITLE,
         WIDX_CLOSE,
         WIDX_VOLUME_SLIDER,
+        WIDX_STEP_MODE,
+        WIDX_TILE_MODE,
         WIDX_SUPPORT_BUTTON,
     };
 
@@ -47,19 +52,51 @@ namespace OpenRCT2::Ui::Windows
     static constexpr auto kWidgets = makeWidgets(
         makeWindowShim(kStringIdNone, kWindowSize),
         makeWidget({ 180, 24 }, { 150, 13 },                   WidgetType::scroll, WindowColour::secondary, SCROLL_HORIZONTAL), // Cue volume slider
-        makeWidget({   8, 58 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
+        makeWidget({ 150, 44 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Step sound mode (cycles on click)
+        makeWidget({ 150, 64 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Tile reading mode (cycles on click)
+        makeWidget({   8, 90 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
     );
     // clang-format on
+
+    static const char* stepModeName(uint8_t mode)
+    {
+        switch (mode)
+        {
+            case 0:
+                return "Every step";
+            case 1:
+                return "On change";
+            default:
+                return "Off";
+        }
+    }
+
+    static const char* tileModeName(uint8_t mode)
+    {
+        switch (mode)
+        {
+            case 0:
+                return "Every tile";
+            case 1:
+                return "On change";
+            default:
+                return "Off";
+        }
+    }
 
     class AccessibilityOptionsWindow final : public Window
     {
     private:
-        // 0 = volume slider, 1 = support button.
+        // 0 = volume slider, 1 = step sound mode, 2 = tile reading mode, 3 = support button.
         int32_t _accessIndex = 0;
 
         // The support button is a two-step confirm: the first Enter reads the thank-you message and
         // arms it; the second Enter actually opens the browser. Reset whenever focus moves away.
         bool _supportArmed = false;
+
+        // Backing strings for the mode-button captions (setString keeps only a pointer).
+        std::string _stepCaption;
+        std::string _tileCaption;
 
         // Backing storage for the caption / button captions (setString stores a pointer, so the
         // strings must outlive the window's draws).
@@ -88,12 +125,27 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeak("Accessibility Sounds Volume. " + focusText());
         }
 
+        void onPrepareDraw() override
+        {
+            // Refresh the mode buttons' captions from the current settings.
+            _stepCaption = stepModeName(Config::Get().sound.accessibilityStepSoundMode);
+            widgets[WIDX_STEP_MODE].setString(_stepCaption.c_str());
+            _tileCaption = tileModeName(Config::Get().sound.accessibilityTileSpeechMode);
+            widgets[WIDX_TILE_MODE].setString(_tileCaption.c_str());
+        }
+
         void onMouseUp(WidgetIndex widgetIndex) override
         {
             switch (widgetIndex)
             {
                 case WIDX_CLOSE:
                     close();
+                    break;
+                case WIDX_STEP_MODE:
+                    cycleStepMode(1); // clicking advances to the next mode
+                    break;
+                case WIDX_TILE_MODE:
+                    cycleTileMode(1);
                     break;
                 case WIDX_SUPPORT_BUTTON:
                     openSupportPage();
@@ -125,6 +177,14 @@ namespace OpenRCT2::Ui::Windows
             const auto pctText = std::to_string(Config::Get().sound.accessibilityCueVolume) + "%";
             const auto pctPos = windowPos + ScreenCoordsXY{ widgets[WIDX_VOLUME_SLIDER].right + 6, 27 };
             drawText(rt, pctPos, pctText, { colours[1] });
+
+            // Step-sound mode label (the value is drawn on the button itself).
+            const auto stepLabelPos = windowPos + ScreenCoordsXY{ 8, 47 };
+            drawText(rt, stepLabelPos, "Step sounds", { colours[1] });
+
+            // Tile-reading mode label.
+            const auto tileLabelPos = windowPos + ScreenCoordsXY{ 8, 67 };
+            drawText(rt, tileLabelPos, "Tile reading", { colours[1] });
         }
 
         bool onAccessibilityAction(AccessibilityAction action) override
@@ -138,23 +198,43 @@ namespace OpenRCT2::Ui::Windows
                     return true;
                 case AccessibilityAction::moveDown:
                     _supportArmed = false;
-                    _accessIndex = std::min(1, _accessIndex + 1);
+                    _accessIndex = std::min(3, _accessIndex + 1);
                     announceFocus();
                     return true;
                 case AccessibilityAction::moveLeft:
                 case AccessibilityAction::moveRight:
+                {
                     _supportArmed = false;
+                    const int32_t delta = (action == AccessibilityAction::moveRight) ? 1 : -1;
                     if (_accessIndex == 0)
                     {
-                        const int32_t delta = (action == AccessibilityAction::moveRight) ? kVolumeStep : -kVolumeStep;
                         const int32_t pct = std::clamp<int32_t>(
-                            Config::Get().sound.accessibilityCueVolume + delta, 0, 100);
+                            Config::Get().sound.accessibilityCueVolume + delta * kVolumeStep, 0, 100);
                         setVolume(static_cast<uint8_t>(pct));
+                    }
+                    else if (_accessIndex == 1)
+                    {
+                        cycleStepMode(delta);
+                    }
+                    else if (_accessIndex == 2)
+                    {
+                        cycleTileMode(delta);
                     }
                     announceFocus();
                     return true;
+                }
                 case AccessibilityAction::activate:
                     if (_accessIndex == 1)
+                    {
+                        cycleStepMode(1); // Enter advances the step mode too
+                        announceFocus();
+                    }
+                    else if (_accessIndex == 2)
+                    {
+                        cycleTileMode(1);
+                        announceFocus();
+                    }
+                    else if (_accessIndex == 3)
                     {
                         if (_supportArmed)
                         {
@@ -197,7 +277,13 @@ namespace OpenRCT2::Ui::Windows
 
         std::optional<ScreenRect> getAccessibilityFocusRect() override
         {
-            const WidgetIndex w = (_accessIndex == 0) ? WIDX_VOLUME_SLIDER : WIDX_SUPPORT_BUTTON;
+            WidgetIndex w = WIDX_VOLUME_SLIDER;
+            if (_accessIndex == 1)
+                w = WIDX_STEP_MODE;
+            else if (_accessIndex == 2)
+                w = WIDX_TILE_MODE;
+            else if (_accessIndex == 3)
+                w = WIDX_SUPPORT_BUTTON;
             const auto& widget = widgets[w];
             const auto tl = windowPos + ScreenCoordsXY{ widget.left, widget.top };
             const auto br = windowPos + ScreenCoordsXY{ widget.right, widget.bottom };
@@ -218,7 +304,33 @@ namespace OpenRCT2::Ui::Windows
                 return "Accessibility sounds volume, " + std::to_string(Config::Get().sound.accessibilityCueVolume)
                     + " percent";
             }
+            if (_accessIndex == 1)
+            {
+                return std::string("Step sounds, ") + stepModeName(Config::Get().sound.accessibilityStepSoundMode);
+            }
+            if (_accessIndex == 2)
+            {
+                return std::string("Tile reading, ") + tileModeName(Config::Get().sound.accessibilityTileSpeechMode);
+            }
             return "Support Ross's work, button";
+        }
+
+        void cycleStepMode(int32_t delta)
+        {
+            int32_t m = Config::Get().sound.accessibilityStepSoundMode;
+            m = (m + delta + kStepSoundModeCount) % kStepSoundModeCount;
+            Config::Get().sound.accessibilityStepSoundMode = static_cast<uint8_t>(m);
+            Config::Save();
+            invalidate();
+        }
+
+        void cycleTileMode(int32_t delta)
+        {
+            int32_t m = Config::Get().sound.accessibilityTileSpeechMode;
+            m = (m + delta + kTileSpeechModeCount) % kTileSpeechModeCount;
+            Config::Get().sound.accessibilityTileSpeechMode = static_cast<uint8_t>(m);
+            Config::Save();
+            invalidate();
         }
 
         void announceFocus()

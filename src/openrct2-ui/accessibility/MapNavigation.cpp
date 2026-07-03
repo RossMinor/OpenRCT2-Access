@@ -9,6 +9,7 @@
 
 #include "MapNavigation.h"
 
+#include "AccessSounds.h"
 #include "MenuNavigation.h"
 #include "RidePlacement.h"
 #include "SceneryPlacement.h"
@@ -33,6 +34,7 @@
 #include <openrct2/actions/footpath/FootpathRemoveAction.h>
 #include <openrct2/actions/terraform/ClearAction.h>
 #include <openrct2/actions/park/LandBuyRightsAction.h>
+#include <openrct2/actions/peep/PeepPickupAction.h>
 #include <openrct2/actions/terraform/LandLowerAction.h>
 #include <openrct2/actions/terraform/LandRaiseAction.h>
 #include <openrct2/actions/terraform/WaterLowerAction.h>
@@ -58,7 +60,9 @@
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/localisation/Localisation.Date.h>
 #include <openrct2/management/Finance.h>
+#include <openrct2/network/Network.h>
 #include <openrct2/object/FootpathEntry.h>
+#include <openrct2/object/FootpathObject.h>
 #include <openrct2/object/FootpathSurfaceObject.h>
 #include <openrct2/object/Object.h>
 #include <openrct2/object/ObjectLimits.h>
@@ -88,6 +92,7 @@
 #include <openrct2/world/tile_element/TrackElement.h>
 #include <openrct2/world/tile_element/WallElement.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace OpenRCT2::Ui::Accessibility
@@ -197,11 +202,25 @@ namespace OpenRCT2::Ui::Accessibility
     // silent. The sine sample is synthesised once and cached; pitch is set per play via the
     // mixer's playback rate.
     static int32_t _lastElevation = -1; // surface->baseHeight/2 of the previous tile; -1 = none yet
+    static int32_t _lastStepCat = -1;   // step-cue category of the previous tile (for "on transition" mode)
 
     // Read-only Z-axis probe. _scanHeight is a tile-element baseHeight; plain Page Up/Down step it
     // to the next element above/below on the cursor's tile to report what is stacked there. Reset
     // to the surface whenever the cursor moves to a new tile.
     static int32_t _scanHeight = 0;
+
+    // Whether a (non-queue) footpath is a soft dirt/soil path rather than a hard surface (tarmac,
+    // stone, etc.), so the right footstep cue plays. There is no engine flag for this, so we key off
+    // the surface object's identifier, which is "…footpath_surface.dirt" for the dirt paths.
+    static bool PathIsDirtSurface(const PathElement& pathEl)
+    {
+        std::string_view id;
+        if (const auto* surface = pathEl.GetSurfaceEntry(); surface != nullptr)
+            id = surface->GetIdentifier();
+        else if (const auto* legacy = pathEl.GetLegacyPathEntry(); legacy != nullptr)
+            id = legacy->GetIdentifier();
+        return id.find("dirt") != std::string_view::npos;
+    }
 
     // Pitch range mapped across elevation. Capped at 1 kHz so the highest terrain never gets
     // piercing; kElevToneRange is how many elevation steps span the full min..max sweep.
@@ -807,6 +826,59 @@ namespace OpenRCT2::Ui::Accessibility
             _scanHeight = surface->baseHeight; // the Z-axis probe starts from ground on each move
         }
 
+        // Footstep-style cue for what the cursor just stepped onto: a dirt path, a hard path (tarmac/
+        // stone), a queue, or open water. A path takes precedence over water beneath a bridge. Each
+        // category randomly picks one of its clip variations. Plays at the accessibility cue volume,
+        // and how often is governed by the step-sound mode setting (every step / on change / off).
+        {
+            // Category of the current tile for the step cue: 0 none, 1 dirt, 2 hard, 3 queue, 4 water.
+            int32_t stepCat = 0;
+            StepSound stepSnd = StepSound::dirt;
+            bool hasStepSnd = false;
+            for (auto* pathEl : TileElementsView<PathElement>(_cursor.ToCoordsXY()))
+            {
+                if (pathEl->isGhost())
+                    continue;
+                if (pathEl->IsQueue())
+                {
+                    stepCat = 3;
+                    stepSnd = StepSound::queue;
+                }
+                else if (PathIsDirtSurface(*pathEl))
+                {
+                    stepCat = 1;
+                    stepSnd = StepSound::dirt;
+                }
+                else
+                {
+                    stepCat = 2;
+                    stepSnd = StepSound::hard;
+                }
+                hasStepSnd = true;
+                break;
+            }
+            if (stepCat == 0)
+            {
+                if (auto* surf = MapGetSurfaceElementAt(_cursor); surf != nullptr && surf->GetWaterHeight() > 0)
+                {
+                    stepCat = 4;
+                    stepSnd = StepSound::water;
+                    hasStepSnd = true;
+                }
+            }
+
+            const auto mode = static_cast<StepSoundMode>(Config::Get().sound.accessibilityStepSoundMode);
+            // "On transition" mirrors the spoken tile announcements: only sound when the category
+            // changes (e.g. first step onto a path), staying silent while continuing across the same
+            // kind of tile. "Every step" always sounds; "off" never does.
+            if (mode != StepSoundMode::off && hasStepSnd
+                && (mode == StepSoundMode::everyStep || stepCat != _lastStepCat))
+            {
+                PlayStepSound(stepSnd);
+            }
+            _lastStepCat = stepCat;
+        }
+
         // Announce crossing the park boundary in either direction. The tile description (below)
         // already labels unowned land "Outside park", but this gives an explicit, symmetric cue
         // for both leaving and re-entering, regardless of what is on the tile.
@@ -826,16 +898,30 @@ namespace OpenRCT2::Ui::Accessibility
         // bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
         std::string description = GetTileDescription(_cursor);
         std::string track = IsRideConstructionWindowOpen() ? GetTrackReadout(_cursor) : std::string();
+        const auto tileMode = static_cast<TileSpeechMode>(Config::Get().sound.accessibilityTileSpeechMode);
         if (!track.empty())
         {
+            // The build-mode track readout traces the layout piece by piece and is essential while
+            // building, so it is always spoken regardless of the tile-speech mode.
             ScreenReaderSpeak(track, !announcedCrossing);
             _lastTileDescription = std::move(description); // keep baseline coherent for leaving the track
         }
-        else if (description != _lastTileDescription)
+        else if (tileMode != TileSpeechMode::off)
         {
-            const bool bareGround = (description == "Empty" || description == "Outside park");
-            if (!(announcedCrossing && bareGround))
-                ScreenReaderSpeak(description, !announcedCrossing);
+            // "Every tile" reads on every move; "on change" (the original behaviour) reads only when
+            // the description differs from the previous tile.
+            if (tileMode == TileSpeechMode::everyTile || description != _lastTileDescription)
+            {
+                const bool bareGround = (description == "Empty" || description == "Outside park");
+                if (!(announcedCrossing && bareGround))
+                    ScreenReaderSpeak(description, !announcedCrossing);
+            }
+            _lastTileDescription = std::move(description);
+        }
+        else
+        {
+            // Off: stay silent, but keep the baseline current so switching back to "on change" does
+            // not immediately re-announce a stale tile.
             _lastTileDescription = std::move(description);
         }
 
@@ -1337,6 +1423,7 @@ namespace OpenRCT2::Ui::Accessibility
         const auto result = GameActions::Execute(&action, getGameState());
         if (result.error == GameActions::Status::ok)
         {
+            PlayAccessSound(AccessSound::place);
             _lastTileDescription.clear();
             ScreenReaderSpeak(what);
         }
@@ -1744,16 +1831,16 @@ namespace OpenRCT2::Ui::Accessibility
         return reachable;
     }
 
-    // Drops the guest onto (or as close as possible to) the park entrance nearest to their current
-    // position. Returns true if the teleport succeeded. Restores the guest's happiness so the rescue
-    // does not carry the usual pick-up-and-drop penalty.
-    static bool TeleportGuestToNearestEntrance(Guest& guest)
+    // Finds a walkable tile at the park entrance nearest to the guest to teleport them to, returned as
+    // world coordinates for a PeepPickupAction. Tries the entrance tile then its neighbours (where the
+    // connecting path usually is). Returns nullopt if none is placeable. This only queries placement
+    // validity (Place with apply=false) - it never mutates game state - so it is safe to call locally.
+    static std::optional<CoordsXYZ> FindRescueTargetLoc(Guest& guest)
     {
         const auto& entrances = getGameState().park.entrances;
         if (entrances.empty())
-            return false;
+            return std::nullopt;
 
-        // Pick the nearest entrance by Manhattan distance.
         const CoordsXYZD* nearest = nullptr;
         int32_t bestDist = std::numeric_limits<int32_t>::max();
         for (const auto& entrance : entrances)
@@ -1766,12 +1853,9 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
         if (nearest == nullptr)
-            return false;
+            return std::nullopt;
 
         const TileCoordsXYZ entranceTile{ *nearest };
-
-        // Try the entrance tile itself first, then its immediate neighbours (where the connecting path
-        // usually is), so we land the guest somewhere walkable.
         std::vector<TileCoordsXYZ> candidates;
         candidates.push_back(entranceTile);
         for (Direction dir : kAllDirections)
@@ -1779,17 +1863,72 @@ namespace OpenRCT2::Ui::Accessibility
                 TileCoordsXYZ{ entranceTile.x + TileDirectionDelta[dir].x, entranceTile.y + TileDirectionDelta[dir].y,
                                entranceTile.z });
 
-        const int32_t happinessBefore = guest.happinessTarget;
         for (const auto& candidate : candidates)
+            if (guest.Place(candidate, false).error == GameActions::Status::ok)
+                return candidate.ToCoordsXYZ();
+        return std::nullopt;
+    }
+
+    // The rescue teleports guests through the game's own pick-up-and-place action (GameCommand::PickupGuest)
+    // rather than moving them directly, so the change replicates to every client and stays deterministic
+    // in multiplayer. That action is two steps (pick up, then place) and, in multiplayer, executes
+    // asynchronously across ticks, so we drive one guest at a time through action callbacks: the plan is
+    // computed up front while the world is untouched, then each pickup's callback fires its place, whose
+    // callback advances to the next guest. Works identically in single player (callbacks fire inline).
+    static std::vector<std::pair<EntityId, CoordsXYZ>> _rescuePlan;
+    static size_t _rescueCursor = 0;
+    static int32_t _rescuePlaced = 0;
+    static bool _rescueActive = false;
+
+    static void ProcessNextRescue()
+    {
+        // Abort the chain if we left normal play (park unloaded, etc.).
+        if (gLegacyScene != LegacyScene::playing)
         {
-            if (guest.Place(candidate, false).error != GameActions::Status::ok)
-                continue;
-            [[maybe_unused]] auto placed = guest.Place(candidate, true);
-            guest.happinessTarget = happinessBefore;
-            guest.happiness = happinessBefore;
-            return true;
+            _rescuePlan.clear();
+            _rescueActive = false;
+            return;
         }
-        return false;
+
+        if (_rescueCursor >= _rescuePlan.size())
+        {
+            // Chain complete: report how many were actually moved.
+            if (_rescuePlaced > 0)
+                ScreenReaderSpeak(
+                    std::to_string(_rescuePlaced) + (_rescuePlaced == 1 ? " stranded guest was" : " stranded guests were")
+                    + " teleported to the park entrance");
+            else
+                ScreenReaderSpeak("No stranded guests could be moved");
+            _rescuePlan.clear();
+            _rescueActive = false;
+            return;
+        }
+
+        const EntityId guestId = _rescuePlan[_rescueCursor].first;
+        const CoordsXYZ loc = _rescuePlan[_rescueCursor].second;
+        const auto owner = Network::GetCurrentPlayerId();
+
+        CoordsXYZ nullLoc{};
+        nullLoc.SetNull();
+        auto pickup = GameActions::PeepPickupAction(GameActions::PeepPickupType::pickup, guestId, nullLoc, owner);
+        pickup.SetCallback([guestId, loc, owner](const GameActions::GameAction*, const GameActions::Result* pickupRes) {
+            if (pickupRes->error != GameActions::Status::ok)
+            {
+                // Couldn't pick this guest up (e.g. they boarded a ride meanwhile); skip to the next.
+                _rescueCursor++;
+                ProcessNextRescue();
+                return;
+            }
+            auto place = GameActions::PeepPickupAction(GameActions::PeepPickupType::place, guestId, loc, owner);
+            place.SetCallback([](const GameActions::GameAction*, const GameActions::Result* placeRes) {
+                if (placeRes->error == GameActions::Status::ok)
+                    _rescuePlaced++;
+                _rescueCursor++;
+                ProcessNextRescue();
+            });
+            GameActions::Execute(&place, getGameState());
+        });
+        GameActions::Execute(&pickup, getGameState());
     }
 
     // Ctrl+H: rescue every guest that is stranded (has a "lost / go home / can't find" thought and no
@@ -1797,6 +1936,11 @@ namespace OpenRCT2::Ui::Accessibility
     // many were moved.
     static void RescueLostGuests()
     {
+        if (_rescueActive)
+        {
+            ScreenReaderSpeak("Still rescuing guests, please wait");
+            return;
+        }
         if (getGameState().park.entrances.empty())
         {
             ScreenReaderSpeak("There is no park entrance to send lost guests to");
@@ -1805,7 +1949,12 @@ namespace OpenRCT2::Ui::Accessibility
 
         const auto reachable = ComputeEntranceReachablePaths();
 
-        int32_t rescued = 0;
+        // Build the rescue plan up front, while the world is untouched, so guest positions and the
+        // reachability set are consistent. Each entry is a guest to move and the world position to
+        // place them at.
+        _rescuePlan.clear();
+        _rescueCursor = 0;
+        _rescuePlaced = 0;
         int32_t lost = 0;
         for (auto* guest : EntityList<Guest>())
         {
@@ -1827,24 +1976,25 @@ namespace OpenRCT2::Ui::Accessibility
             if (pathAtGuest != nullptr && reachable.count(PackTileKey(guestTile.x, guestTile.y, guestTile.z)) != 0)
                 continue; // on a path that still reaches an exit on its own
 
-            if (TeleportGuestToNearestEntrance(*guest))
-                rescued++;
+            if (auto target = FindRescueTargetLoc(*guest); target.has_value())
+                _rescuePlan.emplace_back(guest->id, *target);
         }
 
-        if (rescued > 0)
+        if (_rescuePlan.empty())
         {
-            ScreenReaderSpeak(
-                std::to_string(rescued) + (rescued == 1 ? " stranded guest was" : " stranded guests were")
-                + " teleported to the park entrance");
+            if (lost > 0)
+                ScreenReaderSpeak("No stranded guests, every lost guest can still reach an exit");
+            else
+                ScreenReaderSpeak("No lost guests to rescue");
+            return;
         }
-        else if (lost > 0)
-        {
-            ScreenReaderSpeak("No stranded guests, every lost guest can still reach an exit");
-        }
-        else
-        {
-            ScreenReaderSpeak("No lost guests to rescue");
-        }
+
+        // Announce up front (the plan size is deterministic); the chain then teleports them.
+        ScreenReaderSpeak(
+            "Rescuing " + std::to_string(_rescuePlan.size())
+            + (_rescuePlan.size() == 1 ? " stranded guest" : " stranded guests") + " to the park entrance");
+        _rescueActive = true;
+        ProcessNextRescue();
     }
 
     // Raises or lowers the whole brush area by one step, keeping tiles flat (full-tile mode).
@@ -1968,6 +2118,8 @@ namespace OpenRCT2::Ui::Accessibility
             if (result->error != GameActions::Status::ok)
                 return; // failures are spoken automatically via the error window
 
+            PlayAccessSound(AccessSound::land);
+
             std::string spoken;
             if (auto* surface = MapGetSurfaceElementAt(sample); surface != nullptr)
             {
@@ -2028,6 +2180,8 @@ namespace OpenRCT2::Ui::Accessibility
                                              const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
                 return; // failures are spoken automatically via the error window
+
+            PlayAccessSound(AccessSound::water);
 
             auto* surface = MapGetSurfaceElementAt(sample);
             if (surface == nullptr)

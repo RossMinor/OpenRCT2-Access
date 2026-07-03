@@ -75,6 +75,10 @@ namespace OpenRCT2::Ui::Windows
 
     Drawing::Colour ColourDropDownIndexToColour(uint8_t ddidx);
 
+    // The display name (a StringId) of a colour, for reading colour selectors aloud. kStringIdNone if
+    // the colour is not a known palette colour.
+    StringId GetColourNameStringId(Drawing::Colour colour);
+
     uint32_t DropdownGetAppropriateImageDropdownItemsPerRow(uint32_t numItems);
 } // namespace OpenRCT2::Ui::Windows
 

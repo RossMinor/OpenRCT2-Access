@@ -10,6 +10,7 @@
 #include "RidePlacement.h"
 
 #include "MapNavigation.h"
+#include "AccessSounds.h"
 #include "ScreenReader.h"
 
 #include <openrct2/Context.h>
@@ -315,7 +316,7 @@ namespace OpenRCT2::Ui::Accessibility
     {
         auto* windowMgr = GetWindowManager();
         windowMgr->CloseByClass(WindowClass::error);
-        PlayCue(Audio::SoundId::placeItem, trackLoc);
+        PlayAccessSound(AccessSound::place);
 
         if (_needsEntranceExit)
         {
@@ -514,7 +515,7 @@ namespace OpenRCT2::Ui::Accessibility
                 return;
             }
 
-            PlayCue(Audio::SoundId::placeItem, result->position);
+            PlayAccessSound(AccessSound::place);
 
             auto ride = GetRide(_rideId);
             // Describe the just-placed entrance/exit: which way its doorway faces and whether a path
