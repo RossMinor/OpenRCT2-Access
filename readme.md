@@ -4,7 +4,7 @@
 
 OpenRCT2-Access is a fork of OpenRCT2 that adds screen-reader support and
 full keyboard control, so blind and low-vision players can play
-RollerCoaster Tycoon 2 without a mouse or sight. It speaks the interface
+Rollercoaster Tycoon 2 without a mouse or sight. It speaks the interface
 through the **NVDA** screen reader and lets you navigate the game's menus,
 windows, and map entirely from the keyboard.
 
@@ -38,7 +38,7 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 
 ### Important
 
-At any point, you can press f1 to hear what commands you currently have at your disposal and what you can do with them in the game.
+At any point, you can press F1 to hear what commands you currently have at your disposal and what you can do with them in the game.
 
 ### Currently Not Accessible or Not Fully Tested
 
@@ -76,7 +76,7 @@ At any point, you can press f1 to hear what commands you currently have at your 
 ### Building
 
 - Space: Builds a footpath of the selected type on the current tile.
-- f4: Opens the path menu.
+- F4: Opens the path menu.
 - D: Deletes the path on the current tile.
 - l: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path.
 - ,.: Raise and lower the height of the path you are placing. This is used for building bridges over water or gaps.
