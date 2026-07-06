@@ -17,6 +17,7 @@
 #include <fstream>
 #include <future>
 #include <openrct2/Context.h>
+#include <openrct2/Version.h>
 #include <openrct2/core/Http.h>
 #include <openrct2/core/Json.hpp>
 #include <openrct2/core/String.hpp>
@@ -26,12 +27,12 @@
 
 namespace OpenRCT2::Ui::Accessibility
 {
-    // The version this build represents. Bump it to the version being shipped before each release;
-    // the launch check compares it to the fork's latest GitHub release tag and offers an update
-    // when they differ.
-    static constexpr const char* kAccessModVersion = "v0.91";
+    // The version this build represents, taken from the single source of truth in Version.h
+    // (kAccessVersion). Bump kAccessVersion before each release; the launch check compares this
+    // to the fork's latest GitHub release tag and offers an update when they differ.
+    static constexpr const char* kAccessModVersion = kAccessVersionTag;
     static constexpr const char* kReleasesApiUrl =
-        "https://api.github.com/repos/RossMinor/OpenRCT2-Access/releases/latest";
+        "https://api.github.com/repos/" kAccessUpdateRepo "/releases/latest";
 
     static std::future<void> _checkFuture;
     static std::atomic<bool> _started{ false };
