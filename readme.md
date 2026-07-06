@@ -8,304 +8,105 @@ RollerCoaster Tycoon 2 without a mouse or sight. It speaks the interface
 through the **NVDA** screen reader and lets you navigate the game's menus,
 windows, and map entirely from the keyboard.
 
-> This repository only covers the **accessibility additions**. For
-> everything about the underlying game — what OpenRCT2 is, how to build it
-> from source, contributing to the base game, etc. — see the upstream
-> project: **https://github.com/OpenRCT2/OpenRCT2** and its
-> [website](https://openrct2.io) and [wiki](https://github.com/OpenRCT2/OpenRCT2/wiki).
+## Important Note About This Page
+
+This repository is a fork of Open RCT2. Below are instructions on how to use the mod, but I would still research the game on your own and how to play. I will explain how certain aspects of the game works to illustrate how they interact with the mod itself, but it would be too much for me to write detailed walkthroughs on how the game itself works.
+
+A great place to start is the **[Getting Started page](https://docs.openrct2.io/en/latest/playing/getting_started/index.html)** on the Open RCT 2 [website](https://openrct2.io). While the documentation will be oriented toward sighted players that use a mouse, it does explain in detail how the game works, where you can then apply that knowledge to the mod documentation here.
 
 ---
 
 ## Requirements
 
-- **Windows** with the **[NVDA screen reader](https://www.nvaccess.org/download/)** running.
-- The original **RollerCoaster Tycoon 2** game files (from
-  [Steam](https://store.steampowered.com/app/285330/) or
-  [GOG](https://www.gog.com/game/rollercoaster_tycoon_2)). As with regular
-  OpenRCT2, you must own RCT2 — its assets are **not** included here.
+- Windows and the [NVDA screen reader](https://www.nvaccess.org/download/).
+- The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/) or [GOG](https://www.gog.com/game/rollercoaster_tycoon_2).
 
 ---
 
 ## Installing and updating
 
 1. Make sure NVDA is installed and running.
-2. Download the latest [release](https://github.com/RossMinor/OpenRCT2-Access/releases)
-   and unzip it somewhere.
-3. Launch it and point it at your RollerCoaster Tycoon 2 files when asked
-   (same as standard OpenRCT2).
-
-**Automatic updates:** at launch the mod checks for a newer release. If one
-is found, it announces it and you can press **F5** to download and install
-the update in place. Your settings and saved games are preserved.
+2. Download the latest release of the mod under the **Releases** heading.
+3. Launch the game from Steam to generate any needed files, then close the game. It will likely ask you if you would like to install Direct Play, which you want to do.
+4. Unzip the mod folder anywhere on your computer.
+5. Run OpenRCT2Access.exe in the folder and the game will be accessible. **Note:** You will need to launch the game with this method for the time being.
+6. The mod has an updater, so you will be alerted when there's a new update.
 
 ---
 
-## How it works: modes and getting help
+## Using the Mod
 
-The mod has two input modes, toggled with **Ctrl + Space**:
+### Important
 
-- **Keyboard mode (default)** — the arrow keys drive a *tile cursor* around
-  the park, the camera follows it, and each tile is spoken as you land on
-  it. This is the main way blind players explore and build.
-- **Mouse mode** — the arrow-key cursor is turned off and the mouse controls
-  the game normally. Moving the mouse still reads whatever tile it hovers
-  over, which is useful for sighted helpers.
+At any point, you can press f1 to hear what commands you currently have at your disposal and what you can do with them in the game.
 
-At any time, press **F1** to hear **context-sensitive help** — a short spoken
-summary of the controls available for whatever you are currently doing (map
-cursor, a menu, ride construction, placing scenery, and so on). If you forget
-a key, F1 is the fastest reminder.
+### Currently Not Accessible or Not Fully Tested
 
-Every menu and list also speaks an **"item X of Y"** position so you always
-know where you are in a list.
+- Building custom rollercoasters
+- Online Multiplayer
+- Importing extensions.
 
----
+### Navigation
 
-## Command reference
+- Arrow Keys: Moves around the map tile by tile. They can also be held to scroll across the map.
+- C: Read your current coordinates.
+- F: Read the direction you are currently facing.
+- Shift + Left or Right: Snaps the camera 90 degrees in either direction.
+- E: Jumps focus to the entrance of the park.
+- Shift + 1 ... 9, 0: Place a waypoint at the current location.
+- Control + 1 ... 9, 0: Jump to the waypoint of that number.
 
-Keys are grouped by task below. Unless noted, these work on the **map cursor**
-during normal play. Modifier keys (Shift, Ctrl) are written with `+`.
+### Information
 
-### Moving the map cursor
+- Tab: Opens the Tools Menu.
+- F1: Mod/game help. Reports actions or commands that can be used anywhere in the game.
+- Control + F1: Opens the mod settings.
+- T: Open the park stats window.
+- M: Report your cash amount.
+- []: Moves back or forward through game announcements.
+- Enter: While hovering over a ride or stall, it will open that ride/stall's information page.
+- Shift + F: Open the Finances window.
+- Shift + R: Opens the Rides window.
+- Shift + P: Open the Park Information Window.
+- Shift + G: Open the Guest List window.
+- Shift + S: Opens the Staff window.
+- Shift + D: Opens the Research and Design window.
+- Shift + M: Opens the Recent Messages window.
 
-| Key | What it does | When to use |
-| --- | --- | --- |
-| Arrow keys | Move the tile cursor one tile; the view follows and the new tile is spoken | Exploring and positioning for any build/tool action |
-| Shift + Left / Shift + Right | Rotate the camera 90° and announce the new facing | To view the park from another angle (arrow directions rotate with it) |
-| E | Jump the cursor to the park entrance | Quickly return to a known reference point |
-| K | Cycle through your area markers | Revisit spots you flagged (see *Markers* below) |
-| Shift + K | Snap the cursor to the next area marker | Jump straight to a flagged spot |
-| Ctrl + Space | Toggle keyboard-cursor mode / free-mouse mode | Switch control schemes |
+### Building
 
-### Reading information
+- Space: Builds a footpath of the selected type on the current tile.
+- f4: Opens the path menu.
+- D: Deletes the path on the current tile.
+- l: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path.
+- ,.: Raise and lower the height of the path you are placing. This is used for building bridges over water or gaps.
+- Page up or down: Raises and lower the land tile you are currently on. **Note:** There is a sound that plays with terrain to indicate elevation. The higher pitch, the higher the elevation. The lower the pitch, the lower the elevation.
+- Control page up or down: Raise or lower the water tile you are currently on.
+- X: Clear the scenery on the tile you are currently on. Examples are trees, bushes, fences, and other objects.
+- B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.
+- O: Buy land ownership over the tile you're on.
+- shift + O: Buy construction rights over the tile you're on.
+- k: place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights.
+- Shift + K: Snaps your focus between the two markers.
+- Control + Enter: If hovering over a ride or stall, it will open its construction/build menu.
+- Shift + B: Report the break status of the custom ride tile you are hovering over.
 
-| Key | What it does | When to use |
-| --- | --- | --- |
-| C | Read the cursor's tile description, coordinates, and elevation | Find out exactly what is on the current tile |
-| T | Open the status readout: date, park rating, guests, cash, recent messages (arrow to cycle, Enter opens messages, Escape/T closes) | A quick overview of how the park is doing |
-| M | Read your current cash | Check funds before spending |
-| F | Report the direction the camera is facing | Orient yourself after rotating |
-| F1 | Speak context-sensitive help for the current situation | When you're unsure what keys do right now |
-| `[` / `]` | Step back / forward through recent spoken announcements | Re-hear something you missed |
+#### While in Build Mode
 
-### Building paths and terraforming
+Build mode is activated when you construct pre-built or custom rides. It will cause the mod to behave differently than it normally does while you're in this mode.
 
-| Key | What it does | When to use |
-| --- | --- | --- |
-| Space | Build a footpath on the current tile (auto-slopes to follow terrain) | Lay walkways tile by tile |
-| D | Remove the path on the current tile | Undo or reroute a path |
-| L | Cycle the path **slope** mode (flat / ramp) | Control how paths climb terrain |
-| `,` / `.` (comma / period) | Lower / raise the footpath **build height** | Build bridges over water or gaps |
-| Page Up / Page Down | Raise / lower **land** over the brush area (one step) | Shape terrain |
-| Ctrl + Page Up / Ctrl + Page Down | Raise / lower **water** over the brush area | Add or drain water |
-| X | Clear scenery (trees, bushes, etc.) over the brush area | Clear ground before building |
-| B | Cycle the terraform/clear **brush size** (1×1, 3×3, 5×5, 7×7) | Work faster over larger areas |
-| O | Buy **land** ownership over the brush area | Expand your buildable park |
-| Shift + O | Buy **construction rights** over the brush area | Build above land you don't own outright |
+- Arrow Keys: Moves the ride you are wanting to construct around the map.
+- R: Rotate the ride you are constructing 90 degrees right.
+- Enter: Attempts to place the ride. If there is scenery in the location area where the ride will be placed, it will automatically remove the scenery. If there is scenery in the area, but it is still an invalid construction area, the scenery will stay and the game will report the error that is preventing you from constructing and tell you how and where it needs to be fixed.
+- Escape: Cancels construction or exits build mode.
+- Shift + W, A, S, or D: Focusses the scenery you are building on the tile's edge of that direction. For example, if you are placing a bench, you can press shift + W to put it on the north side of the tile you are currently on and then press space to place it.
+- Shift + Q, E, Z, or C: Focusses the scenery you are building on the tile's corner you are currently on. For example, if you were placing flowers, you can press shift + Q to point a flower at the top left corner of the tile you are on and then can press space to place the flower.
+- Control + Up or Down: Cycles through the custom ride builder menu.
+- Control + Left or Right: Cycle between the options for that menu item.
+- Control + Enter: Builds the ride piece with the attributes selected.
+- Control + B: Reports the build status of the custom ride.
 
-> **Choosing a path type or queue:** open the Footpath window from the
-> toolbar (Tab). There, Up/Down pick the option (path type, queue type,
-> railings, build mode) and Left/Right change it. Close it with Escape, then
-> build with the map cursor and Space.
+### Other Useful Commands
 
-### Placing rides, stalls, and scenery
-
-Rides, stalls, and scenery are chosen from their build windows (opened from
-the toolbar). Once you start placing, the map cursor positions the object:
-
-| Key | What it does |
-| --- | --- |
-| Arrow keys | Move the object's position |
-| Enter | Place the object at the cursor |
-| R | Rotate the object |
-| Escape | Cancel / finish placing |
-| Shift + W / A / S / D | (Scenery) pick the tile **edge** — top / left / bottom / right — for walls and banners |
-| Shift + Q / E / Z / C | (Scenery) pick the tile **corner** — top-left / top-right / bottom-left / bottom-right — for small scenery |
-
-### Opening a ride, stall, or gate
-
-| Key | What it does | When to use |
-| --- | --- | --- |
-| Enter | Open the information window for the ride, stall, or gate under the cursor | Inspect or manage an existing ride |
-| Ctrl + Enter | Open that ride/stall in **construction mode** | Continue building or modifying it |
-
-### Ride construction (while the build window is open)
-
-Plain arrow keys still move the map cursor, so hold **Ctrl** to drive the
-build menu:
-
-| Key | What it does |
-| --- | --- |
-| Ctrl + Up / Ctrl + Down | Choose a build option |
-| Ctrl + Left / Ctrl + Right | Change the selected option's value |
-| Ctrl + Enter | Build the current piece at the cursor |
-| Ctrl + B | Read the current build state |
-| Escape | Exit construction (with confirmation) |
-
-### Land / Water / Land-rights / Clear-scenery tool windows
-
-Same scheme as construction — the cursor still positions the tool, Ctrl
-drives the window:
-
-| Key | What it does |
-| --- | --- |
-| Ctrl + Up / Ctrl + Down | Choose a tool option |
-| Ctrl + Left / Ctrl + Right | Change it |
-| Ctrl + B | Read the current option |
-| Escape | Close the window |
-
-### Waypoints (10 slots)
-
-| Key | What it does | When to use |
-| --- | --- | --- |
-| Shift + 1…9, 0 | Set / move a waypoint at the cursor in that slot (0 is the tenth) | Bookmark an important location |
-| Ctrl + 1…9, 0 | Jump the cursor to that waypoint | Return there instantly |
-
-### Markers
-
-| Key | What it does |
-| --- | --- |
-| K | Cycle through area markers |
-| Shift + K | Snap the cursor to the next marker |
-| Shift + B | Report track breaks (for coaster building) |
-
-### Opening game windows quickly
-
-Hold **Shift** with a letter to jump straight to a window from the map:
-
-| Key | Opens |
-| --- | --- |
-| Shift + F | Finances |
-| Shift + R | Rides list |
-| Shift + P | Park information |
-| Shift + G | Guest list |
-| Shift + S | Staff |
-| Shift + D | Research |
-| Shift + M | Recent messages |
-| Shift + F1 | Land tool |
-| Tab | The top toolbar menu (Up/Down to move, Enter to open, Escape to leave) |
-
-### Menus and windows (general navigation)
-
-| Key | What it does |
-| --- | --- |
-| Arrow keys | Move between items; Left/Right also change values or switch tabs |
-| A letter | Jump to the next item starting with that letter (in menus/lists) |
-| Enter | Activate the focused item |
-| Escape | Go up one level / close the current menu or window |
-
-Combo boxes and colour pickers behave like **sliders**: Left/Right change the
-value in place and speak the new value (colours are read by name), so you
-never have to open a separate dropdown grid.
-
-### Rescuing lost guests
-
-| Key | What it does | When to use |
-| --- | --- | --- |
-| Ctrl + H | Find guests stranded on footpaths cut off from any park exit (or not on a path at all) and teleport them to the park entrance, announcing how many were rescued | When guests are complaining they're lost or can't find the exit |
-
-This is multiplayer-safe. Available in any mode.
-
-### Accessibility settings
-
-| Key | What it does |
-| --- | --- |
-| Ctrl + F1 | Open the mod's own settings window |
-
-The settings window (navigate with Up/Down, change with Left/Right, activate
-with Enter) offers:
-
-- **Accessibility sounds volume** — adjust the volume of the mod's own sound
-  cues in 5% steps.
-- **Step sounds** — footstep cues on every step / only on a change of tile
-  type / off.
-- **Tile reading** — speak the tile under the cursor on every tile / only
-  when it changes / off.
-- **Support Ross** — opens the Patreon page (press Enter once to hear the
-  message, again to open the link in your browser).
-
----
-
-## Sound cues
-
-Beyond speech, the mod plays short sound cues (all scaled by the
-Accessibility sounds volume, and 3D-positioned where relevant):
-
-- **Elevation tone** — a beep whose pitch rises with terrain height, played
-  when the cursor moves to a tile at a different elevation.
-- **Footsteps** — distinct sounds for **dirt** paths, **hard** paths
-  (tarmac/stone), **queues**, and **water** tiles, each with random
-  variations. Frequency is controlled by the *Step sounds* setting.
-- **Terraform** — separate cues for raising/lowering land and water.
-- **Place object** — when a ride, path, or scenery is placed.
-- **Guest drowning** — an alert when a guest starts to drown.
-- **Park boundary** — spoken when the cursor crosses into or out of the park.
-
----
-
-## What's accessible so far
-
-- **Speech via NVDA** for menus, windows, lists, and in-game text (news
-  messages and error dialogs), with a reviewable history.
-- **Keyboard navigation** everywhere, presented as simple linear lists.
-- **The map cursor** with spoken tile descriptions (rides, paths and their
-  surface type, scenery, water, park and ride entrances/exits, borders).
-- **Building:** footpaths and queues, terraforming land and water, buying
-  land and construction rights, clearing scenery, placing rides/stalls and
-  scenery, and ride/maze **construction**.
-- **Windows:** Scenario select; Ride, Staff, and Guest lists; individual
-  Ride, Staff, and Guest windows; Park information; Finances; Research;
-  Recent messages/News; Marketing campaigns; the Construct-a-new-ride and
-  ride Track-design lists; Options; Cheats; Shortcut keys; Sign and Banner
-  editors; and the confirmation prompts (demolish, refurbish, fire staff,
-  save).
-- **File handling:** an accessible Load / Save browser (spoken names and
-  dates, typed-filename echo, save confirmation), the quit/save prompt, and
-  text-entry dialogs.
-- **Multiplayer** server-list browsing and joining.
-
----
-
-## Known limitations and not-yet-accessible areas
-
-- **Windows + NVDA only.** No macOS/Linux support, and other screen readers
-  (JAWS, Narrator, VoiceOver) are not supported.
-- **Ride graphs** (the Graphs tab) are visual charts and are not adapted for
-  screen readers.
-- **The scenario / map editor and track designer** (building custom
-  scenarios, the object-selection window, map generator) are not adapted.
-- **The Tile Inspector** and other advanced/debug tools are not adapted.
-- **The minimap / map window** is a visual overview and is not spoken.
-- **Colour selection** groups similar colours together but reads them by
-  name only — the exact RGB/hex value is not announced.
-- **Multiplayer chat and the player list** are not adapted, though joining
-  and playing on a server work.
-- The mod is designed to interoperate with **standard OpenRCT2 0.5.2**
-  clients in multiplayer, but a non-modded host is required to have the same
-  base version.
-
-## Not fully tested yet
-
-These work in normal use but haven't been exhaustively verified — feedback is
-welcome:
-
-- **Multiplayer** beyond joining and the lost-guest rescue: extended
-  co-op sessions and edge cases.
-- The **dirt vs. hard path** footstep classification on non-RCT2 path
-  objects (RCT1 imports, custom/downloaded path sets).
-- **Complex tracked-coaster construction** via the keyboard build menu for
-  very large or unusual layouts.
-- Behaviour in **scenarios with unusual object sets** or heavy customisation.
-
-If something is unclear, missing, or misbehaving, please open an issue on the
-[repository](https://github.com/RossMinor/OpenRCT2-Access/issues).
-
----
-
-## Licence
-
-OpenRCT2-Access is a fork of OpenRCT2 and, like it, is licensed under the
-**GNU General Public License version 3** (or, at your option, any later
-version). See [`licence.txt`](licence.txt). All credit for the underlying
-game engine goes to the [OpenRCT2 developers](https://github.com/OpenRCT2/OpenRCT2/blob/develop/contributors.md);
-this project only adds the accessibility layer on top.
+- Control + H: Teleports all stranded guests on the map back to the entrance and onto a path.
+- Control + Space: Toggle between keyboard and mouse mode. When in keyboard mode, the mouse is modified to not interfere with the keyboard focus. With mouse mode on, it allows the mouse to behave as it would in Open RCT2 normally.
