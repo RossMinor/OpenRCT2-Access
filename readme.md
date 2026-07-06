@@ -19,7 +19,7 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 ## Requirements
 
 - Windows and the [NVDA screen reader](https://www.nvaccess.org/download/).
-- The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/) or [GOG](https://www.gog.com/game/rollercoaster_tycoon_2).
+- The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/).
 
 ---
 
@@ -45,6 +45,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Building custom rollercoasters
 - Online Multiplayer
 - Importing extensions.
+- MacOS compatibility
+- GOG compatibility.
 
 ### Navigation
 
