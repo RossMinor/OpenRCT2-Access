@@ -1168,7 +1168,10 @@ namespace OpenRCT2
             {
                 _versionCheckFuture = std::async(std::launch::async, [this] {
                     _newVersionInfo = GetLatestVersion();
-                    if (!String::startsWith(gVersionInfoTag, _newVersionInfo.tag))
+                    // Only flag an update when the fork's latest release tag differs from the
+                    // version this build was cut as. An empty tag means the check failed (no
+                    // network), so don't nag in that case.
+                    if (!_newVersionInfo.tag.empty() && _newVersionInfo.tag != kAccessVersionTag)
                     {
                         _hasNewVersionInfo = true;
                     }

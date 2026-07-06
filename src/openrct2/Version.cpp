@@ -75,7 +75,7 @@ NewVersionInfo GetLatestVersion()
 {
     // If the check doesn't succeed, provide current version so we don't bother user
     // with invalid data.
-    std::string tag = gVersionInfoTag;
+    std::string tag = kAccessVersionTag;
     NewVersionInfo verinfo{ tag, "", "" };
 #if !defined(DISABLE_HTTP) && !defined(DISABLE_VERSION_CHECKER)
     auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -85,7 +85,7 @@ NewVersionInfo GetLatestVersion()
     if (then < now - std::chrono::seconds(24h).count())
     {
         Http::Request request;
-        request.url = "https://api.github.com/repos/OpenRCT2/OpenRCT2/releases/latest";
+        request.url = "https://api.github.com/repos/" kAccessUpdateRepo "/releases/latest";
         request.method = Http::Method::GET;
 
         Http::Response res;

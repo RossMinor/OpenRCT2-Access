@@ -14,6 +14,18 @@
 #define OPENRCT2_NAME "OpenRCT2"
 #define kOpenRCT2Version "0.5.2"
 
+// Version of the OpenRCT2-Access fork. This MUST be bumped to match the git tag /
+// GitHub release tag on every release (e.g. release "v0.93" -> kAccessVersion "0.93").
+// The in-game update checker compares this against the latest release on the fork's
+// GitHub repo; if they differ it reports that an update is available. Forgetting to
+// bump it means a shipped build thinks the release it came from is a newer version and
+// nags on every launch.
+#define kAccessVersion "0.93"
+#define kAccessVersionTag "v" kAccessVersion
+
+// The GitHub repo the update checker queries for the latest release.
+#define kAccessUpdateRepo "RossMinor/OpenRCT2-Access"
+
 #if defined(__amd64__) || defined(_M_AMD64)
     #define OPENRCT2_ARCHITECTURE "x86-64"
 #elif defined(__i386__) || defined(_M_IX86)
