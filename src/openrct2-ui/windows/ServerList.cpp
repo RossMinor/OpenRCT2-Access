@@ -11,6 +11,7 @@
 
     #include <cassert>
     #include <chrono>
+    #include <openrct2-ui/accessibility/ListNavigation.h>
     #include <openrct2-ui/accessibility/MapNavigation.h>
     #include <openrct2-ui/accessibility/ScreenReader.h>
     #include <openrct2-ui/interface/Dropdown.h>
@@ -521,10 +522,13 @@ namespace OpenRCT2::Ui::Windows
                 {
                     const bool forward = (action == AccessibilityAction::moveDown
                                           || action == AccessibilityAction::moveRight);
-                    if (_accessIndex < 0 || _accessIndex >= total)
-                        _accessIndex = forward ? 0 : total - 1;
-                    else
-                        _accessIndex = forward ? (_accessIndex + 1) % total : (_accessIndex - 1 + total) % total;
+                    // The list has no hidden rows (servers followed by action buttons), so every
+                    // entry is visible.
+                    const int32_t idx = Accessibility::ListNav::stepVisible(
+                        _accessIndex, forward ? 1 : -1, total, [](int32_t) { return true; });
+                    if (idx < 0)
+                        return true; // nothing to navigate
+                    _accessIndex = idx;
                     selectedListItem = (_accessIndex < count) ? _accessIndex : -1;
                     Accessibility::ScreenReaderSpeakItem(getAccessEntryText(_accessIndex), _accessIndex, total);
                     ensureServerVisible();

@@ -12,6 +12,7 @@
 #include <iterator>
 #include <memory>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/FileBrowser.h>
@@ -1352,18 +1353,16 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::moveUp:
                 case AccessibilityAction::moveDown:
                 {
-                    if (numListItems == 0)
+                    const bool forward = (action_ == AccessibilityAction::moveDown);
+                    // The file list has no hidden rows, so every item is visible.
+                    const int32_t idx = Accessibility::ListNav::stepVisible(
+                        _accessIndex, forward ? 1 : -1, numListItems, [](int32_t) { return true; });
+                    if (idx < 0)
                     {
                         Accessibility::ScreenReaderSpeak("Empty folder");
                         return true;
                     }
-                    const bool forward = (action_ == AccessibilityAction::moveDown);
-                    if (_accessIndex < 0 || _accessIndex >= numListItems)
-                        _accessIndex = forward ? 0 : numListItems - 1;
-                    else if (forward)
-                        _accessIndex = (_accessIndex + 1) % numListItems;
-                    else
-                        _accessIndex = (_accessIndex - 1 + numListItems) % numListItems;
+                    _accessIndex = idx;
                     // Mirror to the visual selection (the mouse may move it again, but keyboard
                     // navigation always reads _accessIndex so it stays consistent).
                     selectedListItem = _accessIndex;

@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <openrct2-ui/accessibility/RideVisualDescriptions.h>
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/TrackDesignDescription.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -656,19 +657,17 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::moveDown:
                 case AccessibilityAction::moveRight:
                 {
-                    if (count <= 0)
+                    const bool forward = (action == AccessibilityAction::moveDown
+                                          || action == AccessibilityAction::moveRight);
+                    // The design list has no hidden rows (designs plus "Build custom design").
+                    const int32_t idx = Accessibility::ListNav::stepVisible(
+                        selectedListItem, forward ? 1 : -1, count, [](int32_t) { return true; });
+                    if (idx < 0)
                     {
                         Accessibility::ScreenReaderSpeak("No designs available");
                         return true;
                     }
-                    const bool forward = (action == AccessibilityAction::moveDown
-                                          || action == AccessibilityAction::moveRight);
-                    if (selectedListItem < 0 || selectedListItem >= count)
-                        selectedListItem = forward ? 0 : count - 1;
-                    else if (forward)
-                        selectedListItem = (selectedListItem + 1) % count;
-                    else
-                        selectedListItem = (selectedListItem - 1 + count) % count;
+                    selectedListItem = idx;
                     invalidate();
                     announceFocusedDesign();
                     return true;

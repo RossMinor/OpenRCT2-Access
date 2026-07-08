@@ -9,6 +9,7 @@
 
 #include "../interface/Theme.h"
 
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Objective.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -742,15 +743,9 @@ namespace OpenRCT2::Ui::Windows
                 text += ", completed";
 
             // Position among the scenario entries (ignoring heading rows).
-            int32_t total = 0, pos = 0;
-            for (int32_t i = 0; i < static_cast<int32_t>(_listItems.size()); i++)
-            {
-                if (_listItems[i].type != ListItemType::Scenario)
-                    continue;
-                if (i == _accessibilityIndex)
-                    pos = total;
-                total++;
-            }
+            const auto [pos, total] = Accessibility::ListNav::visiblePosition(
+                _accessibilityIndex, static_cast<int32_t>(_listItems.size()),
+                [this](int32_t i) { return _listItems[i].type == ListItemType::Scenario; });
             Accessibility::ScreenReaderSpeakItem(text, pos, total);
         }
 
@@ -764,19 +759,11 @@ namespace OpenRCT2::Ui::Windows
             }
 
             // Step over headings to land on the next/previous scenario entry, wrapping.
-            int32_t idx = _accessibilityIndex;
-            for (int32_t steps = 0; steps < n; steps++)
-            {
-                idx += delta;
-                if (idx < 0)
-                    idx = n - 1;
-                else if (idx >= n)
-                    idx = 0;
-                if (_listItems[idx].type == ListItemType::Scenario)
-                    break;
-            }
-            if (_listItems[idx].type != ListItemType::Scenario)
-                return;
+            const int32_t idx = Accessibility::ListNav::stepVisible(
+                _accessibilityIndex, delta, n,
+                [this](int32_t i) { return _listItems[i].type == ListItemType::Scenario; });
+            if (idx < 0)
+                return; // only heading rows, nothing selectable
 
             _accessibilityIndex = idx;
             const auto& item = _listItems[idx];
