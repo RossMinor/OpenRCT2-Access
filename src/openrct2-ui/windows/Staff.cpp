@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
@@ -386,7 +387,7 @@ namespace OpenRCT2::Ui::Windows
         void sxMove(int32_t delta)
         {
             const int32_t total = static_cast<int32_t>(buildSxItems().size()) + 1;
-            _accessIndex = (_accessIndex + delta + total) % total;
+            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
             sxAnnounceFocus();
         }
 

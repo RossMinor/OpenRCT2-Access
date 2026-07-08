@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <openrct2-ui/UiStringIds.h>
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -1489,7 +1490,7 @@ namespace OpenRCT2::Ui::Windows
         void axMove(int32_t delta)
         {
             const int32_t total = static_cast<int32_t>(buildAxItems().size()) + 1; // +1 for the tab selector
-            _accessIndex = (_accessIndex + delta + total) % total;
+            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
             axAnnounceFocus();
         }
 

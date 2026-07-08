@@ -49,6 +49,13 @@ namespace OpenRCT2::Ui::Accessibility
             return -1;
         }
 
+        // Wrap-around step for a list where every item is selectable (no hidden rows) - the common
+        // case. Equivalent to stepVisible with an always-visible predicate; returns -1 if count <= 0.
+        inline int32_t wrap(int32_t from, int32_t delta, int32_t count)
+        {
+            return stepVisible(from, delta, count, [](int32_t) { return true; });
+        }
+
         // The zero-based position of `index` among the visible items, and the visible total, for a
         // spoken "position of total" read-out. If `index` is not visible, the position is 0.
         inline std::pair<int32_t, int32_t> visiblePosition(int32_t index, int32_t count, const VisibleFn& visible)

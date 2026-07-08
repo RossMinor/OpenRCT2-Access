@@ -771,8 +771,7 @@ namespace OpenRCT2::Ui::Windows
                 RefreshGroups();
 
             const int32_t n = static_cast<int32_t>(_groups.size());
-            const int32_t cat = Accessibility::ListNav::stepVisible(
-                _accessibilityCategory, delta, n, [](int32_t) { return true; });
+            const int32_t cat = Accessibility::ListNav::wrap(_accessibilityCategory, delta, n);
             if (cat < 0)
             {
                 Accessibility::ScreenReaderSpeak("No guests");
@@ -784,8 +783,7 @@ namespace OpenRCT2::Ui::Windows
         void moveAccessibilityIndividual(int32_t delta)
         {
             const int32_t n = static_cast<int32_t>(_guestList.size());
-            const int32_t idx = Accessibility::ListNav::stepVisible(
-                _accessibilityIndex, delta, n, [](int32_t) { return true; });
+            const int32_t idx = Accessibility::ListNav::wrap(_accessibilityIndex, delta, n);
             if (idx < 0)
             {
                 Accessibility::ScreenReaderSpeak("No guests in this category");

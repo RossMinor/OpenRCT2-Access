@@ -522,10 +522,8 @@ namespace OpenRCT2::Ui::Windows
                 {
                     const bool forward = (action == AccessibilityAction::moveDown
                                           || action == AccessibilityAction::moveRight);
-                    // The list has no hidden rows (servers followed by action buttons), so every
-                    // entry is visible.
-                    const int32_t idx = Accessibility::ListNav::stepVisible(
-                        _accessIndex, forward ? 1 : -1, total, [](int32_t) { return true; });
+                    // The list has no hidden rows (servers followed by action buttons).
+                    const int32_t idx = Accessibility::ListNav::wrap(_accessIndex, forward ? 1 : -1, total);
                     if (idx < 0)
                         return true; // nothing to navigate
                     _accessIndex = idx;

@@ -660,8 +660,7 @@ namespace OpenRCT2::Ui::Windows
                     const bool forward = (action == AccessibilityAction::moveDown
                                           || action == AccessibilityAction::moveRight);
                     // The design list has no hidden rows (designs plus "Build custom design").
-                    const int32_t idx = Accessibility::ListNav::stepVisible(
-                        selectedListItem, forward ? 1 : -1, count, [](int32_t) { return true; });
+                    const int32_t idx = Accessibility::ListNav::wrap(selectedListItem, forward ? 1 : -1, count);
                     if (idx < 0)
                     {
                         Accessibility::ScreenReaderSpeak("No designs available");

@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <algorithm>
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -384,9 +385,10 @@ namespace OpenRCT2::Ui::Windows
         void ncMove(int32_t delta)
         {
             const int32_t n = static_cast<int32_t>(buildNcItems().size());
-            if (n == 0)
-                return;
-            _accessIndex = (_accessIndex + delta + n) % n;
+            const int32_t idx = Accessibility::ListNav::wrap(_accessIndex, delta, n);
+            if (idx < 0)
+                return; // no items
+            _accessIndex = idx;
             ncAnnounceFocus();
         }
 

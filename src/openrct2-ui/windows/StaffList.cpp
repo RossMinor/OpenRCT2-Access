@@ -428,9 +428,8 @@ namespace OpenRCT2::Ui::Windows
         void moveAccessibilitySelection(int32_t delta)
         {
             const int32_t n = static_cast<int32_t>(_staffList.size());
-            // The staff list has no hidden rows, so every item is visible.
-            const int32_t idx = Accessibility::ListNav::stepVisible(
-                _accessibilityIndex, delta, n, [](int32_t) { return true; });
+            // The staff list has no hidden rows, so every item is selectable.
+            const int32_t idx = Accessibility::ListNav::wrap(_accessibilityIndex, delta, n);
             if (idx < 0)
             {
                 Accessibility::ScreenReaderSpeak("No staff");

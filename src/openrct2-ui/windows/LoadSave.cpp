@@ -1354,9 +1354,8 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::moveDown:
                 {
                     const bool forward = (action_ == AccessibilityAction::moveDown);
-                    // The file list has no hidden rows, so every item is visible.
-                    const int32_t idx = Accessibility::ListNav::stepVisible(
-                        _accessIndex, forward ? 1 : -1, numListItems, [](int32_t) { return true; });
+                    // The file list has no hidden rows, so every item is selectable.
+                    const int32_t idx = Accessibility::ListNav::wrap(_accessIndex, forward ? 1 : -1, numListItems);
                     if (idx < 0)
                     {
                         Accessibility::ScreenReaderSpeak("Empty folder");
