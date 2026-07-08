@@ -10,6 +10,7 @@
 #include <cmath>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/AccessFollow.h>
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -770,34 +771,26 @@ namespace OpenRCT2::Ui::Windows
                 RefreshGroups();
 
             const int32_t n = static_cast<int32_t>(_groups.size());
-            if (n == 0)
+            const int32_t cat = Accessibility::ListNav::stepVisible(
+                _accessibilityCategory, delta, n, [](int32_t) { return true; });
+            if (cat < 0)
             {
                 Accessibility::ScreenReaderSpeak("No guests");
                 return;
             }
-
-            int32_t cat = _accessibilityCategory;
-            if (cat < 0 || cat >= n)
-                cat = (delta >= 0) ? 0 : n - 1;
-            else
-                cat = (cat + delta + n) % n;
             selectAccessibilityCategory(cat);
         }
 
         void moveAccessibilityIndividual(int32_t delta)
         {
             const int32_t n = static_cast<int32_t>(_guestList.size());
-            if (n == 0)
+            const int32_t idx = Accessibility::ListNav::stepVisible(
+                _accessibilityIndex, delta, n, [](int32_t) { return true; });
+            if (idx < 0)
             {
                 Accessibility::ScreenReaderSpeak("No guests in this category");
                 return;
             }
-
-            int32_t idx = _accessibilityIndex;
-            if (idx < 0 || idx >= n)
-                idx = (delta >= 0) ? 0 : n - 1;
-            else
-                idx = (idx + delta + n) % n;
 
             _accessibilityIndex = idx;
             _highlightedIndex = static_cast<size_t>(idx);

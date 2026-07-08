@@ -10,6 +10,8 @@
 #pragma once
 
 #include <cstdint>
+#include <initializer_list>
+#include <string>
 #include <string_view>
 
 struct CoordsXYZ;
@@ -52,4 +54,52 @@ namespace OpenRCT2::Ui::Accessibility
     // Speaks a previously logged announcement, stepping older (direction -1) or newer
     // (direction +1) through the history.
     void CycleAnnouncementHistory(int direction);
+
+    // Assembles a spoken phrase from fragments, owning the punctuation so no call site has to. Each
+    // add() appends a fragment, inserting the separator (", " by default) only between non-empty
+    // fragments - empty fragments are dropped. This is the single place responsible for the join, so
+    // two call sites can never disagree and leave the player hearing a run-together or double-comma
+    // seam. Build incrementally, then read str().
+    //
+    //   SpeechBuilder sb;
+    //   sb.add("Ride entrance").add(facingText).add(connectionText);
+    //   ScreenReaderSpeak(sb.str());
+    class SpeechBuilder
+    {
+    public:
+        SpeechBuilder() = default;
+        explicit SpeechBuilder(std::string_view separator)
+            : _separator(separator)
+        {
+        }
+
+        SpeechBuilder& add(std::string_view fragment)
+        {
+            if (!fragment.empty())
+            {
+                if (!_text.empty())
+                    _text += _separator;
+                _text += fragment;
+            }
+            return *this;
+        }
+
+        bool empty() const
+        {
+            return _text.empty();
+        }
+
+        const std::string& str() const
+        {
+            return _text;
+        }
+
+    private:
+        std::string _separator = ", ";
+        std::string _text;
+    };
+
+    // One-shot convenience: join fragments with ", " (empties dropped). For incremental/conditional
+    // assembly use SpeechBuilder directly.
+    std::string JoinSpeech(std::initializer_list<std::string_view> fragments);
 } // namespace OpenRCT2::Ui::Accessibility

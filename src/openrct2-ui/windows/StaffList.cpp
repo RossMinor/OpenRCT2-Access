@@ -12,6 +12,7 @@
 #include <openrct2-ui/UiStringIds.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/AccessFollow.h>
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -427,17 +428,14 @@ namespace OpenRCT2::Ui::Windows
         void moveAccessibilitySelection(int32_t delta)
         {
             const int32_t n = static_cast<int32_t>(_staffList.size());
-            if (n == 0)
+            // The staff list has no hidden rows, so every item is visible.
+            const int32_t idx = Accessibility::ListNav::stepVisible(
+                _accessibilityIndex, delta, n, [](int32_t) { return true; });
+            if (idx < 0)
             {
                 Accessibility::ScreenReaderSpeak("No staff");
                 return;
             }
-
-            int32_t idx = _accessibilityIndex;
-            if (idx < 0 || idx >= n)
-                idx = (delta >= 0) ? 0 : n - 1;
-            else
-                idx = (idx + delta + n) % n;
 
             _accessibilityIndex = idx;
             _highlightedIndex = static_cast<size_t>(idx);

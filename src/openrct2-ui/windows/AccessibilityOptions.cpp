@@ -31,11 +31,25 @@
 
 namespace OpenRCT2::Ui::Windows
 {
-    static constexpr ScreenSize kWindowSize = { 400, 124 };
+    static constexpr ScreenSize kWindowSize = { 400, 144 };
     static constexpr int32_t kVolumeStep = 5;
     static constexpr const char* kPatreonUrl = "https://www.patreon.com/rossminor";
     static constexpr uint8_t kStepSoundModeCount = 3;
     static constexpr uint8_t kTileSpeechModeCount = 3;
+
+    // Curated high-contrast choices for the visible focus indicator. Values are Drawing::Colour enum
+    // values (see drawing/Colour.h); stored in config as sound.accessibilityFocusColour.
+    struct FocusColourOption
+    {
+        uint8_t value;
+        const char* name;
+    };
+    static constexpr FocusColourOption kFocusColours[] = {
+        { 18, "Yellow" },      { 2, "White" },        { 28, "Bright red" },
+        { 14, "Bright green" }, { 30, "Bright pink" }, { 7, "Light blue" },
+        { 5, "Bright purple" }, { 20, "Light orange" }, { 0, "Black" },
+    };
+    static constexpr int32_t kFocusColourCount = static_cast<int32_t>(std::size(kFocusColours));
 
     enum WindowAccessibilityOptionsWidgetIdx : WidgetIndex
     {
@@ -45,16 +59,18 @@ namespace OpenRCT2::Ui::Windows
         WIDX_VOLUME_SLIDER,
         WIDX_STEP_MODE,
         WIDX_TILE_MODE,
+        WIDX_FOCUS_COLOUR,
         WIDX_SUPPORT_BUTTON,
     };
 
     // clang-format off
     static constexpr auto kWidgets = makeWidgets(
         makeWindowShim(kStringIdNone, kWindowSize),
-        makeWidget({ 180, 24 }, { 150, 13 },                   WidgetType::scroll, WindowColour::secondary, SCROLL_HORIZONTAL), // Cue volume slider
-        makeWidget({ 150, 44 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Step sound mode (cycles on click)
-        makeWidget({ 150, 64 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Tile reading mode (cycles on click)
-        makeWidget({   8, 90 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
+        makeWidget({ 180, 24 }, { 150, 13 },                    WidgetType::scroll, WindowColour::secondary, SCROLL_HORIZONTAL), // Cue volume slider
+        makeWidget({ 150, 44 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Step sound mode (cycles on click)
+        makeWidget({ 150, 64 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Tile reading mode (cycles on click)
+        makeWidget({ 150, 84 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Focus indicator colour (cycles on click)
+        makeWidget({   8, 110 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
     );
     // clang-format on
 
@@ -84,6 +100,21 @@ namespace OpenRCT2::Ui::Windows
         }
     }
 
+    // Index of the current focus-indicator colour within kFocusColours (0 if the stored value isn't
+    // one of the presets, e.g. after an older config).
+    static int32_t focusColourIndex(uint8_t value)
+    {
+        for (int32_t i = 0; i < kFocusColourCount; i++)
+            if (kFocusColours[i].value == value)
+                return i;
+        return 0;
+    }
+
+    static const char* focusColourName(uint8_t value)
+    {
+        return kFocusColours[focusColourIndex(value)].name;
+    }
+
     class AccessibilityOptionsWindow final : public Window
     {
     private:
@@ -97,6 +128,7 @@ namespace OpenRCT2::Ui::Windows
         // Backing strings for the mode-button captions (setString keeps only a pointer).
         std::string _stepCaption;
         std::string _tileCaption;
+        std::string _focusCaption;
 
         // Backing storage for the caption / button captions (setString stores a pointer, so the
         // strings must outlive the window's draws).
@@ -132,6 +164,8 @@ namespace OpenRCT2::Ui::Windows
             widgets[WIDX_STEP_MODE].setString(_stepCaption.c_str());
             _tileCaption = tileModeName(Config::Get().sound.accessibilityTileSpeechMode);
             widgets[WIDX_TILE_MODE].setString(_tileCaption.c_str());
+            _focusCaption = focusColourName(Config::Get().sound.accessibilityFocusColour);
+            widgets[WIDX_FOCUS_COLOUR].setString(_focusCaption.c_str());
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override
@@ -146,6 +180,9 @@ namespace OpenRCT2::Ui::Windows
                     break;
                 case WIDX_TILE_MODE:
                     cycleTileMode(1);
+                    break;
+                case WIDX_FOCUS_COLOUR:
+                    cycleFocusColour(1);
                     break;
                 case WIDX_SUPPORT_BUTTON:
                     openSupportPage();
@@ -185,6 +222,10 @@ namespace OpenRCT2::Ui::Windows
             // Tile-reading mode label.
             const auto tileLabelPos = windowPos + ScreenCoordsXY{ 8, 67 };
             drawText(rt, tileLabelPos, "Tile reading", { colours[1] });
+
+            // Focus-indicator colour label.
+            const auto focusLabelPos = windowPos + ScreenCoordsXY{ 8, 87 };
+            drawText(rt, focusLabelPos, "Focus colour", { colours[1] });
         }
 
         bool onAccessibilityAction(AccessibilityAction action) override
@@ -198,7 +239,7 @@ namespace OpenRCT2::Ui::Windows
                     return true;
                 case AccessibilityAction::moveDown:
                     _supportArmed = false;
-                    _accessIndex = std::min(3, _accessIndex + 1);
+                    _accessIndex = std::min(4, _accessIndex + 1);
                     announceFocus();
                     return true;
                 case AccessibilityAction::moveLeft:
@@ -220,6 +261,10 @@ namespace OpenRCT2::Ui::Windows
                     {
                         cycleTileMode(delta);
                     }
+                    else if (_accessIndex == 3)
+                    {
+                        cycleFocusColour(delta);
+                    }
                     announceFocus();
                     return true;
                 }
@@ -235,6 +280,11 @@ namespace OpenRCT2::Ui::Windows
                         announceFocus();
                     }
                     else if (_accessIndex == 3)
+                    {
+                        cycleFocusColour(1); // Enter advances the focus colour too
+                        announceFocus();
+                    }
+                    else if (_accessIndex == 4)
                     {
                         if (_supportArmed)
                         {
@@ -283,6 +333,8 @@ namespace OpenRCT2::Ui::Windows
             else if (_accessIndex == 2)
                 w = WIDX_TILE_MODE;
             else if (_accessIndex == 3)
+                w = WIDX_FOCUS_COLOUR;
+            else if (_accessIndex == 4)
                 w = WIDX_SUPPORT_BUTTON;
             const auto& widget = widgets[w];
             const auto tl = windowPos + ScreenCoordsXY{ widget.left, widget.top };
@@ -312,6 +364,10 @@ namespace OpenRCT2::Ui::Windows
             {
                 return std::string("Tile reading, ") + tileModeName(Config::Get().sound.accessibilityTileSpeechMode);
             }
+            if (_accessIndex == 3)
+            {
+                return std::string("Focus colour, ") + focusColourName(Config::Get().sound.accessibilityFocusColour);
+            }
             return "Support Ross's work, button";
         }
 
@@ -329,6 +385,15 @@ namespace OpenRCT2::Ui::Windows
             int32_t m = Config::Get().sound.accessibilityTileSpeechMode;
             m = (m + delta + kTileSpeechModeCount) % kTileSpeechModeCount;
             Config::Get().sound.accessibilityTileSpeechMode = static_cast<uint8_t>(m);
+            Config::Save();
+            invalidate();
+        }
+
+        void cycleFocusColour(int32_t delta)
+        {
+            int32_t i = focusColourIndex(Config::Get().sound.accessibilityFocusColour);
+            i = (i + delta + kFocusColourCount) % kFocusColourCount;
+            Config::Get().sound.accessibilityFocusColour = kFocusColours[i].value;
             Config::Save();
             invalidate();
         }

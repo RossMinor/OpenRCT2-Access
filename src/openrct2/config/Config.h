@@ -171,6 +171,9 @@ namespace OpenRCT2::Config
         // When the screen reader announces the tile under the map cursor: 0 = every tile, 1 = only
         // when the tile changes, 2 = off. Set via Ctrl+F1.
         uint8_t accessibilityTileSpeechMode;
+        // Colour of the visible keyboard-focus indicator (a Drawing::Colour enum value). Chosen from a
+        // curated high-contrast list in the mod settings window (Ctrl+F1).
+        uint8_t accessibilityFocusColour;
     };
 
     struct Network

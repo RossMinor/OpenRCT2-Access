@@ -16,11 +16,14 @@
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/input/ShortcutManager.h>
 #include <algorithm>
+#include <openrct2/config/Config.h>
 #include <openrct2/drawing/Colour.h>
+#include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Rectangle.h>
 #include <openrct2/drawing/RenderTarget.h>
 #include <openrct2/interface/ColourWithFlags.h>
 #include <openrct2/interface/Widget.h>
+#include <openrct2/interface/Window.h>
 #include <openrct2/interface/WindowBase.h>
 #include <openrct2/interface/WindowClasses.h>
 #include <openrct2/localisation/Formatting.h>
@@ -67,8 +70,52 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    // The window that currently owns accessible keyboard navigation, chosen front-to-back
-    // among the windows we know how to navigate.
+    // The window classes the mod knows how to navigate by keyboard. This is pure membership: which
+    // windows are navigable at all. Which one *wins* when several are open is decided by the real
+    // z-order in GetActiveAccessibleWindow, not by the order of the cases here - so no manual
+    // priority between window types has to be kept in sync (that was the source of keys landing in
+    // the wrong window, e.g. the loan control instead of the park admission price). To make a new
+    // window navigable, add its class here and implement onAccessibilityAction on the window.
+    static bool IsNavigableAccessibleClass(WindowClass wc)
+    {
+        switch (wc)
+        {
+            case WindowClass::savePrompt:          // modal prompts
+            case WindowClass::demolishRidePrompt:  // also refurbish-ride confirmation
+            case WindowClass::firePrompt:
+            case WindowClass::accessibilityOptions: // the mod's own settings (Ctrl+F1)
+            case WindowClass::serverList:
+            case WindowClass::scenarioSelect:
+            case WindowClass::trackDesignList:      // pre-built ride design list
+            case WindowClass::titleMenu:
+            case WindowClass::banner:               // banner/sign edit window
+            case WindowClass::footpath:
+            case WindowClass::constructRide:
+            case WindowClass::ride:
+            case WindowClass::peep:                 // guest or staff info window
+            case WindowClass::scenery:
+            case WindowClass::options:
+            case WindowClass::cheats:
+            case WindowClass::keyboardShortcutList:
+            case WindowClass::rideList:
+            case WindowClass::staffList:
+            case WindowClass::guestList:
+            case WindowClass::newCampaign:
+            case WindowClass::finances:
+            case WindowClass::research:
+            case WindowClass::recentNews:
+            case WindowClass::parkInformation: // declines on non-objective pages via onAccessibilityAction
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // The window that currently owns accessible keyboard navigation: the frontmost open window we
+    // know how to navigate. We ask the window system for its real front-to-back order rather than
+    // guessing from a hand-authored ranking, so keys always go to the window the player raised most
+    // recently. A window that cannot navigate right now (e.g. the park window off its objective
+    // page) simply returns false from onAccessibilityAction, and the key falls through to the map.
     WindowBase* GetActiveAccessibleWindow()
     {
         auto* windowMgr = GetWindowManager();
@@ -80,76 +127,14 @@ namespace OpenRCT2::Ui::Accessibility
         if (windowMgr->FindByClass(WindowClass::trackDesignPlace) != nullptr)
             return nullptr;
 
-        // Modal prompts sit in front and must take focus while open.
-        if (auto* w = windowMgr->FindByClass(WindowClass::savePrompt))
-            return w;
-        // Demolish and refurbish ride confirmations both use this window class.
-        if (auto* w = windowMgr->FindByClass(WindowClass::demolishRidePrompt))
-            return w;
-        // Fire-staff confirmation.
-        if (auto* w = windowMgr->FindByClass(WindowClass::firePrompt))
-            return w;
-        // The accessibility mod's own settings window (opened with Ctrl+F1) is a deliberately focused
-        // dialog, so it takes the keyboard while open.
-        if (auto* w = windowMgr->FindByClass(WindowClass::accessibilityOptions))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::serverList))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::scenarioSelect))
-            return w;
-        // Pre-built ride (track design) selection list.
-        if (auto* w = windowMgr->FindByClass(WindowClass::trackDesignList))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::titleMenu))
-            return w;
-        // A placed banner or sign's edit window (both use WindowClass::banner) is a focused detail
-        // window, so it takes priority while open.
-        if (auto* w = windowMgr->FindByClass(WindowClass::banner))
-            return w;
-        // The footpath construction window: its options (surface, queue, railings, build mode) are
-        // keyboard-navigable while open.
-        if (auto* w = windowMgr->FindByClass(WindowClass::footpath))
-            return w;
-        // In-game navigable windows take focus while open.
-        if (auto* w = windowMgr->FindByClass(WindowClass::constructRide))
-            return w;
-        // An individual ride's management window (status, operating, prices, maintenance, etc.).
-        if (auto* w = windowMgr->FindByClass(WindowClass::ride))
-            return w;
-        // An individual guest's or staff member's info window (both use WindowClass::peep).
-        if (auto* w = windowMgr->FindByClass(WindowClass::peep))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::scenery))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::options))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::cheats))
-            return w;
-        // The keyboard-shortcut list; while its rebind sub-window is open, keys must pass through
-        // to the shortcut manager (see the pending-change guard in HandleMenuNavigationKey), so this
-        // only captures navigation when no rebind is in progress.
-        if (auto* w = windowMgr->FindByClass(WindowClass::keyboardShortcutList))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::rideList))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::staffList))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::guestList))
-            return w;
-        // New marketing campaign setup sits in front of the Finances window, so check it first.
-        if (auto* w = windowMgr->FindByClass(WindowClass::newCampaign))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::finances))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::research))
-            return w;
-        if (auto* w = windowMgr->FindByClass(WindowClass::recentNews))
-            return w;
-        // The park window handles its own objective page; on other pages it declines so
-        // map controls keep working.
-        if (auto* w = windowMgr->FindByClass(WindowClass::parkInformation))
-            return w;
-        return nullptr;
+        // WindowVisitEach walks the window list back-to-front, so the last navigable window it
+        // visits is the one currently in front.
+        WindowBase* result = nullptr;
+        WindowVisitEach([&result](WindowBase* w) {
+            if (IsNavigableAccessibleClass(w->classification))
+                result = w;
+        });
+        return result;
     }
 
     static bool IsFocusableWidget(const Widget& widget)
@@ -291,30 +276,56 @@ namespace OpenRCT2::Ui::Accessibility
         HandleGenericWidgetNav(w, AccessibilityAction::moveDown);
     }
 
+    // The focus box is drawn on top of everything each frame. Because the engine only repaints
+    // invalidated screen regions, a box drawn over a window that does not repaint on navigation (the
+    // top toolbar menu, the Options window, etc.) would linger: each move would leave the previous box
+    // behind and they would pile up. So we remember the last box and, whenever it moves or disappears,
+    // mark that region dirty so the window underneath repaints and erases the old box.
+    static std::optional<ScreenRect> _lastFocusRect;
+
+    static void InvalidateFocusRect(const ScreenRect& rect)
+    {
+        // Inflate a little so the border (drawn outset, slightly outside the rect) is fully cleared.
+        GfxSetDirtyBlocks({ { rect.GetLeft() - 2, rect.GetTop() - 2 }, { rect.GetRight() + 2, rect.GetBottom() + 2 } });
+    }
+
     void DrawAccessibilityFocus(Drawing::RenderTarget& rt)
     {
-        auto* windowMgr = GetWindowManager();
-        if (windowMgr == nullptr)
-            return;
+        // Work out where the focus box should be this frame (nullopt = no box).
+        std::optional<ScreenRect> rect;
+        if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+        {
+            // An open combo box draws its own highlighted item; don't double up.
+            if (windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+            {
+                // In toolbar menu mode the toolbar owns focus (it isn't an "active accessible window"),
+                // otherwise use whichever accessible window currently has focus.
+                WindowBase* w = IsInMenuMode() ? windowMgr->FindByClass(WindowClass::topToolbar)
+                                               : GetActiveAccessibleWindow();
+                if (w != nullptr)
+                    rect = w->getAccessibilityFocusRect();
+            }
+        }
 
-        // An open combo box draws its own highlighted item; don't double up.
-        if (windowMgr->FindByClass(WindowClass::dropdown) != nullptr)
-            return;
+        // If the box moved or vanished, repaint the area it used to cover so it doesn't linger.
+        // (ScreenRect has no operator==, so compare corners.)
+        const auto sameRect = [](const ScreenRect& a, const ScreenRect& b) {
+            return a.GetLeft() == b.GetLeft() && a.GetTop() == b.GetTop() && a.GetRight() == b.GetRight()
+                && a.GetBottom() == b.GetBottom();
+        };
+        const bool changed = _lastFocusRect.has_value()
+            && (!rect.has_value() || !sameRect(*_lastFocusRect, *rect));
+        if (changed)
+            InvalidateFocusRect(*_lastFocusRect);
+        _lastFocusRect = rect;
 
-        // In toolbar menu mode the toolbar owns focus (it isn't an "active accessible window"),
-        // otherwise use whichever accessible window currently has focus.
-        WindowBase* w = IsInMenuMode() ? windowMgr->FindByClass(WindowClass::topToolbar)
-                                       : GetActiveAccessibleWindow();
-        if (w == nullptr)
-            return;
-
-        const auto rect = w->getAccessibilityFocusRect();
         if (!rect.has_value())
             return;
 
-        // A border-only box (FillMode::none) in a high-contrast colour, drawn over everything.
+        // A border-only box (FillMode::none) in the user's chosen high-contrast colour, over everything.
+        const auto colour = static_cast<Drawing::Colour>(Config::Get().sound.accessibilityFocusColour);
         Drawing::Rectangle::fillInset(
-            rt, *rect, ColourWithFlags{ Drawing::Colour::yellow }, Drawing::Rectangle::BorderStyle::outset,
+            rt, *rect, ColourWithFlags{ colour }, Drawing::Rectangle::BorderStyle::outset,
             Drawing::Rectangle::FillBrightness::light, Drawing::Rectangle::FillMode::none);
     }
 

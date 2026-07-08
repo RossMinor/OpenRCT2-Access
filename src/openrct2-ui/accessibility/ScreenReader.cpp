@@ -200,6 +200,14 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(_history[_historyCursor]);
     }
 
+    std::string JoinSpeech(std::initializer_list<std::string_view> fragments)
+    {
+        SpeechBuilder sb;
+        for (const auto& fragment : fragments)
+            sb.add(fragment);
+        return sb.str();
+    }
+
     void PlayCue(Audio::SoundId soundId, const CoordsXYZ& loc)
     {
         const int32_t pct = Config::Get().sound.accessibilityCueVolume;

@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <iterator>
+#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -440,39 +441,17 @@ namespace OpenRCT2::Ui::Windows
                 text += ", " + location;
 
             // Position among the visible rides on this page.
-            int32_t total = 0, pos = 0;
-            for (int32_t i = 0; i < static_cast<int32_t>(_rideList.size()); i++)
-            {
-                if (!_rideList[i].Visible)
-                    continue;
-                if (i == index)
-                    pos = total;
-                total++;
-            }
+            const auto [pos, total] = Accessibility::ListNav::visiblePosition(
+                index, static_cast<int32_t>(_rideList.size()), [this](int32_t i) { return _rideList[i].Visible; });
             Accessibility::ScreenReaderSpeakItem(text, pos, total);
         }
 
         void moveAccessibilitySelection(int32_t delta)
         {
             const int32_t n = static_cast<int32_t>(_rideList.size());
-            if (n == 0)
-            {
-                Accessibility::ScreenReaderSpeak("No rides");
-                return;
-            }
-
-            int32_t idx = _accessibilityIndex;
-            for (int32_t steps = 0; steps < n; steps++)
-            {
-                idx += delta;
-                if (idx < 0)
-                    idx = n - 1;
-                else if (idx >= n)
-                    idx = 0;
-                if (_rideList[idx].Visible)
-                    break;
-            }
-            if (!_rideList[idx].Visible)
+            const int32_t idx = Accessibility::ListNav::stepVisible(
+                _accessibilityIndex, delta, n, [this](int32_t i) { return _rideList[i].Visible; });
+            if (idx < 0)
             {
                 Accessibility::ScreenReaderSpeak("No rides");
                 return;
