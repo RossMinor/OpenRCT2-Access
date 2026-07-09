@@ -138,6 +138,14 @@ namespace OpenRCT2
                 // Update more often if game speed is above normal.
                 numUpdates = 1 << (gGameSpeed - 1);
             }
+            else if (gGameSlowFactor > 1)
+            {
+                // Slow motion (accessibility, single player only): run the game logic just once every
+                // gGameSlowFactor update calls, so time advances at 1/2 or 1/4 the normal rate. On the
+                // skipped calls no logic runs (numUpdates stays 0), like a very brief pause.
+                static uint32_t slowCounter = 0;
+                numUpdates = ((++slowCounter % gGameSlowFactor) == 0) ? 1 : 0;
+            }
         }
 
         bool isPaused = GameIsPaused();

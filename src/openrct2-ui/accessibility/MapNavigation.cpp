@@ -33,6 +33,7 @@
 #include <openrct2/Context.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/footpath/FootpathPlaceAction.h>
+#include <openrct2/actions/general/GameSetSpeedAction.h>
 #include <openrct2/actions/general/PauseToggleAction.h>
 #include <openrct2/actions/footpath/FootpathRemoveAction.h>
 #include <openrct2/actions/terraform/ClearAction.h>
@@ -2789,6 +2790,83 @@ namespace OpenRCT2::Ui::Accessibility
             "Control F1 opens the accessibility settings.");
     }
 
+    // Spoken name for a point on the combined speed ladder (slow-motion factor + game speed).
+    static std::string SpeedLabel(int32_t gameSpeed, int32_t slowFactor)
+    {
+        if (slowFactor >= 4)
+            return "Quarter speed";
+        if (slowFactor == 2)
+            return "Half speed";
+        switch (gameSpeed)
+        {
+            case 1:
+                return "Normal speed";
+            case 2:
+                return "Double speed";
+            case 3:
+                return "Quadruple speed";
+            case 4:
+                return "Eight times speed";
+            case 8:
+                return "Turbo speed";
+            default:
+                return "Speed changed";
+        }
+    }
+
+    // Steps the game speed one notch along a single ladder that runs
+    //   quarter -> half -> normal -> double -> quadruple -> eight times -> (turbo, debug tools only)
+    // dir > 0 speeds up, dir < 0 slows down. Slower-than-normal steps use the single-player slow-motion
+    // factor; normal and faster use the engine's game speed (set through the networked action). The new
+    // speed is announced.
+    static void AdjustGameSpeed(int32_t dir)
+    {
+        // Fast and slow are mutually exclusive; clear any leftover slow factor if the game is already
+        // above normal speed (e.g. after the base +/- shortcuts were used).
+        if (gGameSpeed > 1)
+            gGameSlowFactor = 1;
+
+        if (dir > 0)
+        {
+            // Speeding up: climb out of slow motion first, then raise the game speed.
+            if (gGameSlowFactor > 1)
+            {
+                gGameSlowFactor /= 2; // quarter -> half -> normal
+                ScreenReaderSpeak(SpeedLabel(1, gGameSlowFactor));
+                return;
+            }
+            int32_t newSpeed = std::min(Config::Get().general.debuggingTools ? 5 : 4, gGameSpeed + 1);
+            if (newSpeed == 5)
+                newSpeed = 8; // turbo
+            if (newSpeed != gGameSpeed)
+            {
+                auto action = GameActions::GameSetSpeedAction(static_cast<uint8_t>(newSpeed));
+                GameActions::Execute(&action, getGameState());
+            }
+            ScreenReaderSpeak(SpeedLabel(newSpeed, 1));
+            return;
+        }
+
+        // Slowing down: drop the game speed toward normal first, then into slow motion.
+        if (gGameSpeed > 1)
+        {
+            int32_t newSpeed = (gGameSpeed == 8) ? 4 : std::max(1, gGameSpeed - 1);
+            auto action = GameActions::GameSetSpeedAction(static_cast<uint8_t>(newSpeed));
+            GameActions::Execute(&action, getGameState());
+            ScreenReaderSpeak(SpeedLabel(newSpeed, 1));
+            return;
+        }
+        // Already at normal: enter slow motion (single player only; it would desync a network game).
+        if (Network::GetMode() != Network::Mode::none)
+        {
+            ScreenReaderSpeak("Slow motion is only available in single player");
+            return;
+        }
+        const int32_t newSlow = (gGameSlowFactor < 2) ? 2 : std::min(4, gGameSlowFactor * 2);
+        gGameSlowFactor = static_cast<uint8_t>(newSlow);
+        ScreenReaderSpeak(SpeedLabel(1, newSlow));
+    }
+
     bool HandleMapNavigationKey(const InputEvent& e)
     {
         if (e.deviceKind != InputDeviceKind::keyboard)
@@ -2893,6 +2971,16 @@ namespace OpenRCT2::Ui::Accessibility
             auto action = GameActions::PauseToggleAction();
             GameActions::Execute(&action, getGameState());
             ScreenReaderSpeak(willPause ? "Paused" : "Resumed");
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Ctrl+= speeds the game up and Ctrl+- slows it down, along one ladder from quarter speed up
+        // to the maximum, announcing the new speed. (Keypad +/- work too.)
+        if ((e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT))
+            && (key == SDLK_EQUALS || key == SDLK_KP_PLUS || key == SDLK_MINUS || key == SDLK_KP_MINUS))
+        {
+            AdjustGameSpeed((key == SDLK_EQUALS || key == SDLK_KP_PLUS) ? 1 : -1);
             _lastHandledKey = key;
             return true;
         }

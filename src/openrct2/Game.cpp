@@ -91,6 +91,7 @@ using namespace OpenRCT2;
 uint16_t gCurrentDeltaTime;
 uint8_t gGamePaused = 0;
 uint8_t gGameSpeed = 1;
+uint8_t gGameSlowFactor = 1;
 bool gDoSingleUpdate = false;
 float gDayNightCycle = 0;
 bool gInUpdateCode = false;
@@ -404,6 +405,7 @@ void GameLoadInit()
     }
 
     gGameSpeed = 1;
+    gGameSlowFactor = 1;
 }
 
 void GameLoadScripts()

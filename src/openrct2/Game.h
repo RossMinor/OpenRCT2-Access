@@ -54,6 +54,10 @@ extern uint32_t gCurrentRealTimeTicks;
 extern uint16_t gCurrentDeltaTime;
 extern uint8_t gGamePaused;
 extern uint8_t gGameSpeed;
+// Slow-motion divisor for single-player (accessibility). 1 = off (normal), 2 = half speed, 4 = quarter
+// speed: the game logic runs one tick every this-many update calls instead of every call. Only takes
+// effect at gGameSpeed 1 and outside multiplayer; higher game speeds ignore it.
+extern uint8_t gGameSlowFactor;
 extern bool gDoSingleUpdate;
 extern float gDayNightCycle;
 extern bool gInUpdateCode;
