@@ -845,6 +845,17 @@ namespace OpenRCT2::Ui::Accessibility
         // bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
         TileReadout readout = DescribeTileReadout(_cursor);
         std::string description = std::move(readout.text);
+        // While a ride-placement preview is frozen, read its footprint tiles as though the ride were
+        // already there, so the player can arrow over the preview and trace its shape/position. These
+        // tiles are always read (like the build-mode track readout), regardless of the tile-speech
+        // mode, since the player is actively inspecting the placement.
+        bool onPreviewTile = false;
+        if (auto previewLabel = AccessibleRidePlacementPreviewLabel(_cursor); previewLabel.has_value())
+        {
+            description = readout.bareGround ? *previewLabel : (*previewLabel + ", " + description);
+            readout.bareGround = false;
+            onPreviewTile = true;
+        }
         std::string track = IsRideConstructionWindowOpen() ? GetTrackReadout(_cursor) : std::string();
         const auto tileMode = static_cast<TileSpeechMode>(Config::Get().sound.accessibilityTileSpeechMode);
         if (!track.empty())
@@ -854,11 +865,12 @@ namespace OpenRCT2::Ui::Accessibility
             ScreenReaderSpeak(track, !announcedCrossing);
             _lastTileDescription = std::move(description); // keep baseline coherent for leaving the track
         }
-        else if (tileMode != TileSpeechMode::off)
+        else if (tileMode != TileSpeechMode::off || onPreviewTile)
         {
             // "Every tile" reads on every move; "on change" (the original behaviour) reads only when
-            // the description differs from the previous tile.
-            if (tileMode == TileSpeechMode::everyTile || description != _lastTileDescription)
+            // the description differs from the previous tile. A ride-preview footprint tile always
+            // reads so the player can trace the whole shape.
+            if (onPreviewTile || tileMode == TileSpeechMode::everyTile || description != _lastTileDescription)
             {
                 // Skip the bare-ground label right after a boundary cue (which already said it). This
                 // rides on the describer's flag, not on matching its wording.

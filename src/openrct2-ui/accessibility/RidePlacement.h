@@ -11,6 +11,8 @@
 
 #include <openrct2/ride/RideTypes.h>
 #include <openrct2/world/Location.hpp>
+#include <optional>
+#include <string>
 
 namespace OpenRCT2::Ui::Accessibility
 {
@@ -39,6 +41,11 @@ namespace OpenRCT2::Ui::Accessibility
     // Backspace during a footprint preview: picks the ride back up so it follows the cursor again for
     // repositioning. No-op unless a footprint preview is currently frozen.
     void AccessibleRidePlacementPickup();
+
+    // If a footprint preview is frozen and covers the given tile, returns the ride's name so the tile
+    // reader can announce the ride as though it were already placed there (letting the player trace
+    // the footprint's shape by arrowing over it). Returns nullopt otherwise.
+    std::optional<std::string> AccessibleRidePlacementPreviewLabel(const TileCoordsXY& tile);
 
     // Aborts placement and demolishes the not-yet-built ride so no empty ride is left behind.
     void AccessibleRidePlacementCancel();

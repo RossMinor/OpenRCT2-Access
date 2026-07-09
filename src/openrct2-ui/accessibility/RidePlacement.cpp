@@ -613,6 +613,21 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak("Picked back up. Move the cursor and press Enter to position it again.");
     }
 
+    std::optional<std::string> AccessibleRidePlacementPreviewLabel(const TileCoordsXY& tile)
+    {
+        if (!_active || _stage != Stage::footprint || !_previewing)
+            return std::nullopt;
+
+        const CoordsXY origin = AnchorOriginFromCursor(_previewCursor);
+        for (const auto& off : FootprintOffsets())
+        {
+            const TileCoordsXY footprintTile{ CoordsXY{ origin.x + off.x, origin.y + off.y } };
+            if (footprintTile.x == tile.x && footprintTile.y == tile.y)
+                return _rideName;
+        }
+        return std::nullopt;
+    }
+
     void AccessibleRidePlacementCancel()
     {
         if (!_active)
