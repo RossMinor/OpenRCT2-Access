@@ -33,6 +33,7 @@
 #include <openrct2/Context.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/footpath/FootpathPlaceAction.h>
+#include <openrct2/actions/general/PauseToggleAction.h>
 #include <openrct2/actions/footpath/FootpathRemoveAction.h>
 #include <openrct2/actions/terraform/ClearAction.h>
 #include <openrct2/actions/park/LandBuyRightsAction.h>
@@ -2838,6 +2839,43 @@ namespace OpenRCT2::Ui::Accessibility
         if (key == SDLK_h && (e.modifiers & KMOD_CTRL))
         {
             RescueLostGuests();
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Ctrl+P reports whether the tile under the cursor has a footpath route back to a park
+        // entrance (the same flood-fill the lost-guest rescue uses), so the player can check any spot.
+        if (key == SDLK_p && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)))
+        {
+            if (!_initialised)
+                InitialiseCursor();
+            switch (CheckEntranceReachability(_cursor))
+            {
+                case EntranceReachability::noEntrance:
+                    ScreenReaderSpeak("There is no park entrance");
+                    break;
+                case EntranceReachability::notOnPath:
+                    ScreenReaderSpeak("Not on a footpath");
+                    break;
+                case EntranceReachability::reachable:
+                    ScreenReaderSpeak("Connected to the park entrance");
+                    break;
+                case EntranceReachability::unreachable:
+                    ScreenReaderSpeak("No path back to the park entrance");
+                    break;
+            }
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Plain P pauses or unpauses the game (routed through the game action so it is multiplayer
+        // safe). Announces the new state.
+        if (key == SDLK_p && !(e.modifiers & (KMOD_CTRL | KMOD_SHIFT | KMOD_ALT)))
+        {
+            const bool willPause = !(gGamePaused & GAME_PAUSED_NORMAL);
+            auto action = GameActions::PauseToggleAction();
+            GameActions::Execute(&action, getGameState());
+            ScreenReaderSpeak(willPause ? "Paused" : "Resumed");
             _lastHandledKey = key;
             return true;
         }

@@ -35,6 +35,7 @@
 #include "AudioContext.h"
 #include "AudioMixer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -318,11 +319,14 @@ namespace OpenRCT2::Audio
         {
             _titleAudioObjectEntryIndex = objManager.GetLoadedObjectEntryIndex(audioObject);
 
-            // Play first sample from object
+            // Play first sample from object, at the configured menu-music volume (on top of the
+            // master and music volumes the mixer already applies) so a fresh boot isn't blaring.
             auto source = audioObject->GetSample(0);
             if (source != nullptr)
             {
-                _titleMusicChannel = CreateAudioChannel(source, MixerGroup::TitleMusic, true);
+                const int32_t volume = kMixerVolumeMax * std::clamp<int32_t>(Config::Get().sound.titleMusicVolume, 0, 100)
+                    / 100;
+                _titleMusicChannel = CreateAudioChannel(source, MixerGroup::TitleMusic, true, volume);
             }
         }
     }

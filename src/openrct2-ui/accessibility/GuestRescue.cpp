@@ -235,6 +235,36 @@ namespace OpenRCT2::Ui::Accessibility
         GameActions::Execute(&pickup, getGameState());
     }
 
+    EntranceReachability CheckEntranceReachability(const TileCoordsXY& tile)
+    {
+        if (getGameState().park.entrances.empty())
+            return EntranceReachability::noEntrance;
+
+        // Is there a (non-ghost) footpath on this tile at all?
+        bool hasPath = false;
+        for (auto* path : TileElementsView<PathElement>(tile.ToCoordsXY()))
+        {
+            if (!path->isGhost())
+            {
+                hasPath = true;
+                break;
+            }
+        }
+        if (!hasPath)
+            return EntranceReachability::notOnPath;
+
+        // Flood-fill from the entrances, then see if any path on this tile is in the reachable set.
+        const auto reachable = ComputeEntranceReachablePaths();
+        for (auto* path : TileElementsView<PathElement>(tile.ToCoordsXY()))
+        {
+            if (path->isGhost())
+                continue;
+            if (reachable.count(PackTileKey(tile.x, tile.y, path->baseHeight)) != 0)
+                return EntranceReachability::reachable;
+        }
+        return EntranceReachability::unreachable;
+    }
+
     void RescueLostGuests()
     {
         if (_rescueActive)

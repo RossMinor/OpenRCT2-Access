@@ -31,7 +31,7 @@
 
 namespace OpenRCT2::Ui::Windows
 {
-    static constexpr ScreenSize kWindowSize = { 400, 144 };
+    static constexpr ScreenSize kWindowSize = { 400, 164 };
     static constexpr int32_t kVolumeStep = 5;
     static constexpr const char* kPatreonUrl = "https://www.patreon.com/rossminor";
     static constexpr uint8_t kStepSoundModeCount = 3;
@@ -60,6 +60,7 @@ namespace OpenRCT2::Ui::Windows
         WIDX_STEP_MODE,
         WIDX_TILE_MODE,
         WIDX_FOCUS_COLOUR,
+        WIDX_MENU_MUSIC,
         WIDX_SUPPORT_BUTTON,
     };
 
@@ -70,7 +71,8 @@ namespace OpenRCT2::Ui::Windows
         makeWidget({ 150, 44 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Step sound mode (cycles on click)
         makeWidget({ 150, 64 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Tile reading mode (cycles on click)
         makeWidget({ 150, 84 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Focus indicator colour (cycles on click)
-        makeWidget({   8, 110 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
+        makeWidget({ 150, 104 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Menu music volume (adjusts on click)
+        makeWidget({   8, 130 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
     );
     // clang-format on
 
@@ -129,6 +131,7 @@ namespace OpenRCT2::Ui::Windows
         std::string _stepCaption;
         std::string _tileCaption;
         std::string _focusCaption;
+        std::string _menuMusicCaption;
 
         // Backing storage for the caption / button captions (setString stores a pointer, so the
         // strings must outlive the window's draws).
@@ -166,6 +169,8 @@ namespace OpenRCT2::Ui::Windows
             widgets[WIDX_TILE_MODE].setString(_tileCaption.c_str());
             _focusCaption = focusColourName(Config::Get().sound.accessibilityFocusColour);
             widgets[WIDX_FOCUS_COLOUR].setString(_focusCaption.c_str());
+            _menuMusicCaption = std::to_string(Config::Get().sound.titleMusicVolume) + "%";
+            widgets[WIDX_MENU_MUSIC].setString(_menuMusicCaption.c_str());
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override
@@ -183,6 +188,9 @@ namespace OpenRCT2::Ui::Windows
                     break;
                 case WIDX_FOCUS_COLOUR:
                     cycleFocusColour(1);
+                    break;
+                case WIDX_MENU_MUSIC:
+                    adjustMenuMusicVolume(1); // clicking nudges it up
                     break;
                 case WIDX_SUPPORT_BUTTON:
                     openSupportPage();
@@ -226,6 +234,10 @@ namespace OpenRCT2::Ui::Windows
             // Focus-indicator colour label.
             const auto focusLabelPos = windowPos + ScreenCoordsXY{ 8, 87 };
             drawText(rt, focusLabelPos, "Focus colour", { colours[1] });
+
+            // Menu-music volume label (the percentage is drawn on the button itself).
+            const auto musicLabelPos = windowPos + ScreenCoordsXY{ 8, 107 };
+            drawText(rt, musicLabelPos, "Menu music volume", { colours[1] });
         }
 
         bool onAccessibilityAction(AccessibilityAction action) override
@@ -239,7 +251,7 @@ namespace OpenRCT2::Ui::Windows
                     return true;
                 case AccessibilityAction::moveDown:
                     _supportArmed = false;
-                    _accessIndex = std::min(4, _accessIndex + 1);
+                    _accessIndex = std::min(5, _accessIndex + 1);
                     announceFocus();
                     return true;
                 case AccessibilityAction::moveLeft:
@@ -265,6 +277,10 @@ namespace OpenRCT2::Ui::Windows
                     {
                         cycleFocusColour(delta);
                     }
+                    else if (_accessIndex == 4)
+                    {
+                        adjustMenuMusicVolume(delta);
+                    }
                     announceFocus();
                     return true;
                 }
@@ -284,7 +300,7 @@ namespace OpenRCT2::Ui::Windows
                         cycleFocusColour(1); // Enter advances the focus colour too
                         announceFocus();
                     }
-                    else if (_accessIndex == 4)
+                    else if (_accessIndex == 5)
                     {
                         if (_supportArmed)
                         {
@@ -335,6 +351,8 @@ namespace OpenRCT2::Ui::Windows
             else if (_accessIndex == 3)
                 w = WIDX_FOCUS_COLOUR;
             else if (_accessIndex == 4)
+                w = WIDX_MENU_MUSIC;
+            else if (_accessIndex == 5)
                 w = WIDX_SUPPORT_BUTTON;
             const auto& widget = widgets[w];
             const auto tl = windowPos + ScreenCoordsXY{ widget.left, widget.top };
@@ -368,6 +386,10 @@ namespace OpenRCT2::Ui::Windows
             {
                 return std::string("Focus colour, ") + focusColourName(Config::Get().sound.accessibilityFocusColour);
             }
+            if (_accessIndex == 4)
+            {
+                return "Menu music volume, " + std::to_string(Config::Get().sound.titleMusicVolume) + " percent";
+            }
             return "Support Ross's work, button";
         }
 
@@ -394,6 +416,16 @@ namespace OpenRCT2::Ui::Windows
             int32_t i = focusColourIndex(Config::Get().sound.accessibilityFocusColour);
             i = (i + delta + kFocusColourCount) % kFocusColourCount;
             Config::Get().sound.accessibilityFocusColour = kFocusColours[i].value;
+            Config::Save();
+            invalidate();
+        }
+
+        void adjustMenuMusicVolume(int32_t delta)
+        {
+            const int32_t pct = std::clamp<int32_t>(Config::Get().sound.titleMusicVolume + delta * kVolumeStep, 0, 100);
+            if (pct == Config::Get().sound.titleMusicVolume)
+                return;
+            Config::Get().sound.titleMusicVolume = static_cast<uint8_t>(pct);
             Config::Save();
             invalidate();
         }

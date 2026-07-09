@@ -174,6 +174,9 @@ namespace OpenRCT2::Config
         // Colour of the visible keyboard-focus indicator (a Drawing::Colour enum value). Chosen from a
         // curated high-contrast list in the mod settings window (Ctrl+F1).
         uint8_t accessibilityFocusColour;
+        // Volume (0-100%) of the title/main-menu music, on top of the master and music volumes.
+        // Defaults low so a fresh boot isn't blaring; adjustable from the mod settings window (Ctrl+F1).
+        uint8_t titleMusicVolume;
     };
 
     struct Network
