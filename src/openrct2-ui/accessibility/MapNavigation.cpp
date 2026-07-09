@@ -2062,6 +2062,102 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(std::string("Facing ") + kDirections[rotation]);
     }
 
+    // Jumps the cursor to the nearest ride or stall in the pressed screen direction (Ctrl+arrow). Only
+    // rides within a 90-degree cone of that direction are considered - so "right" ignores something
+    // that is mostly north of you - and among those the closest is chosen. The ride the cursor is
+    // already on is skipped entirely, so a multi-tile ride counts as one target rather than a run of
+    // tiles. Announces the ride landed on, or the compass direction with no ride.
+    static void JumpToNearestRide(uint32_t key)
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        // Screen-direction base delta, matching the arrow keys (see HandleMapCursorKey / MoveScreen).
+        int32_t bdx = 0, bdy = 0;
+        switch (key)
+        {
+            case SDLK_UP:
+                bdx = 0; bdy = -1;
+                break;
+            case SDLK_DOWN:
+                bdx = 0; bdy = 1;
+                break;
+            case SDLK_RIGHT:
+                bdx = -1; bdy = 0;
+                break;
+            case SDLK_LEFT:
+                bdx = 1; bdy = 0;
+                break;
+            default:
+                return;
+        }
+        // Rotate the screen delta into a world-axis unit vector for the current camera rotation.
+        int32_t wdx = bdx, wdy = bdy;
+        for (int32_t i = 0, steps = GetCurrentRotation() & 3; i < steps; i++)
+        {
+            const int32_t nx = wdy;
+            const int32_t ny = -wdx;
+            wdx = nx;
+            wdy = ny;
+        }
+
+        // The compass direction that world delta actually points, so the announcement names true
+        // north/east/south/west and updates as the camera is rotated (world dir 0=-x=East, 1=+y=South,
+        // 2=+x=West, 3=-y=North; see WorldDirectionName).
+        Direction worldDir = 3; // north (wdy < 0)
+        if (wdx < 0)
+            worldDir = 0; // east
+        else if (wdy > 0)
+            worldDir = 1; // south
+        else if (wdx > 0)
+            worldDir = 2; // west
+
+        // Skip the ride the cursor is currently on so the whole ride counts as one, not tile by tile.
+        const RideId currentRide = GetRideAtTile(_cursor);
+
+        const auto mapSize = getGameState().mapSize;
+        RideId bestRide = RideId::GetNull();
+        TileCoordsXY bestTile{};
+        int64_t bestDist = std::numeric_limits<int64_t>::max();
+
+        for (int32_t y = 1; y <= mapSize.y - 2; y++)
+        {
+            for (int32_t x = 1; x <= mapSize.x - 2; x++)
+            {
+                const RideId rid = GetRideAtTile(TileCoordsXY{ x, y });
+                if (rid.IsNull() || rid == currentRide)
+                    continue;
+                const int64_t dispx = x - _cursor.x;
+                const int64_t dispy = y - _cursor.y;
+                const int64_t along = dispx * wdx + dispy * wdy; // distance in the pressed direction
+                if (along <= 0)
+                    continue; // behind or level with the cursor
+                const int64_t cross = dispx * wdy - dispy * wdx; // sideways offset
+                if ((cross < 0 ? -cross : cross) > along)
+                    continue; // outside the 90-degree cone
+                const int64_t dist = dispx * dispx + dispy * dispy;
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    bestRide = rid;
+                    bestTile = TileCoordsXY{ x, y };
+                }
+            }
+        }
+
+        if (bestRide.IsNull())
+        {
+            ScreenReaderSpeak(std::string("No rides to the ") + WorldDirectionName(worldDir));
+            return;
+        }
+
+        _cursor = bestTile;
+        _menuMode = false;
+        CentreViewportOnCursor();
+        _lastTileDescription = GetTileDescription(_cursor);
+        ScreenReaderSpeak(_lastTileDescription);
+    }
+
     static bool IsRideConstructionWindowOpen();
 
     // Shift+B: report where a ride's track is broken or incomplete (a gap or an open end), with the
@@ -2787,7 +2883,9 @@ namespace OpenRCT2::Ui::Accessibility
             "Shift with F, R, P, G, S, D, or M opens finances, rides, park, guests, staff, research, or "
             "messages. Tab opens the toolbar menu. Shift F1 opens the land tool. "
             "Control H rescues guests stranded on cut-off paths, teleporting them to the park entrance. "
-            "Control F1 opens the accessibility settings.");
+            "Control with an arrow jumps to the nearest ride in that direction. Control P checks whether "
+            "the current tile connects to the park entrance. P pauses. Control equals and Control minus "
+            "speed the game up and down. Control F1 opens the accessibility settings.");
     }
 
     // Spoken name for a point on the combined speed ladder (slow-motion factor + game speed).
@@ -2997,6 +3095,19 @@ namespace OpenRCT2::Ui::Accessibility
         // Terraform/land tool option windows: same Ctrl+arrow scheme, plain arrows stay with the cursor.
         if (HandleToolWindowAccessKey(key, e.modifiers))
         {
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Ctrl+arrows jump the free map cursor to the nearest ride or stall in that direction. Skipped
+        // in mouse/menu/status mode and during any placement (there Ctrl+arrows and the cursor mean
+        // something else); ride construction already consumed its Ctrl+arrows above.
+        if ((e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT))
+            && (key == SDLK_UP || key == SDLK_DOWN || key == SDLK_LEFT || key == SDLK_RIGHT) && !_mouseMode
+            && !_menuMode && !_statusMode && !Windows::WindowTrackPlaceIsActive() && !IsAccessibleRidePlacementActive()
+            && !IsAccessibleSceneryPlacementActive())
+        {
+            JumpToNearestRide(key);
             _lastHandledKey = key;
             return true;
         }
