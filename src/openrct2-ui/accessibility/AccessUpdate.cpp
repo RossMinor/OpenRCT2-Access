@@ -23,6 +23,7 @@
 #include <openrct2/core/String.hpp>
 #include <openrct2/core/Zip.h>
 #include <openrct2/platform/Platform.h>
+#include <openrct2/ui/UiContext.h>
 #include <string>
 
 namespace OpenRCT2::Ui::Accessibility
@@ -50,6 +51,19 @@ namespace OpenRCT2::Ui::Accessibility
     static std::atomic<int> _installState{ 0 };
     static std::filesystem::path _stagingDir;
     static std::string _installError;
+
+    // After an install swaps the files and relaunches, the fresh build finds this marker (written by
+    // the old build just before it quit) and offers to open the new release's changelog page. It is a
+    // one-shot: read once, then deleted. Kept in the temp dir alongside the swap helper, so it is not
+    // touched by the file swap and survives the relaunch.
+    static bool _checkedUpdateMarker = false;
+    static bool _changelogPromptPending = false;
+    static std::string _changelogUrl;
+
+    static std::filesystem::path ChangelogMarkerPath()
+    {
+        return std::filesystem::temp_directory_path() / "openrct2-access-changelog.txt";
+    }
 
     static void RunCheck()
     {
@@ -202,6 +216,18 @@ namespace OpenRCT2::Ui::Accessibility
             << "del \"%~f0\"\r\n";
         bat.close();
 
+        // Leave a marker so the relaunched build can offer to show this release's changelog.
+        try
+        {
+            const std::string releaseUrl = "https://github.com/" kAccessUpdateRepo "/releases/tag/" + _tag;
+            std::ofstream marker(ChangelogMarkerPath(), std::ios::binary | std::ios::trunc);
+            marker << releaseUrl;
+        }
+        catch (const std::exception&)
+        {
+            // A missing changelog prompt is harmless; don't let it block the update.
+        }
+
         ScreenReaderSpeak("Update downloaded. Installing now. The game will close and restart.");
         std::system(("start \"OpenRCT2 update\" /min \"" + batPath + "\"").c_str());
         ContextQuit();
@@ -213,6 +239,28 @@ namespace OpenRCT2::Ui::Accessibility
 
     void TickAccessUpdate()
     {
+        // On the first frame after a self-update relaunch, offer to open the new release's changelog.
+        if (!_checkedUpdateMarker)
+        {
+            _checkedUpdateMarker = true;
+            const auto markerPath = ChangelogMarkerPath();
+            std::error_code ec;
+            if (std::filesystem::exists(markerPath, ec))
+            {
+                std::ifstream marker(markerPath, std::ios::binary);
+                std::getline(marker, _changelogUrl);
+                marker.close();
+                std::filesystem::remove(markerPath, ec); // one-shot: never prompt twice for the same update
+                if (!_changelogUrl.empty())
+                {
+                    _changelogPromptPending = true;
+                    ScreenReaderSpeak(
+                        "Update installed. Press Enter to view the changelog in your browser, or any other key "
+                        "to continue.");
+                }
+            }
+        }
+
         // Kick off the check on the first frame, then announce once the result is in.
         if (!_started.exchange(true))
         {
@@ -247,6 +295,23 @@ namespace OpenRCT2::Ui::Accessibility
     bool IsAccessUpdateAvailable()
     {
         return _ready.load() && _available;
+    }
+
+    bool IsChangelogPromptPending()
+    {
+        return _changelogPromptPending;
+    }
+
+    void OpenChangelog()
+    {
+        _changelogPromptPending = false;
+        if (!_changelogUrl.empty())
+            GetContext()->GetUiContext().OpenURL(_changelogUrl);
+    }
+
+    void DismissChangelogPrompt()
+    {
+        _changelogPromptPending = false;
     }
 
     const char* GetAccessModVersion()

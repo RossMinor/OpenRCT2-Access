@@ -425,6 +425,18 @@ void InputManager::process(const InputEvent& e)
             Accessibility::StartAccessUpdateInstall();
             return;
         }
+        // Just after a self-update relaunch, the mod asks whether to open the changelog: Enter opens
+        // it, any other key dismisses the prompt (and still does its normal job).
+        if (e.state == InputEventState::down && Accessibility::IsChangelogPromptPending())
+        {
+            if (e.button == SDLK_RETURN || e.button == SDLK_KP_ENTER)
+            {
+                Accessibility::OpenChangelog();
+                return;
+            }
+            Accessibility::DismissChangelogPrompt();
+            // fall through so this key still performs its usual action
+        }
         // Escape stops following an NPC (takes priority over other Escape handling while active).
         if (e.state == InputEventState::down && e.button == SDLK_ESCAPE && Accessibility::IsFollowingEntity())
         {
