@@ -2265,8 +2265,10 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
 
-        // Shop/stall placement uses the same scheme: cursor positions the footprint, R rotates,
-        // Enter builds, Escape cancels. Arrows fall through to move the cursor.
+        // Shop/stall/flat-ride placement: cursor positions the footprint, R rotates. Enter is
+        // two-stage - the first freezes a preview the player can arrow around to inspect, the second
+        // builds it; Backspace picks a frozen preview back up to reposition. Escape cancels. Arrows
+        // fall through to move the cursor (so the preview can be explored).
         if (IsAccessibleRidePlacementActive())
         {
             switch (key)
@@ -2283,6 +2285,9 @@ namespace OpenRCT2::Ui::Accessibility
                     AccessibleRidePlacementAtTile(CoordsXY{ world.x, world.y });
                     return true;
                 }
+                case SDLK_BACKSPACE:
+                    AccessibleRidePlacementPickup();
+                    return true;
                 case SDLK_ESCAPE:
                     AccessibleRidePlacementCancel();
                     return true;

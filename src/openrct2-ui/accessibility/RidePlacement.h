@@ -30,10 +30,15 @@ namespace OpenRCT2::Ui::Accessibility
     // Turns the footprint 90 degrees and announces the new facing.
     void AccessibleRidePlacementRotate();
 
-    // Attempts to build the footprint at the given map tile (the keyboard cursor position),
-    // searching upward for a valid height. On success the ride is opened; on failure the error is
-    // announced and placement stays active so the player can try another tile.
+    // Handles Enter during placement. For the footprint this is two-stage: the first Enter freezes
+    // the footprint at the cursor (a preview the player can arrow around and inspect); the second
+    // builds it at that frozen spot, searching upward for a valid height. On a build failure the
+    // error is announced and placement stays active. Entrance/exit stages place on the first Enter.
     void AccessibleRidePlacementAtTile(const CoordsXY& mapCoords);
+
+    // Backspace during a footprint preview: picks the ride back up so it follows the cursor again for
+    // repositioning. No-op unless a footprint preview is currently frozen.
+    void AccessibleRidePlacementPickup();
 
     // Aborts placement and demolishes the not-yet-built ride so no empty ride is left behind.
     void AccessibleRidePlacementCancel();

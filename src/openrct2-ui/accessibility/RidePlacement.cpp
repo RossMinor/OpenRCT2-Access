@@ -74,6 +74,13 @@ namespace OpenRCT2::Ui::Accessibility
     static StationIndex _station = StationIndex::FromUnderlying(0);
     static std::string _rideName;
 
+    // Two-stage footprint placement. From positioning (the default), the first Enter does not build:
+    // it freezes the footprint at the cursor (previewing = true) so the player can arrow around and
+    // hear where it landed. A second Enter then builds at the frozen spot; Backspace picks it back up
+    // to reposition. This makes it easy to confirm where a multi-tile ride will go before committing.
+    static bool _previewing = false;
+    static CoordsXY _previewCursor{};
+
     // World direction (the value stored on the track piece) to compass name, matching the
     // movement keys' fixed, camera-independent frame: dir 0 = -x = East, 1 = +y = South,
     // 2 = +x = West (the way the Left arrow moves), 3 = -y = North. This is absolute - it does NOT
@@ -133,7 +140,10 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_active || _stage != Stage::footprint)
             return false;
 
-        const CoordsXY origin = AnchorOriginFromCursor(cursor);
+        // While previewing, the footprint is frozen at the spot the player committed to, so the
+        // highlight stays put as they arrow the cursor around to inspect it.
+        const CoordsXY anchor = _previewing ? _previewCursor : cursor;
+        const CoordsXY origin = AnchorOriginFromCursor(anchor);
         const auto offsets = FootprintOffsets();
         CoordsXY first{ origin.x + offsets.front().x, origin.y + offsets.front().y };
         int32_t minX = first.x, maxX = first.x, minY = first.y, maxY = first.y;
@@ -264,6 +274,7 @@ namespace OpenRCT2::Ui::Accessibility
             _rideName = rideName;
             _needsEntranceExit = needsEntranceExit;
             _stage = Stage::footprint;
+            _previewing = false;
             _active = true;
 
             int32_t w = 1, h = 1;
@@ -271,8 +282,8 @@ namespace OpenRCT2::Ui::Accessibility
             std::string size = std::to_string(w) + " by " + std::to_string(h);
             ScreenReaderSpeak(
                 "Placing " + rideName + ", " + size + ", entrance facing " + kFacingNames[_direction & 3]
-                + ". The cursor holds the bottom left corner. Move to position it, R to rotate, Enter to build, "
-                  "Escape to cancel.");
+                + ". The cursor holds the bottom left corner. Move to position it, R to rotate, Enter to place a "
+                  "preview, then Enter again to build. Escape to cancel.");
         });
 
         GameActions::Execute(&createAction, getGameState());
@@ -294,6 +305,11 @@ namespace OpenRCT2::Ui::Accessibility
             ScreenReaderSpeak("Rotation only applies to the ride itself");
             return;
         }
+        if (_previewing)
+        {
+            ScreenReaderSpeak("Press Backspace to reposition before rotating");
+            return;
+        }
         _direction = (_direction + 1) & 3;
         ScreenReaderSpeak(std::string("Rotated, entrance facing ") + kFacingNames[_direction & 3]);
     }
@@ -303,6 +319,7 @@ namespace OpenRCT2::Ui::Accessibility
         _active = false;
         _rideId = RideId::GetNull();
         _stage = Stage::footprint;
+        _previewing = false;
     }
 
     static void OpenRideWindow()
@@ -317,6 +334,7 @@ namespace OpenRCT2::Ui::Accessibility
         auto* windowMgr = GetWindowManager();
         windowMgr->CloseByClass(WindowClass::error);
         PlayAccessSound(AccessSound::place);
+        _previewing = false; // the footprint is down; leave preview for the next stage / completion
 
         if (_needsEntranceExit)
         {
@@ -558,7 +576,25 @@ namespace OpenRCT2::Ui::Accessibility
         switch (_stage)
         {
             case Stage::footprint:
-                PlaceFootprint(mapCoords);
+                if (!_previewing)
+                {
+                    // First Enter: freeze the footprint here so the player can inspect it before
+                    // committing. Nothing is built yet.
+                    _previewCursor = mapCoords;
+                    _previewing = true;
+                    int32_t w = 1, h = 1;
+                    FootprintSize(w, h);
+                    ScreenReaderSpeak(
+                        "Ride positioned, " + std::to_string(w) + " by " + std::to_string(h)
+                        + " tiles. Arrow around to check the area, Enter to build, Backspace to reposition.");
+                }
+                else
+                {
+                    // Second Enter: build at the frozen spot (not wherever the cursor wandered to).
+                    // On success OnFootprintPlaced advances the stage; on failure it stays previewing
+                    // so the player can Backspace and try elsewhere.
+                    PlaceFootprint(_previewCursor);
+                }
                 break;
             case Stage::entrance:
                 PlaceEntranceExit(mapCoords, false);
@@ -567,6 +603,14 @@ namespace OpenRCT2::Ui::Accessibility
                 PlaceEntranceExit(mapCoords, true);
                 break;
         }
+    }
+
+    void AccessibleRidePlacementPickup()
+    {
+        if (!_active || _stage != Stage::footprint || !_previewing)
+            return;
+        _previewing = false;
+        ScreenReaderSpeak("Picked back up. Move the cursor and press Enter to position it again.");
     }
 
     void AccessibleRidePlacementCancel()
