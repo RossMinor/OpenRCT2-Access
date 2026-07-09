@@ -55,6 +55,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - F: Read the direction you are currently facing.
 - Shift + Left or Right: Snaps the camera 90 degrees in either direction.
 - E: Jumps focus to the entrance of the park.
+- Control + arrow keys: Jumps to the nearest ride or stall in that direction.
 - Shift + 1 ... 9, 0: Place a waypoint at the current location.
 - Control + 1 ... 9, 0: Jump to the waypoint of that number.
 
@@ -78,6 +79,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 ### Building
 
 - Space: Builds a footpath of the selected type on the current tile.
+- Control + p: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location.
+- p: Pause or unpause the game.
 - F4: Opens the path menu.
 - D: Deletes the path on the current tile.
 - l: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path.
@@ -92,6 +95,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Shift + K: Snaps your focus between the two markers.
 - Control + Enter: If hovering over a ride or stall, it will open its construction/build menu.
 - Shift + B: Report the break status of the custom ride tile you are hovering over.
+- Control + - or =: Speeds up or slows down time.
 
 #### While in Build Mode
 
