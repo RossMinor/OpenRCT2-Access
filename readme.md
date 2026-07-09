@@ -79,19 +79,19 @@ At any point, you can press F1 to hear what commands you currently have at your 
 ### Building
 
 - Space: Builds a footpath of the selected type on the current tile.
-- Control + p: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location.
-- p: Pause or unpause the game.
+- Control + P: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location.
+- P: Pause or unpause the game.
 - F4: Opens the path menu.
 - D: Deletes the path on the current tile.
-- l: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path.
+- L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path.
 - ,.: Raise and lower the height of the path you are placing. This is used for building bridges over water or gaps.
 - Page up or down: Raises and lower the land tile you are currently on. **Note:** There is a sound that plays with terrain to indicate elevation. The higher pitch, the higher the elevation. The lower the pitch, the lower the elevation.
 - Control page up or down: Raise or lower the water tile you are currently on.
 - X: Clear the scenery on the tile you are currently on. Examples are trees, bushes, fences, and other objects.
 - B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.
 - O: Buy land ownership over the tile you're on.
-- shift + O: Buy construction rights over the tile you're on.
-- k: place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights.
+- Shift + O: Buy construction rights over the tile you're on.
+- K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights.
 - Shift + K: Snaps your focus between the two markers.
 - Control + Enter: If hovering over a ride or stall, it will open its construction/build menu.
 - Shift + B: Report the break status of the custom ride tile you are hovering over.
