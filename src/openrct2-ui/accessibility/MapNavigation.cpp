@@ -349,6 +349,7 @@ namespace OpenRCT2::Ui::Accessibility
     static std::string DescribeTrackPiece(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted);
     static bool IsRideConstructionWindowOpen();
     static const char* WorldDirectionName(Direction dir);
+    static void GetBrushBounds(int32_t& ax, int32_t& ay, int32_t& bx, int32_t& by);
 
     // Ride name plus its footprint size in tiles, e.g. "Wooden Roller Coaster, 9 by 5". Used when
     // the map cursor passes over a finished ride outside build mode, so it reads as one ride rather
@@ -378,7 +379,11 @@ namespace OpenRCT2::Ui::Accessibility
         bool bareGround = false;
     };
 
-    static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
+    // Gathers the spoken feature parts on a tile, ordered top-down (topmost feature first), with
+    // water appended last since it sits beneath any structures. Land ownership is deliberately not
+    // included - the caller decides how to phrase "Empty"/"Outside park" for a single tile versus a
+    // whole brush area. A tile with nothing on it returns an empty vector.
+    static std::vector<std::string> GatherTileFeatures(const TileCoordsXY& tile)
     {
         // Collected bottom-to-top (the order tile elements are stored in), then reversed so the
         // topmost feature is announced first.
@@ -504,6 +509,14 @@ namespace OpenRCT2::Ui::Accessibility
         if (surface != nullptr && surface->GetWaterHeight() > 0)
             parts.push_back("Water");
 
+        return parts;
+    }
+
+    static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
+    {
+        auto parts = GatherTileFeatures(tile);
+
+        auto* surface = MapGetSurfaceElementAt(tile);
         const bool owned = surface != nullptr && (surface->GetOwnership() & OWNERSHIP_OWNED) != 0;
 
         if (parts.empty())
@@ -516,6 +529,47 @@ namespace OpenRCT2::Ui::Accessibility
             sb.add(part);
         // The land beneath everything: note when the tile is outside the owned park area.
         if (!owned)
+            sb.add("outside park");
+        return { sb.str(), false };
+    }
+
+    // Reads out the whole square brush area (3x3, 5x5, 7x7) centred on the cursor, listing every
+    // feature on every tile one by one - so a player sweeping with a large brush hears all the
+    // bushes, fences, benches and so on inside it, not just the centre tile. Row-major over the
+    // brush's world-tile bounds (clamped to the usable map, so it shrinks near the edge). Land
+    // ownership is summarised once for the area rather than repeated per tile. This is a read-out
+    // only; the step/elevation sounds and boundary cues stay tied to the single centre tile.
+    static TileReadout DescribeBrushArea()
+    {
+        int32_t ax, ay, bx, by;
+        GetBrushBounds(ax, ay, bx, by); // world coords, clamped to the usable map
+        const int32_t minX = ax / kCoordsXYStep;
+        const int32_t minY = ay / kCoordsXYStep;
+        const int32_t maxX = bx / kCoordsXYStep;
+        const int32_t maxY = by / kCoordsXYStep;
+
+        SpeechBuilder sb;
+        bool anyFeature = false;
+        bool anyUnowned = false;
+        for (int32_t y = minY; y <= maxY; y++)
+        {
+            for (int32_t x = minX; x <= maxX; x++)
+            {
+                const TileCoordsXY tile{ x, y };
+                for (auto& part : GatherTileFeatures(tile))
+                {
+                    sb.add(part);
+                    anyFeature = true;
+                }
+                if (!IsTileOwned(tile))
+                    anyUnowned = true;
+            }
+        }
+
+        if (!anyFeature)
+            return { anyUnowned ? "Outside park" : "Empty", true };
+        // Note once if any of the area lies outside the owned park, rather than per tile.
+        if (anyUnowned)
             sb.add("outside park");
         return { sb.str(), false };
     }
@@ -844,7 +898,11 @@ namespace OpenRCT2::Ui::Accessibility
         // any other feature, announced only when the tile description changes. If we just announced
         // a boundary crossing, queue the read (interrupt = false) so both are heard, but skip the
         // bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
-        TileReadout readout = DescribeTileReadout(_cursor);
+        // With a larger brush selected (3x3/5x5/7x7), the tile read-out enumerates every feature in
+        // the whole brush area, one by one, so the player can survey it in a single move. The 1x1
+        // brush reads the single cursor tile exactly as before. Only the read-out widens - the
+        // step/elevation sounds and boundary cues above stay tied to the centre tile.
+        TileReadout readout = (_brushSize > 1) ? DescribeBrushArea() : DescribeTileReadout(_cursor);
         std::string description = std::move(readout.text);
         // While a ride-placement preview is frozen, read its footprint tiles as though the ride were
         // already there, so the player can arrow over the preview and trace its shape/position. These
