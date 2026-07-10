@@ -339,10 +339,12 @@ int32_t AudioMixer::ApplyVolume(const IAudioChannel* channel, void* buffer, size
         case MixerGroup::Sound:
             volumeAdjust *= _adjustSoundVolume;
 
-            // Cap sound volume on title screen so music is more audible
+            // On the title screen the background demo park's sound effects are scaled down so the menu
+            // isn't noisy, by the accessibility menu-sound-volume setting (Ctrl+F1), the way the menu
+            // music has its own volume. Defaults to 50%.
             if (gLegacyScene == LegacyScene::titleSequence)
             {
-                volumeAdjust = std::min(volumeAdjust, 0.75f);
+                volumeAdjust *= std::clamp<int32_t>(Config::Get().sound.titleSoundVolume, 0, 100) / 100.0f;
             }
             break;
         case MixerGroup::RideMusic:

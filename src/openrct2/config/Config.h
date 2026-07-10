@@ -177,6 +177,10 @@ namespace OpenRCT2::Config
         // Volume (0-100%) of the title/main-menu music, on top of the master and music volumes.
         // Defaults low so a fresh boot isn't blaring; adjustable from the mod settings window (Ctrl+F1).
         uint8_t titleMusicVolume;
+        // Volume (0-100%) of sound effects while on the title/main menu (the background demo park), on
+        // top of the master and sound volumes. Defaults to 50% so the menu isn't noisy; adjustable
+        // from the mod settings window (Ctrl+F1).
+        uint8_t titleSoundVolume;
     };
 
     struct Network

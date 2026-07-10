@@ -31,7 +31,7 @@
 
 namespace OpenRCT2::Ui::Windows
 {
-    static constexpr ScreenSize kWindowSize = { 400, 164 };
+    static constexpr ScreenSize kWindowSize = { 400, 184 };
     static constexpr int32_t kVolumeStep = 5;
     static constexpr const char* kPatreonUrl = "https://www.patreon.com/rossminor";
     static constexpr uint8_t kStepSoundModeCount = 3;
@@ -61,6 +61,7 @@ namespace OpenRCT2::Ui::Windows
         WIDX_TILE_MODE,
         WIDX_FOCUS_COLOUR,
         WIDX_MENU_MUSIC,
+        WIDX_MENU_SOUND,
         WIDX_SUPPORT_BUTTON,
     };
 
@@ -72,7 +73,8 @@ namespace OpenRCT2::Ui::Windows
         makeWidget({ 150, 64 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Tile reading mode (cycles on click)
         makeWidget({ 150, 84 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Focus indicator colour (cycles on click)
         makeWidget({ 150, 104 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Menu music volume (adjusts on click)
-        makeWidget({   8, 130 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
+        makeWidget({ 150, 124 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Menu sound volume (adjusts on click)
+        makeWidget({   8, 150 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
     );
     // clang-format on
 
@@ -120,7 +122,8 @@ namespace OpenRCT2::Ui::Windows
     class AccessibilityOptionsWindow final : public Window
     {
     private:
-        // 0 = volume slider, 1 = step sound mode, 2 = tile reading mode, 3 = support button.
+        // Focused control: 0 = cue volume, 1 = step sounds, 2 = tile reading, 3 = focus colour,
+        // 4 = menu music volume, 5 = menu sound volume, 6 = support button.
         int32_t _accessIndex = 0;
 
         // The support button is a two-step confirm: the first Enter reads the thank-you message and
@@ -132,6 +135,7 @@ namespace OpenRCT2::Ui::Windows
         std::string _tileCaption;
         std::string _focusCaption;
         std::string _menuMusicCaption;
+        std::string _menuSoundCaption;
 
         // Backing storage for the caption / button captions (setString stores a pointer, so the
         // strings must outlive the window's draws).
@@ -171,6 +175,8 @@ namespace OpenRCT2::Ui::Windows
             widgets[WIDX_FOCUS_COLOUR].setString(_focusCaption.c_str());
             _menuMusicCaption = std::to_string(Config::Get().sound.titleMusicVolume) + "%";
             widgets[WIDX_MENU_MUSIC].setString(_menuMusicCaption.c_str());
+            _menuSoundCaption = std::to_string(Config::Get().sound.titleSoundVolume) + "%";
+            widgets[WIDX_MENU_SOUND].setString(_menuSoundCaption.c_str());
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override
@@ -191,6 +197,9 @@ namespace OpenRCT2::Ui::Windows
                     break;
                 case WIDX_MENU_MUSIC:
                     adjustMenuMusicVolume(1); // clicking nudges it up
+                    break;
+                case WIDX_MENU_SOUND:
+                    adjustMenuSoundVolume(1); // clicking nudges it up
                     break;
                 case WIDX_SUPPORT_BUTTON:
                     openSupportPage();
@@ -238,6 +247,10 @@ namespace OpenRCT2::Ui::Windows
             // Menu-music volume label (the percentage is drawn on the button itself).
             const auto musicLabelPos = windowPos + ScreenCoordsXY{ 8, 107 };
             drawText(rt, musicLabelPos, "Menu music volume", { colours[1] });
+
+            // Menu-sound volume label (the percentage is drawn on the button itself).
+            const auto soundLabelPos = windowPos + ScreenCoordsXY{ 8, 127 };
+            drawText(rt, soundLabelPos, "Menu sound volume", { colours[1] });
         }
 
         bool onAccessibilityAction(AccessibilityAction action) override
@@ -251,7 +264,7 @@ namespace OpenRCT2::Ui::Windows
                     return true;
                 case AccessibilityAction::moveDown:
                     _supportArmed = false;
-                    _accessIndex = std::min(5, _accessIndex + 1);
+                    _accessIndex = std::min(6, _accessIndex + 1);
                     announceFocus();
                     return true;
                 case AccessibilityAction::moveLeft:
@@ -281,6 +294,10 @@ namespace OpenRCT2::Ui::Windows
                     {
                         adjustMenuMusicVolume(delta);
                     }
+                    else if (_accessIndex == 5)
+                    {
+                        adjustMenuSoundVolume(delta);
+                    }
                     announceValue();
                     return true;
                 }
@@ -300,7 +317,7 @@ namespace OpenRCT2::Ui::Windows
                         cycleFocusColour(1); // Enter advances the focus colour too
                         announceValue();
                     }
-                    else if (_accessIndex == 5)
+                    else if (_accessIndex == 6)
                     {
                         if (_supportArmed)
                         {
@@ -353,6 +370,8 @@ namespace OpenRCT2::Ui::Windows
             else if (_accessIndex == 4)
                 w = WIDX_MENU_MUSIC;
             else if (_accessIndex == 5)
+                w = WIDX_MENU_SOUND;
+            else if (_accessIndex == 6)
                 w = WIDX_SUPPORT_BUTTON;
             const auto& widget = widgets[w];
             const auto tl = windowPos + ScreenCoordsXY{ widget.left, widget.top };
@@ -382,6 +401,8 @@ namespace OpenRCT2::Ui::Windows
                     return "Focus colour";
                 case 4:
                     return "Menu music volume";
+                case 5:
+                    return "Menu sound volume";
                 default:
                     return "Support Ross's work, button";
             }
@@ -402,6 +423,8 @@ namespace OpenRCT2::Ui::Windows
                     return focusColourName(Config::Get().sound.accessibilityFocusColour);
                 case 4:
                     return std::to_string(Config::Get().sound.titleMusicVolume) + " percent";
+                case 5:
+                    return std::to_string(Config::Get().sound.titleSoundVolume) + " percent";
                 default:
                     return {};
             }
@@ -447,6 +470,17 @@ namespace OpenRCT2::Ui::Windows
                 return;
             Config::Get().sound.titleMusicVolume = static_cast<uint8_t>(pct);
             Config::Save();
+            invalidate();
+        }
+
+        void adjustMenuSoundVolume(int32_t delta)
+        {
+            const int32_t pct = std::clamp<int32_t>(Config::Get().sound.titleSoundVolume + delta * kVolumeStep, 0, 100);
+            if (pct == Config::Get().sound.titleSoundVolume)
+                return;
+            Config::Get().sound.titleSoundVolume = static_cast<uint8_t>(pct);
+            Config::Save();
+            // Read live by the mixer while on the title screen, so this takes effect immediately.
             invalidate();
         }
 
