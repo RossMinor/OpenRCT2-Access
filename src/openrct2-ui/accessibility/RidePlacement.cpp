@@ -11,6 +11,7 @@
 
 #include "MapNavigation.h"
 #include "AccessSounds.h"
+#include "Direction.h"
 #include "ScreenReader.h"
 
 #include <openrct2/Context.h>
@@ -80,13 +81,6 @@ namespace OpenRCT2::Ui::Accessibility
     // to reposition. This makes it easy to confirm where a multi-tile ride will go before committing.
     static bool _previewing = false;
     static CoordsXY _previewCursor{};
-
-    // World direction (the value stored on the track piece) to compass name, matching the
-    // movement keys' fixed, camera-independent frame: dir 0 = -x = East, 1 = +y = South,
-    // 2 = +x = West (the way the Left arrow moves), 3 = -y = North. This is absolute - it does NOT
-    // shift with the camera rotation, so a given orientation always reports the same compass name,
-    // consistent with the absolute spoken coordinates.
-    static constexpr const char* kFacingNames[] = { "East", "South", "West", "North" };
 
     // Rotated tile offsets (world units, multiples of kCoordsXYStep) of every tile the current
     // footprint occupies, relative to the placement origin. Mirrors how TrackPlaceAction lays a
@@ -281,7 +275,7 @@ namespace OpenRCT2::Ui::Accessibility
             FootprintSize(w, h);
             std::string size = std::to_string(w) + " by " + std::to_string(h);
             ScreenReaderSpeak(
-                "Placing " + rideName + ", " + size + ", entrance facing " + kFacingNames[_direction & 3]
+                "Placing " + rideName + ", " + size + ", entrance facing " + GetWorldDirectionName(_direction)
                 + ". The cursor holds the bottom left corner. Move to position it, R to rotate, Enter to place a "
                   "preview, then Enter again to build. Escape to cancel.");
         });
@@ -311,7 +305,7 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
         _direction = (_direction + 1) & 3;
-        ScreenReaderSpeak(std::string("Rotated, entrance facing ") + kFacingNames[_direction & 3]);
+        ScreenReaderSpeak(std::string("Rotated, entrance facing ") + GetWorldDirectionName(_direction));
     }
 
     static void Finish()

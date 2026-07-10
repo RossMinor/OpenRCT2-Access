@@ -10,6 +10,7 @@
 #include "SceneryPlacement.h"
 
 #include "AccessSounds.h"
+#include "Direction.h"
 #include "ScreenReader.h"
 
 #include <openrct2/Context.h>
@@ -50,8 +51,6 @@ namespace OpenRCT2::Ui::Accessibility
     // Default colours for placed scenery. Colour is cosmetic for a screen-reader user, so a fixed
     // default keeps the controls simple.
     static constexpr Colour kColour = Colour::bordeauxRed;
-
-    static constexpr const char* kDirectionNames[] = { "North", "East", "South", "West" };
 
     static bool IsWallOrBanner()
     {
@@ -106,7 +105,10 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
         _rotation = (_rotation + 1) & 3;
-        ScreenReaderSpeak(std::string("Rotated, facing ") + kDirectionNames[(_rotation + GetCurrentRotation()) & 3]);
+        // _rotation is placed directly as the object's world direction (see the placement actions
+        // below), so name it in the absolute world frame - NOT camera-relative, unlike _edge/_quadrant
+        // whose input is screen-relative - so the spoken facing matches what actually gets built.
+        ScreenReaderSpeak(std::string("Rotated, facing ") + GetWorldDirectionName(_rotation));
     }
 
     void AccessibleSceneryPlacementSetEdge(int32_t screenEdge, const char* label)

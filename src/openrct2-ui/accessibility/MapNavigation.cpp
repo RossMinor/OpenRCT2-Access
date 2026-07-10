@@ -10,6 +10,7 @@
 #include "MapNavigation.h"
 
 #include "AccessSounds.h"
+#include "Direction.h"
 #include "ElevationTone.h"
 #include "GuestRescue.h"
 #include "MenuNavigation.h"
@@ -48,6 +49,7 @@
 #include <openrct2/audio/AudioContext.h>
 #include <openrct2/audio/AudioMixer.h>
 #include <openrct2/core/MemoryStream.h>
+#include <openrct2/core/Numerics.hpp>
 #include <openrct2/Date.h>
 #include <openrct2/entity/EntityList.h>
 #include <openrct2/entity/Guest.h>
@@ -75,6 +77,7 @@
 #include <openrct2/object/ObjectTypes.h>
 #include <openrct2/ride/Ride.h>
 #include <openrct2/ride/RideConstruction.h>
+#include <openrct2/ride/RideData.h>
 #include <openrct2/ride/TrackData.h>
 #include <openrct2/ride/TrackIteration.h>
 #include <openrct2/ride/ted/TrackElementDescriptor.h>
@@ -349,7 +352,6 @@ namespace OpenRCT2::Ui::Accessibility
 
     static std::string DescribeTrackPiece(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted);
     static bool IsRideConstructionWindowOpen();
-    static const char* WorldDirectionName(Direction dir);
     static void GetBrushBounds(int32_t& ax, int32_t& ay, int32_t& bx, int32_t& by);
 
     // Ride name plus its footprint size in tiles, e.g. "Wooden Roller Coaster, 9 by 5". Used when
@@ -411,7 +413,16 @@ namespace OpenRCT2::Ui::Accessibility
                 else if (const RideId rid = track->GetRideIndex(); rid != namedRide)
                 {
                     namedRide = rid; // only announce the ride once per tile, not per piece
-                    parts.push_back(RideNameWithDimensions(rid));
+                    std::string desc = RideNameWithDimensions(rid);
+                    // Stalls (shops/facilities) have no entrance/exit tiles, so append which way the
+                    // stall itself faces - matching the "facing" the ride entrance/exit readout gives.
+                    if (auto ride = GetRide(rid);
+                        ride != nullptr && ride->getRideTypeDescriptor().flags.has(RtdFlag::isShopOrFacility))
+                    {
+                        if (auto facing = GetShopFacing(*track); facing.has_value())
+                            desc += std::string(", facing ") + GetWorldDirectionName(*facing);
+                    }
+                    parts.push_back(std::move(desc));
                 }
             }
             else if (auto* entrance = el->asEntrance(); entrance != nullptr)
@@ -424,14 +435,10 @@ namespace OpenRCT2::Ui::Accessibility
                     case ENTRANCE_TYPE_RIDE_ENTRANCE:
                         // The doorway (where guests enter) faces opposite the element's stored
                         // direction, which points toward the station platform.
-                        parts.push_back(
-                            std::string("Ride entrance, facing ")
-                            + WorldDirectionName(DirectionReverse(entrance->getDirection())));
+                        parts.push_back(std::string("Ride entrance, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
                         break;
                     case ENTRANCE_TYPE_RIDE_EXIT:
-                        parts.push_back(
-                            std::string("Ride exit, facing ")
-                            + WorldDirectionName(DirectionReverse(entrance->getDirection())));
+                        parts.push_back(std::string("Ride exit, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
                         break;
                 }
             }
@@ -1264,14 +1271,6 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    // Compass name for a world direction, in the same fixed frame as the spoken coordinates and
-    // ride-placement facing (0 = -x = East, 1 = +y = South, 2 = +x = West, 3 = -y = North).
-    static const char* WorldDirectionName(Direction dir)
-    {
-        static constexpr const char* kNames[] = { "East", "South", "West", "North" };
-        return kNames[dir & 3];
-    }
-
     // Connecting height of the path on the tile behind the cursor (opposite the facing direction
     // `dir`), at the edge shared with the cursor's tile, or nullopt when there is no path to
     // connect to. A ramp that rises toward the cursor is one path-step higher on that edge.
@@ -1399,12 +1398,12 @@ namespace OpenRCT2::Ui::Accessibility
             if (_slopeMode == SlopeMode::up)
             {
                 slope = { FootpathSlopeType::sloped, dir };
-                what = std::string("Elevated ramp up to the ") + WorldDirectionName(dir);
+                what = std::string("Elevated ramp up to the ") + GetWorldDirectionName(dir);
             }
             else if (_slopeMode == SlopeMode::down)
             {
                 slope = { FootpathSlopeType::sloped, DirectionReverse(dir) };
-                what = std::string("Elevated ramp down to the ") + WorldDirectionName(dir);
+                what = std::string("Elevated ramp down to the ") + GetWorldDirectionName(dir);
             }
             else
             {
@@ -1503,13 +1502,13 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 baseZ = fromZ;
                 slope = { FootpathSlopeType::sloped, dir };
-                what = std::string("Ramp up to the ") + WorldDirectionName(dir);
+                what = std::string("Ramp up to the ") + GetWorldDirectionName(dir);
             }
             else
             {
                 baseZ = fromZ - kPathHeightStep;
                 slope = { FootpathSlopeType::sloped, DirectionReverse(dir) };
-                what = std::string("Ramp down to the ") + WorldDirectionName(dir);
+                what = std::string("Ramp down to the ") + GetWorldDirectionName(dir);
             }
         }
 
@@ -2316,7 +2315,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         // The compass direction that world delta actually points, so the announcement names true
         // north/east/south/west and updates as the camera is rotated (world dir 0=-x=East, 1=+y=South,
-        // 2=+x=West, 3=-y=North; see WorldDirectionName).
+        // 2=+x=West, 3=-y=North; see GetWorldDirectionName in Direction.h).
         Direction worldDir = 3; // north (wdy < 0)
         if (wdx < 0)
             worldDir = 0; // east
@@ -2360,7 +2359,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         if (bestRide.IsNull())
         {
-            ScreenReaderSpeak(std::string("No rides to the ") + WorldDirectionName(worldDir));
+            ScreenReaderSpeak(std::string("No rides to the ") + GetWorldDirectionName(worldDir));
             return;
         }
 
@@ -3479,8 +3478,8 @@ namespace OpenRCT2::Ui::Accessibility
 
         // A ride entrance/exit is stored facing toward its station platform; its doorway - where
         // guests walk in and a queue/path connects - faces the opposite way.
-        const Direction doorway = DirectionReverse(loc.direction);
-        std::string text = std::string(", facing ") + WorldDirectionName(doorway);
+        const Direction doorway = GetEntranceFacing(loc.direction);
+        std::string text = std::string(", facing ") + GetWorldDirectionName(doorway);
 
         // Is there a footpath on the doorway tile at roughly the entrance's height?
         const auto entranceWorld = TileCoordsXYZ(loc.x, loc.y, loc.z).ToCoordsXYZ();
