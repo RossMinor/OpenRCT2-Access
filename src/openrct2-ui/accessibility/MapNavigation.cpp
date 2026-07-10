@@ -556,6 +556,30 @@ namespace OpenRCT2::Ui::Accessibility
         return parts;
     }
 
+    // Elevation (in the same halved units the tone and coordinate readout use) that best represents
+    // the level a player is at on this tile. Normally the land surface, but a ride entrance or exit
+    // sits elevated at its station height on supports above the ground, so when one is present its
+    // height is used instead. Without this an elevated entrance/exit would read at ground level - or
+    // sound no tone at all when the ground happens to match the previous tile - hiding the drop.
+    static int32_t EffectiveElevationAt(const TileCoordsXY& tile)
+    {
+        auto* surface = MapGetSurfaceElementAt(tile);
+        int32_t baseHeight = surface != nullptr ? surface->baseHeight : 0;
+        for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
+        {
+            if (auto* entrance = el->asEntrance(); entrance != nullptr && !el->isGhost())
+            {
+                const auto type = entrance->GetEntranceType();
+                if (type == ENTRANCE_TYPE_RIDE_ENTRANCE || type == ENTRANCE_TYPE_RIDE_EXIT)
+                    baseHeight = std::max<int32_t>(baseHeight, el->baseHeight);
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+        return baseHeight / 2;
+    }
+
     static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
     {
         auto parts = GatherTileFeatures(tile);
@@ -678,7 +702,7 @@ namespace OpenRCT2::Ui::Accessibility
         // Keep the cursor's own bookkeeping coherent so it behaves normally once following ends.
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            _lastElevation = surface->baseHeight / 2;
+            _lastElevation = EffectiveElevationAt(_cursor);
             _scanHeight = surface->baseHeight;
         }
         _lastTileDescription = GetTileDescription(_cursor);
@@ -860,10 +884,11 @@ namespace OpenRCT2::Ui::Accessibility
             _lastMoveDir = 3;
 
         // Elevation tone: beep only when the new tile's height differs from the last one, so
-        // moving across flat ground stays silent. Pitch rises with elevation.
+        // moving across flat ground stays silent. Pitch rises with elevation. A ride entrance/exit
+        // reads at its own elevated height (see EffectiveElevationAt), not the ground beneath it.
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            const int32_t elevation = surface->baseHeight / 2;
+            const int32_t elevation = EffectiveElevationAt(_cursor);
             if (elevation != _lastElevation)
             {
                 PlayElevationTone(elevation);
@@ -1028,8 +1053,8 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t x = SpokenCoordX(_cursor);
         const int32_t y = SpokenCoordY(_cursor);
         std::string text = "X " + std::to_string(x) + ", Y " + std::to_string(y);
-        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
-            text += ", elevation " + std::to_string(surface->baseHeight / 2);
+        if (MapGetSurfaceElementAt(_cursor) != nullptr)
+            text += ", elevation " + std::to_string(EffectiveElevationAt(_cursor));
         ScreenReaderSpeak(text);
     }
 
