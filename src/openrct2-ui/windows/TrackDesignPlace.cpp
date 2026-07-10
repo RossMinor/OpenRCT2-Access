@@ -45,6 +45,8 @@
 #include <openrct2/world/tile_element/Slope.h>
 #include <openrct2/world/tile_element/SurfaceElement.h>
 #include <algorithm>
+#include <optional>
+#include <string>
 #include <vector>
 
 using namespace OpenRCT2::Numerics;
@@ -114,6 +116,15 @@ namespace OpenRCT2::Ui::Windows
         int32_t _trackPlaceZ;
         bool _triggeredUndergroundView = false;
 
+        // Two-stage keyboard placement (accessibility). The first Enter does not build: it freezes the
+        // design's footprint at the cursor (_accPreviewing = true) so a blind player can arrow around
+        // and hear where every tile of the ride would land before committing. A second Enter builds at
+        // that frozen origin; Backspace picks it back up to reposition. Mirrors the shop/flat-ride
+        // keyboard placement flow so pre-built coasters can be checked before they are built.
+        bool _accPreviewing = false;
+        CoordsXY _accPreviewOrigin{};
+        std::string _accPreviewName;
+
     public:
         void onOpen() override
         {
@@ -131,6 +142,7 @@ namespace OpenRCT2::Ui::Windows
 
         void onClose() override
         {
+            _accPreviewing = false;
             clearProvisional();
             ViewportSetVisibility(ViewportVisibility::standard);
             gMapSelectFlags.unset(MapSelectFlag::enableConstruct);
@@ -438,13 +450,21 @@ namespace OpenRCT2::Ui::Windows
             // positions the ride; these keys rotate, build, and cancel).
             Accessibility::ScreenReaderSpeak(
                 "Placing " + std::string(_trackDesign->gameStateData.name)
-                + ". Move the cursor to position the ride, R to rotate, Enter to build, Escape to cancel.");
+                + ". Move the cursor to position the ride, R to rotate, Enter to place a preview, then Enter "
+                  "again to build. Backspace repositions, Escape cancels.");
         }
 
         // ---- Accessibility: driven from the keyboard map cursor via the free functions below.
 
         void rotateForAccessibility()
         {
+            // Rotating changes the footprint, so it would invalidate a frozen preview; ask the player
+            // to pick it back up first (matching the shop/flat-ride placement flow).
+            if (_accPreviewing)
+            {
+                Accessibility::ScreenReaderSpeak("Press Backspace to reposition before rotating");
+                return;
+            }
             clearProvisional();
             _currentTrackPieceDirection = (_currentTrackPieceDirection + 1) & 3;
             invalidate();
@@ -765,7 +785,83 @@ namespace OpenRCT2::Ui::Windows
             announcePlacementFailure(diag.error, mapCoords, baseZ);
         }
 
+        // Every world-coordinate tile the design's footprint (plus entrances/exits) would occupy at
+        // the given origin and current rotation, as tile coordinates. Used to read out the frozen
+        // preview so the player can trace the ride's shape by arrowing over it.
+        std::vector<TileCoordsXY> previewTiles(const CoordsXY& origin)
+        {
+            std::vector<TileCoordsXY> tiles;
+            for (const auto& t : validatedTiles(origin))
+                tiles.push_back(TileCoordsXY{ t });
+            return tiles;
+        }
+
+        // First Enter: freeze the design's footprint at the cursor without building, so the player can
+        // arrow around to inspect where it will sit. Announces the footprint size and the controls.
+        void freezePreview(const CoordsXY& mapCoords)
+        {
+            _accPreviewOrigin = mapCoords;
+            _accPreviewName = std::string(_trackDesign->gameStateData.name);
+            _accPreviewing = true;
+
+            // Footprint extent in tiles, for the size announcement.
+            const auto tiles = previewTiles(mapCoords);
+            int32_t w = 1, h = 1;
+            if (!tiles.empty())
+            {
+                int32_t minX = tiles.front().x, maxX = tiles.front().x;
+                int32_t minY = tiles.front().y, maxY = tiles.front().y;
+                for (const auto& t : tiles)
+                {
+                    minX = std::min(minX, t.x);
+                    maxX = std::max(maxX, t.x);
+                    minY = std::min(minY, t.y);
+                    maxY = std::max(maxY, t.y);
+                }
+                w = maxX - minX + 1;
+                h = maxY - minY + 1;
+            }
+            Accessibility::ScreenReaderSpeak(
+                "Ride positioned, " + std::to_string(w) + " by " + std::to_string(h)
+                + " tiles. Arrow around to check the area, Enter to build, Backspace to reposition.");
+        }
+
+        // Backspace during a preview: pick the design back up so it can be repositioned.
+        void pickupForAccessibility()
+        {
+            if (!_accPreviewing)
+                return;
+            _accPreviewing = false;
+            Accessibility::ScreenReaderSpeak("Picked back up. Move the cursor and press Enter to position it again.");
+        }
+
+        // If a preview is frozen and covers the given tile, returns the design's name so the tile
+        // reader can announce the ride as though it were already there. Otherwise nullopt.
+        std::optional<std::string> previewLabelForTile(const TileCoordsXY& tile)
+        {
+            if (!_accPreviewing)
+                return std::nullopt;
+            for (const auto& t : previewTiles(_accPreviewOrigin))
+                if (t.x == tile.x && t.y == tile.y)
+                    return _accPreviewName;
+            return std::nullopt;
+        }
+
+        // Handles Enter during keyboard placement: the first freezes a preview, the second builds it
+        // at the frozen origin (searching upward for a valid height, clearing scenery as needed).
         void placeAtTile(const CoordsXY& mapCoords)
+        {
+            if (_trackDesign == nullptr)
+                return;
+            if (!_accPreviewing)
+            {
+                freezePreview(mapCoords);
+                return;
+            }
+            buildAtTile(_accPreviewOrigin);
+        }
+
+        void buildAtTile(const CoordsXY& mapCoords)
         {
             if (_trackDesign == nullptr)
                 return;
@@ -842,6 +938,7 @@ namespace OpenRCT2::Ui::Windows
                     // under it. This runs only after a successful build, so it can never destroy
                     // scenery for a placement that failed.
                     clearFootprintScenery(CoordsXY{ trackLoc });
+                    _accPreviewing = false; // the ride is down; leave preview mode
                     Accessibility::ScreenReaderSpeak("Ride placed");
 
                     if (TrackDesignAreEntranceAndExitPlaced())
@@ -1282,5 +1379,18 @@ namespace OpenRCT2::Ui::Windows
     {
         if (auto* w = GetTrackPlaceWindow(); w != nullptr)
             w->close();
+    }
+
+    void WindowTrackPlacePickup()
+    {
+        if (auto* w = GetTrackPlaceWindow(); w != nullptr)
+            w->pickupForAccessibility();
+    }
+
+    std::optional<std::string> WindowTrackPlacePreviewLabel(const TileCoordsXY& tile)
+    {
+        if (auto* w = GetTrackPlaceWindow(); w != nullptr)
+            return w->previewLabelForTile(tile);
+        return std::nullopt;
     }
 } // namespace OpenRCT2::Ui::Windows

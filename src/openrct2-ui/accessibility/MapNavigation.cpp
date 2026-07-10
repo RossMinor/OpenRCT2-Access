@@ -906,15 +906,24 @@ namespace OpenRCT2::Ui::Accessibility
         TileReadout readout = (_brushSize > 1) ? DescribeBrushArea() : DescribeTileReadout(_cursor);
         std::string description = std::move(readout.text);
         // While a ride-placement preview is frozen, read its footprint tiles as though the ride were
-        // already there, so the player can arrow over the preview and trace its shape/position. These
-        // tiles are always read (like the build-mode track readout), regardless of the tile-speech
-        // mode, since the player is actively inspecting the placement.
+        // already there, so the player can arrow over the preview and trace its shape/position.
         bool onPreviewTile = false;
         if (auto previewLabel = AccessibleRidePlacementPreviewLabel(_cursor); previewLabel.has_value())
         {
+            // Shop / flat-ride footprint: a small area, so always read (onPreviewTile) regardless of the
+            // tile-speech mode, letting the player trace each of its few tiles.
             description = readout.bareGround ? *previewLabel : (*previewLabel + ", " + description);
             readout.bareGround = false;
             onPreviewTile = true;
+        }
+        // A frozen pre-built ride/coaster design preview (the track-place window). Its footprint is
+        // large, so this follows the tile-speech mode rather than forcing a read on every tile: on
+        // "every tile" each tile reads, on "on change" the ride name reads once as the player enters the
+        // footprint and stays quiet across the rest, and on "off" it is silent - whatever the setting.
+        else if (auto tdLabel = Windows::WindowTrackPlacePreviewLabel(_cursor); tdLabel.has_value())
+        {
+            description = readout.bareGround ? *tdLabel : (*tdLabel + ", " + description);
+            readout.bareGround = false;
         }
         std::string track = IsRideConstructionWindowOpen() ? GetTrackReadout(_cursor) : std::string();
         const auto tileMode = static_cast<TileSpeechMode>(Config::Get().sound.accessibilityTileSpeechMode);
@@ -2554,8 +2563,10 @@ namespace OpenRCT2::Ui::Accessibility
         if (modifiers & KMOD_ALT)
             return false;
 
-        // During pre-built ride placement, dedicated keys rotate / build / cancel the design.
-        // Arrow keys and the rest fall through so the map cursor still positions the ride.
+        // During pre-built ride placement, dedicated keys rotate / build / cancel the design. Enter is
+        // two-stage: the first freezes a preview at the cursor, the second builds it; Backspace picks a
+        // frozen preview back up. Arrow keys and the rest fall through so the map cursor still positions
+        // the ride (and can trace the frozen preview's footprint).
         if (Windows::WindowTrackPlaceIsActive())
         {
             switch (key)
@@ -2572,6 +2583,9 @@ namespace OpenRCT2::Ui::Accessibility
                     Windows::WindowTrackPlaceAtTile(CoordsXY{ world.x, world.y });
                     return true;
                 }
+                case SDLK_BACKSPACE:
+                    Windows::WindowTrackPlacePickup();
+                    return true;
                 case SDLK_ESCAPE:
                     Windows::WindowTrackPlaceCancel();
                     return true;
@@ -2995,7 +3009,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (Windows::WindowTrackPlaceIsActive())
         {
             ScreenReaderSpeak(
-                "Placing a ride design. Arrow keys move the cursor, Enter places it, R rotates it, "
+                "Placing a ride design. Arrow keys move the cursor. Enter places a preview you can arrow "
+                "around to check, then Enter again builds it. Backspace repositions the preview, R rotates, "
                 "Escape cancels.");
             return;
         }

@@ -11,8 +11,10 @@
 
 #include <openrct2/Identifiers.h>
 #include <openrct2/interface/Window.h>
+#include <openrct2/world/Location.hpp>
 #include <openrct2/world/ScenerySelection.h>
 #include <optional>
+#include <string>
 #include <string_view>
 
 struct StringWithArgs;
@@ -363,6 +365,11 @@ namespace OpenRCT2::Ui::Windows
     void WindowTrackPlaceRotate();
     void WindowTrackPlaceAtTile(const CoordsXY& mapCoords);
     void WindowTrackPlaceCancel();
+    // Backspace during a frozen preview: pick the design back up so it follows the cursor again.
+    void WindowTrackPlacePickup();
+    // If a design preview is frozen and covers this tile, the design's name (so the tile reader can
+    // announce the ride as though it were already there). Nullopt otherwise.
+    std::optional<std::string> WindowTrackPlacePreviewLabel(const TileCoordsXY& tile);
 
     // TrackDesignManage
     WindowBase* TrackManageOpen(struct TrackDesignFileRef* tdFileRef);
