@@ -53,6 +53,7 @@
 #include <openrct2/Date.h>
 #include <openrct2/entity/EntityList.h>
 #include <openrct2/entity/Guest.h>
+#include <openrct2/entity/Litter.h>
 #include <openrct2/entity/Peep.h>
 #include <openrct2/Game.h>
 #include <openrct2/GameState.h>
@@ -382,6 +383,31 @@ namespace OpenRCT2::Ui::Accessibility
         bool bareGround = false;
     };
 
+    // Ground litter (vomit, food wrappers, cans, cups, rubbish) sits on a tile as sprites, not as
+    // tile elements, so the tile-element loop never sees it. Guests drop it on paths; without this a
+    // blind player has no way to know a path is filthy or needs a handyman. Litter of the same kind
+    // is grouped with a count, so a messy tile reads e.g. "Vomit, 3 empty cups" rather than a dozen
+    // separate items. Appends its parts to the caller's list.
+    static void GatherGroundLitter(const TileCoordsXY& tile, std::vector<std::string>& parts)
+    {
+        // name -> count, kept in first-seen order for a stable readout.
+        std::vector<std::pair<std::string, int32_t>> counts;
+        for (auto* litter : EntityTileList<Litter>(tile.ToCoordsXY()))
+        {
+            const StringId id = litter->getName();
+            if (id == kStringIdNone)
+                continue;
+            std::string name = OpenRCT2::FormatStringID(id);
+            auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == name; });
+            if (it == counts.end())
+                counts.emplace_back(std::move(name), 1);
+            else
+                it->second++;
+        }
+        for (auto& [name, n] : counts)
+            parts.push_back(n > 1 ? std::to_string(n) + " " + name : name);
+    }
+
     // Gathers the spoken feature parts on a tile, ordered top-down (topmost feature first), with
     // water appended last since it sits beneath any structures. Land ownership is deliberately not
     // included - the caller decides how to phrase "Empty"/"Outside park" for a single tile versus a
@@ -477,7 +503,13 @@ namespace OpenRCT2::Ui::Accessibility
                 if (p->HasAddition())
                 {
                     std::string addition = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
-                    parts.push_back(addition.empty() ? "Path addition" : addition);
+                    if (addition.empty())
+                        addition = "Path addition";
+                    // A vandalised addition (broken bench, bin, lamp or queue TV) still occupies the
+                    // tile but no longer works until a handyman fixes it; call that out.
+                    if (p->IsBroken())
+                        addition += ", vandalized";
+                    parts.push_back(std::move(addition));
                 }
             }
             else if (auto* b = el->asBanner(); b != nullptr)
@@ -508,6 +540,10 @@ namespace OpenRCT2::Ui::Accessibility
                 break;
             el++;
         }
+
+        // Litter sits on top of whatever is on the ground; add it last so, after the flip below, it
+        // is announced first.
+        GatherGroundLitter(tile, parts);
 
         // Tile elements were gathered bottom-to-top; flip so we read the topmost feature first.
         std::reverse(parts.begin(), parts.end());
