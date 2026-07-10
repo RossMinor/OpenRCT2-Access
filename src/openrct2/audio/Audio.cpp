@@ -201,7 +201,7 @@ namespace OpenRCT2::Audio
         return std::make_tuple(audioObject, sampleIndex);
     }
 
-    static void Play(IAudioSource* audioSource, int32_t volume, int32_t pan)
+    static void Play(IAudioSource* audioSource, int32_t volume, int32_t pan, MixerGroup group = MixerGroup::Sound)
     {
         int32_t mixerPan = 0;
         if (pan != kAudioPlayAtCentre)
@@ -211,7 +211,7 @@ namespace OpenRCT2::Audio
             mixerPan = ((x2 / screenWidth) - 0x8000) >> 4;
         }
 
-        CreateAudioChannel(audioSource, MixerGroup::Sound, false, DStoMixerVolume(volume), DStoMixerPan(mixerPan), 1, true);
+        CreateAudioChannel(audioSource, group, false, DStoMixerVolume(volume), DStoMixerPan(mixerPan), 1, true);
     }
 
     void Play3D(SoundId soundId, const CoordsXYZ& loc)
@@ -220,6 +220,11 @@ namespace OpenRCT2::Audio
     }
 
     void Play3D(SoundId soundId, const CoordsXYZ& loc, int32_t volumeAdjust)
+    {
+        Play3D(soundId, loc, volumeAdjust, MixerGroup::Sound);
+    }
+
+    void Play3D(SoundId soundId, const CoordsXYZ& loc, int32_t volumeAdjust, MixerGroup group)
     {
         if (!IsAvailable())
             return;
@@ -235,7 +240,7 @@ namespace OpenRCT2::Audio
                 auto source = baseAudioObject->GetSample(sampleIndex);
                 if (source != nullptr)
                 {
-                    Play(source, params.volume, params.pan);
+                    Play(source, params.volume, params.pan, group);
                 }
             }
         }

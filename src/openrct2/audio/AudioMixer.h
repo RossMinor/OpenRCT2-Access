@@ -25,6 +25,10 @@ namespace OpenRCT2::Audio
         Sound,
         RideMusic,
         TitleMusic,
+        // Accessibility-mod feedback cues (footsteps, placement, elevation tone, etc.). Scaled only by
+        // the master volume - deliberately NOT by the game's sound-effect slider - so the mod's own cue
+        // volume is the only in-game control over them. See AudioMixer::ApplyVolume.
+        Accessibility,
     };
 
     struct IAudioSource;

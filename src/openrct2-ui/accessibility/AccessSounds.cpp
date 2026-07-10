@@ -99,7 +99,9 @@ namespace OpenRCT2::Ui::Accessibility
     static void PlaySource(IAudioSource* source, int32_t pct)
     {
         const int32_t volume = kMixerVolumeMax * pct / 100;
-        CreateAudioChannel(source, MixerGroup::Sound, false, volume, 0.5f, 1.0, true);
+        // MixerGroup::Accessibility is scaled only by master volume, not the game's sound slider, so
+        // the mod's own cue-volume percentage (pct) is the sole in-game control over these cues.
+        CreateAudioChannel(source, MixerGroup::Accessibility, false, volume, 0.5f, 1.0, true);
     }
 
     void PlayAccessSound(AccessSound sound)

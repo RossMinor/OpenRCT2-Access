@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <openrct2/audio/Audio.h>
+#include <openrct2/audio/AudioMixer.h>
 #include <openrct2/config/Config.h>
 #include <openrct2/world/Location.hpp>
 #include <string>
@@ -220,6 +221,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (pct < 100)
             volumeAdjust = std::max(-10000, static_cast<int32_t>(std::lround(2000.0 * std::log10(pct / 100.0))));
 
-        Audio::Play3D(soundId, loc, volumeAdjust);
+        // Route through the accessibility mixer group so this cue is scaled only by master volume and
+        // the mod's own cue-volume setting (applied via volumeAdjust), never the game's sound slider.
+        Audio::Play3D(soundId, loc, volumeAdjust, Audio::MixerGroup::Accessibility);
     }
 } // namespace OpenRCT2::Ui::Accessibility

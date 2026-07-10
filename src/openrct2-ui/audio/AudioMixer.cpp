@@ -349,6 +349,11 @@ int32_t AudioMixer::ApplyVolume(const IAudioChannel* channel, void* buffer, size
         case MixerGroup::TitleMusic:
             volumeAdjust *= _adjustMusicVolume;
             break;
+        case MixerGroup::Accessibility:
+            // Master volume only (already applied above). Intentionally NOT scaled by the game's
+            // sound-effect slider so the accessibility mod's own cue-volume setting is the sole
+            // in-game control over these sounds.
+            break;
     }
 
     int32_t startVolume = channel->GetOldVolume() * volumeAdjust;

@@ -452,7 +452,10 @@ namespace OpenRCT2::Config
             model->rideMusicEnabled = reader->GetBoolean("ride_music", true);
             model->rideMusicVolume = reader->GetInt32("ride_music_volume", 100);
             model->audioFocus = reader->GetBoolean("audio_focus", false);
-            model->accessibilityCueVolume = reader->GetInt32("accessibility_cue_volume", 100);
+            // Accessibility cues are no longer scaled by the game's sound slider, so seed their volume
+            // from the current sound volume when it has never been set. This makes them start at the
+            // same level as the game's sound effects, then stay independent of that slider thereafter.
+            model->accessibilityCueVolume = reader->GetInt32("accessibility_cue_volume", model->soundVolume);
             model->accessibilityStepSoundMode = reader->GetInt32("accessibility_step_sound_mode", 0);
             model->accessibilityTileSpeechMode = reader->GetInt32("accessibility_tile_speech_mode", 1);
             model->accessibilityFocusColour = reader->GetInt32("accessibility_focus_colour", 18); // Colour::yellow

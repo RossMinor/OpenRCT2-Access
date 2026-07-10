@@ -18,6 +18,7 @@
 #include <openrct2/audio/AudioContext.h>
 #include <openrct2/audio/AudioMixer.h>
 #include <openrct2/audio/AudioSource.h>
+#include <openrct2/config/Config.h>
 #include <openrct2/core/MemoryStream.h>
 #include <vector>
 
@@ -100,6 +101,12 @@ namespace OpenRCT2::Ui::Accessibility
         if (!Audio::IsAvailable())
             return;
 
+        // The elevation tone is an accessibility cue, so it follows the mod's cue-volume setting like
+        // the other cues: muted at 0, and scaled by the percentage otherwise.
+        const int32_t pct = Config::Get().sound.accessibilityCueVolume;
+        if (pct <= 0)
+            return;
+
         const int32_t clamped = std::clamp(elevation, 0, kElevToneRange);
         Audio::IAudioSource*& source = _elevationToneSources[clamped];
         if (source == nullptr)
@@ -114,6 +121,9 @@ namespace OpenRCT2::Ui::Accessibility
         if (source == nullptr)
             return;
 
-        Audio::CreateAudioChannel(source, Audio::MixerGroup::Sound, false, Audio::kMixerVolumeMax, 0.5f, 1.0, true);
+        // MixerGroup::Accessibility: master volume only, decoupled from the game's sound slider. The
+        // cue-volume percentage scales the tone here so the mod's slider controls it.
+        const int32_t volume = Audio::kMixerVolumeMax * pct / 100;
+        Audio::CreateAudioChannel(source, Audio::MixerGroup::Accessibility, false, volume, 0.5f, 1.0, true);
     }
 } // namespace OpenRCT2::Ui::Accessibility
