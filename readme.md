@@ -46,7 +46,6 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Online Multiplayer
 - Importing extensions.
 - MacOS compatibility
-- GOG compatibility.
 
 ### Navigation
 
@@ -56,6 +55,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Shift + Left or Right: Snaps the camera 90 degrees in either direction.
 - E: Jumps focus to the entrance of the park.
 - Control + arrow keys: Jumps to the nearest ride or stall in that direction.
+- Control + E: Jumps between the entrance and exit of the ride you are hovering over.
 - Shift + 1 ... 9, 0: Place a waypoint at the current location.
 - Control + 1 ... 9, 0: Jump to the waypoint of that number.
 
