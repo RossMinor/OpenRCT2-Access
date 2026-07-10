@@ -11,6 +11,7 @@
 
 #include "ScreenReader.h"
 
+#include <SDL.h>
 #include <atomic>
 #include <cstdlib>
 #include <filesystem>
@@ -59,6 +60,8 @@ namespace OpenRCT2::Ui::Accessibility
     static bool _checkedUpdateMarker = false;
     static bool _changelogPromptPending = false;
     static std::string _changelogUrl;
+    // Highlighted choice in the yes/no changelog menu: 0 = Yes (open the changelog), 1 = No.
+    static int32_t _changelogChoice = 0;
 
     static std::filesystem::path ChangelogMarkerPath()
     {
@@ -251,12 +254,37 @@ namespace OpenRCT2::Ui::Accessibility
                 std::getline(marker, _changelogUrl);
                 marker.close();
                 std::filesystem::remove(markerPath, ec); // one-shot: never prompt twice for the same update
+
+                // Be tolerant of how the marker was written: strip a leading UTF-8 BOM and any
+                // surrounding whitespace/CR so the URL handed to the browser is clean (a stray BOM
+                // makes ShellExecute silently fail to open the page).
+                if (_changelogUrl.rfind("\xEF\xBB\xBF", 0) == 0)
+                    _changelogUrl.erase(0, 3);
+                while (!_changelogUrl.empty()
+                       && (_changelogUrl.back() == '\r' || _changelogUrl.back() == '\n'
+                           || _changelogUrl.back() == ' ' || _changelogUrl.back() == '\t'))
+                    _changelogUrl.pop_back();
+                while (!_changelogUrl.empty() && (_changelogUrl.front() == ' ' || _changelogUrl.front() == '\t'))
+                    _changelogUrl.erase(0, 1);
+
+                // The relaunched game can come up behind other windows (the update helper spawns it
+                // from a background console), leaving the player alt-tabbing to find it. Force our
+                // window to the foreground so they land straight back in the game.
+                if (auto* window = static_cast<SDL_Window*>(GetContext()->GetUiContext().GetWindow());
+                    window != nullptr)
+                {
+                    SDL_RestoreWindow(window); // in case it came up minimised
+                    SDL_ShowWindow(window);
+                    SDL_RaiseWindow(window);
+                }
+
                 if (!_changelogUrl.empty())
                 {
                     _changelogPromptPending = true;
+                    _changelogChoice = 0; // default highlight: Yes
                     ScreenReaderSpeak(
-                        "Update installed. Press Enter to view the changelog in your browser, or any other key "
-                        "to continue.");
+                        "Update installed. Would you like to open the changelog in your browser? Use the up and "
+                        "down arrow keys to choose, then press Enter. Yes.");
                 }
             }
         }
@@ -302,15 +330,30 @@ namespace OpenRCT2::Ui::Accessibility
         return _changelogPromptPending;
     }
 
-    void OpenChangelog()
+    void ChangelogPromptMove(int32_t delta)
     {
-        _changelogPromptPending = false;
-        if (!_changelogUrl.empty())
-            GetContext()->GetUiContext().OpenURL(_changelogUrl);
+        if (!_changelogPromptPending)
+            return;
+        // Two options (Yes/No); wrap so Up and Down both simply flip between them.
+        _changelogChoice = ((_changelogChoice + delta) % 2 + 2) % 2;
+        ScreenReaderSpeak(_changelogChoice == 0 ? "Yes" : "No");
     }
 
-    void DismissChangelogPrompt()
+    void ChangelogPromptConfirm()
     {
+        if (!_changelogPromptPending)
+            return;
+        _changelogPromptPending = false;
+        if (_changelogChoice == 0 && !_changelogUrl.empty())
+            GetContext()->GetUiContext().OpenURL(_changelogUrl);
+        else
+            ScreenReaderSpeak("Continuing");
+    }
+
+    void ChangelogPromptCancel()
+    {
+        if (!_changelogPromptPending)
+            return;
         _changelogPromptPending = false;
     }
 

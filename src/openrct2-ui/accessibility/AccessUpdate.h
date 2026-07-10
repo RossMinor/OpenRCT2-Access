@@ -26,12 +26,14 @@ namespace OpenRCT2::Ui::Accessibility
     // relaunches. Safe to call repeatedly; ignored if no update is available or one is in progress.
     void StartAccessUpdateInstall();
 
-    // After a self-update relaunch, the mod offers to open the new release's changelog. While this
-    // prompt is pending, the next key decides: Enter opens the changelog (OpenChangelog), any other
-    // key dismisses it (DismissChangelogPrompt). One-shot per update.
+    // After a self-update relaunch, the mod offers to open the new release's changelog as a modal
+    // yes/no menu. While the prompt is pending it owns the keyboard: Up/Down move between Yes and No,
+    // Enter confirms the highlighted choice (Yes opens the changelog, No continues), and Escape
+    // cancels (same as No). One-shot per update.
     bool IsChangelogPromptPending();
-    void OpenChangelog();
-    void DismissChangelogPrompt();
+    void ChangelogPromptMove(int32_t delta); // -1 = up/previous, +1 = down/next
+    void ChangelogPromptConfirm();
+    void ChangelogPromptCancel();
 
     // This build's accessibility mod version string (e.g. "v0.6").
     const char* GetAccessModVersion();

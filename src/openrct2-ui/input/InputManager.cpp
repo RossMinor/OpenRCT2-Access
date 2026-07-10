@@ -425,17 +425,31 @@ void InputManager::process(const InputEvent& e)
             Accessibility::StartAccessUpdateInstall();
             return;
         }
-        // Just after a self-update relaunch, the mod asks whether to open the changelog: Enter opens
-        // it, any other key dismisses the prompt (and still does its normal job).
+        // Just after a self-update relaunch, the mod asks whether to open the changelog as a modal
+        // yes/no menu: Up/Down move between Yes and No, Enter confirms the highlighted choice, Escape
+        // cancels. The prompt owns the keyboard while open, so other keys are swallowed.
         if (e.state == InputEventState::down && Accessibility::IsChangelogPromptPending())
         {
-            if (e.button == SDLK_RETURN || e.button == SDLK_KP_ENTER)
+            switch (e.button)
             {
-                Accessibility::OpenChangelog();
-                return;
+                case SDLK_UP:
+                case SDLK_LEFT:
+                    Accessibility::ChangelogPromptMove(-1);
+                    return;
+                case SDLK_DOWN:
+                case SDLK_RIGHT:
+                    Accessibility::ChangelogPromptMove(1);
+                    return;
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER:
+                    Accessibility::ChangelogPromptConfirm();
+                    return;
+                case SDLK_ESCAPE:
+                    Accessibility::ChangelogPromptCancel();
+                    return;
+                default:
+                    return; // modal: ignore everything else until the player chooses
             }
-            Accessibility::DismissChangelogPrompt();
-            // fall through so this key still performs its usual action
         }
         // Escape stops following an NPC (takes priority over other Escape handling while active).
         if (e.state == InputEventState::down && e.button == SDLK_ESCAPE && Accessibility::IsFollowingEntity())
