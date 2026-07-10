@@ -212,6 +212,12 @@ namespace OpenRCT2::Ui::Accessibility
     static int32_t _buildHeightOffset = 0;
     static constexpr int32_t kMaxBuildHeightOffset = 32; // ~64 land steps; well past any sane bridge
 
+    // Order a tile's stacked features are read (Config::sound.accessibilityTileReadingOrder): from the
+    // lowest feature up (default, read in build order like a queue) or the highest feature down (the
+    // list reversed, like a stack). See GatherTileFeatures.
+    static constexpr uint8_t kTileReadingOrderLowestFirst = 0;
+    static constexpr uint8_t kTileReadingOrderHighestFirst = 1;
+
     // Elevation tone: a short sine beep whose pitch rises with terrain height. It plays only
     // when the cursor moves onto a tile at a different elevation, so scanning flat ground stays
     // silent. The sine sample is synthesised once and cached; pitch is set per play via the
@@ -414,9 +420,16 @@ namespace OpenRCT2::Ui::Accessibility
     // whole brush area. A tile with nothing on it returns an empty vector.
     static std::vector<std::string> GatherTileFeatures(const TileCoordsXY& tile)
     {
-        // Collected bottom-to-top (the order tile elements are stored in), then reversed so the
-        // topmost feature is announced first.
+        // Built in a single canonical bottom-to-top order (lowest feature first): water, then the
+        // tile elements in the order they are stored (which is by height), then litter on top. The
+        // reading-order setting decides how this list is read out: lowest-to-highest as built
+        // (the default - like a queue), or reversed to highest-to-lowest (like a stack). Both modes
+        // read exactly the same features in exactly mirrored order.
         std::vector<std::string> parts;
+
+        // Water is the flooded surface, sitting beneath any structure, so it is the lowest feature.
+        if (auto* surface = MapGetSurfaceElementAt(tile); surface != nullptr && surface->GetWaterHeight() > 0)
+            parts.push_back("Water");
 
         // In build mode (the ride construction window is open) read each placed track piece's
         // shape/slope/bank for detailed construction; otherwise read the ride as a whole - its name
@@ -541,17 +554,14 @@ namespace OpenRCT2::Ui::Accessibility
             el++;
         }
 
-        // Litter sits on top of whatever is on the ground; add it last so, after the flip below, it
-        // is announced first.
+        // Litter (dropped on the ground/paths) sits on top of the ground clutter, so it is the
+        // highest feature - appended last in the canonical bottom-to-top order.
         GatherGroundLitter(tile, parts);
 
-        // Tile elements were gathered bottom-to-top; flip so we read the topmost feature first.
-        std::reverse(parts.begin(), parts.end());
-
-        auto* surface = MapGetSurfaceElementAt(tile);
-        // Water is the surface itself, so it sits beneath any structures: announce it last.
-        if (surface != nullptr && surface->GetWaterHeight() > 0)
-            parts.push_back("Water");
+        // Default reads lowest-to-highest (as built). In highest-to-lowest mode, reverse the whole
+        // list so the topmost feature is announced first - the exact mirror of the default order.
+        if (Config::Get().sound.accessibilityTileReadingOrder == kTileReadingOrderHighestFirst)
+            std::reverse(parts.begin(), parts.end());
 
         return parts;
     }
@@ -1868,12 +1878,12 @@ namespace OpenRCT2::Ui::Accessibility
             MapRange(ax, ay, bx, by), GameActions::CLEARABLE_ITEMS::kSceneryFootpath);
         GameActions::Execute(&action, getGameState());
 
-        const int32_t removed = before - CountPathsInArea(ax, ay, bx, by);
-
+        // Key the message off how many paths were present before the clear, not a recount after it:
+        // the ClearAction applies a tick later, so recounting immediately still sees the paths and
+        // wrongly reports "No paths" even though the removal worked.
         _lastTileDescription.clear();
-        if (removed > 0)
-            ScreenReaderSpeak(
-                "Marked area paths removed, " + std::to_string(removed) + (removed == 1 ? " path" : " paths"));
+        if (before > 0)
+            ScreenReaderSpeak("Paths removed");
         else
             ScreenReaderSpeak("No paths in the marked area");
     }
