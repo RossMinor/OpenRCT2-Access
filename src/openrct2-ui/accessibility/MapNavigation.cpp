@@ -25,6 +25,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/UiStringIds.h>
@@ -2155,6 +2156,116 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(std::string("Facing ") + kDirections[rotation]);
     }
 
+    // The ride whose footprint the cursor is within: first the ride whose track sits on the cursor
+    // tile (the common case, when the player has arrowed onto the structure), otherwise - for a
+    // cursor inside a ride's area but not on a track tile, e.g. the empty middle of a loop - the
+    // smallest-area ride whose tile bounding box contains the cursor. Null when the cursor is not in
+    // any ride. The bounding-box fallback does a single map scan and only runs when the cursor is not
+    // directly on track, so the usual case stays cheap.
+    static RideId RideContainingCursor()
+    {
+        if (const RideId onTile = GetRideAtTile(_cursor); !onTile.IsNull())
+            return onTile;
+
+        struct Bounds
+        {
+            int32_t minX, minY, maxX, maxY;
+        };
+        std::unordered_map<uint16_t, Bounds> bounds;
+        const auto mapSize = getGameState().mapSize;
+        for (int32_t y = 1; y <= mapSize.y - 2; y++)
+        {
+            for (int32_t x = 1; x <= mapSize.x - 2; x++)
+            {
+                const RideId rid = GetRideAtTile(TileCoordsXY{ x, y });
+                if (rid.IsNull())
+                    continue;
+                const uint16_t key = rid.ToUnderlying();
+                auto it = bounds.find(key);
+                if (it == bounds.end())
+                    bounds.emplace(key, Bounds{ x, y, x, y });
+                else
+                {
+                    it->second.minX = std::min(it->second.minX, x);
+                    it->second.minY = std::min(it->second.minY, y);
+                    it->second.maxX = std::max(it->second.maxX, x);
+                    it->second.maxY = std::max(it->second.maxY, y);
+                }
+            }
+        }
+
+        RideId best = RideId::GetNull();
+        int64_t bestArea = std::numeric_limits<int64_t>::max();
+        for (const auto& [key, b] : bounds)
+        {
+            if (_cursor.x < b.minX || _cursor.x > b.maxX || _cursor.y < b.minY || _cursor.y > b.maxY)
+                continue;
+            const int64_t area = static_cast<int64_t>(b.maxX - b.minX + 1) * (b.maxY - b.minY + 1);
+            if (area < bestArea)
+            {
+                bestArea = area;
+                best = RideId::FromUnderlying(key);
+            }
+        }
+        return best;
+    }
+
+    // Ctrl+E: when the cursor is within a ride's area, jump the cursor between that ride's entrance
+    // and exit (cycling through all of them for a multi-station ride). Pre-built coasters make it hard
+    // to find where the entrance and exit sit, so this snaps straight to them. Repeated presses step
+    // to the next entrance/exit; from anywhere else in the ride it lands on the first one.
+    static void JumpRideEntranceExit()
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        const RideId rideId = RideContainingCursor();
+        auto ride = rideId.IsNull() ? nullptr : GetRide(rideId);
+        if (ride == nullptr)
+        {
+            ScreenReaderSpeak("Not on a ride");
+            return;
+        }
+
+        struct Target
+        {
+            TileCoordsXY tile;
+            const char* label;
+        };
+        std::vector<Target> targets;
+        for (const auto& station : ride->getStations())
+        {
+            if (!station.Entrance.IsNull())
+                targets.push_back({ TileCoordsXY{ station.Entrance.x, station.Entrance.y }, "Ride entrance" });
+            if (!station.Exit.IsNull())
+                targets.push_back({ TileCoordsXY{ station.Exit.x, station.Exit.y }, "Ride exit" });
+        }
+        if (targets.empty())
+        {
+            ScreenReaderSpeak("This ride has no entrance or exit");
+            return;
+        }
+
+        // If the cursor already sits on one of the targets, advance to the next (wrapping); otherwise
+        // start at the first. This makes repeated presses toggle entrance -> exit -> entrance.
+        size_t next = 0;
+        for (size_t i = 0; i < targets.size(); i++)
+        {
+            if (targets[i].tile.x == _cursor.x && targets[i].tile.y == _cursor.y)
+            {
+                next = (i + 1) % targets.size();
+                break;
+            }
+        }
+
+        const auto& target = targets[next];
+        _cursor = target.tile;
+        _menuMode = false;
+        CentreViewportOnCursor();
+        _lastTileDescription = GetTileDescription(_cursor);
+        ScreenReaderSpeak(std::string(target.label) + ", " + SpokenTileCoordsText(_cursor));
+    }
+
     // Jumps the cursor to the nearest ride or stall in the pressed screen direction (Ctrl+arrow). Only
     // rides within a 90-degree cone of that direction are considered - so "right" ignores something
     // that is mostly north of you - and among those the closest is chosen. The ride the cursor is
@@ -2976,7 +3087,8 @@ namespace OpenRCT2::Ui::Accessibility
             "Shift with F, R, P, G, S, D, or M opens finances, rides, park, guests, staff, research, or "
             "messages. Tab opens the toolbar menu. Shift F1 opens the land tool. "
             "Control H rescues guests stranded on cut-off paths, teleporting them to the park entrance. "
-            "Control with an arrow jumps to the nearest ride in that direction. Control P checks whether "
+            "Control with an arrow jumps to the nearest ride in that direction. "
+            "Control E jumps between the entrance and exit of the ride you are on. Control P checks whether "
             "the current tile connects to the park entrance. P pauses. Control equals and Control minus "
             "speed the game up and down. Control F1 opens the accessibility settings.");
     }
@@ -3172,6 +3284,18 @@ namespace OpenRCT2::Ui::Accessibility
             && (key == SDLK_EQUALS || key == SDLK_KP_PLUS || key == SDLK_MINUS || key == SDLK_KP_MINUS))
         {
             AdjustGameSpeed((key == SDLK_EQUALS || key == SDLK_KP_PLUS) ? 1 : -1);
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Ctrl+E jumps the cursor between the entrance and exit of the ride the cursor is within, so a
+        // player can find them on a pre-built coaster without hunting tile by tile. Skipped in mouse/
+        // menu/status mode and during any placement (where Ctrl and the cursor mean other things).
+        if (key == SDLK_e && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)) && !_mouseMode
+            && !_menuMode && !_statusMode && !Windows::WindowTrackPlaceIsActive() && !IsAccessibleRidePlacementActive()
+            && !IsAccessibleSceneryPlacementActive())
+        {
+            JumpRideEntranceExit();
             _lastHandledKey = key;
             return true;
         }
