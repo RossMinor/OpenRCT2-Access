@@ -9,7 +9,8 @@
 
 #pragma once
 
-struct TileCoordsXY;
+#include <openrct2/world/Location.hpp>
+#include <optional>
 
 namespace OpenRCT2::Ui::Accessibility
 {
@@ -26,6 +27,12 @@ namespace OpenRCT2::Ui::Accessibility
     // Runs the footpath flood-fill from the park entrances and reports whether the given tile's path
     // connects to one. Bound to a keyboard command so a player can check any spot on the map.
     EntranceReachability CheckEntranceReachability(const TileCoordsXY& tile);
+
+    // When a tile's path is cut off from every entrance (EntranceReachability::unreachable), this
+    // returns the tile on that path's own network that comes closest to the entrance-connected network
+    // (or, failing that, to the park entrance) - i.e. where the path stops short of connecting, so the
+    // player can be told the coordinate of the break. Nullopt if the tile has no path.
+    std::optional<TileCoordsXY> FindPathDisconnectPoint(const TileCoordsXY& tile);
 
     // Ctrl+H rescue: teleports every guest that is stranded (holds a "lost / go home / can't find"
     // thought and has no walking route to a park entrance, or is not on a footpath at all) to the

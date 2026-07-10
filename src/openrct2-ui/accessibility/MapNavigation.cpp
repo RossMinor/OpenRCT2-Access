@@ -3274,8 +3274,14 @@ namespace OpenRCT2::Ui::Accessibility
                     ScreenReaderSpeak("Connected to the park entrance");
                     break;
                 case EntranceReachability::unreachable:
-                    ScreenReaderSpeak("No path back to the park entrance");
+                {
+                    std::string msg = "No path back to the park entrance";
+                    // Report where the path stops short of connecting, so the player can go fix the gap.
+                    if (auto gap = FindPathDisconnectPoint(_cursor); gap.has_value())
+                        msg += ". Path stops nearest at " + SpokenTileCoordsText(*gap);
+                    ScreenReaderSpeak(msg);
                     break;
+                }
             }
             _lastHandledKey = key;
             return true;
