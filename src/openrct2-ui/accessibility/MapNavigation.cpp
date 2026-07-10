@@ -1431,6 +1431,41 @@ namespace OpenRCT2::Ui::Accessibility
             what = gFootpathSelection.isQueueSelected ? "Queue built" : "Path built";
             if (slope.type == FootpathSlopeType::sloped)
                 what += ", sloped";
+
+            // Bridge over a ride: the engine refuses a flat path at ground level when a ride's track
+            // occupies the tile (rollercoasters can't take level crossings), reporting an obstruction.
+            // If that is the only problem, lift the path into a flat elevated deck sitting just above
+            // the track so it passes over the ride. This only triggers when a ride is actually in the
+            // way AND the ground placement fails with an obstruction, so ordinary ground paths - even
+            // right next to a ride - are unaffected. Probing uses Query (no side effects, no error
+            // window); the first clear height above the ground wins.
+            const CoordsXYZ groundLoc{ world.x, world.y, baseZ };
+            auto groundProbe = GameActions::FootpathPlaceAction(
+                groundLoc, slope, type, gFootpathSelection.railings, actionDir, flags);
+            if (GameActions::Query(&groundProbe, getGameState()).error == GameActions::Status::noClearance
+                && !GetRideAtTile(_cursor).IsNull())
+            {
+                const int32_t groundZ = baseZ;
+                const int32_t maxZ = groundZ + 40 * kCoordsZStep; // generous: clears even tall coasters
+                for (int32_t z = groundZ + kCoordsZStep; z <= maxZ; z += kCoordsZStep)
+                {
+                    auto lifted = GameActions::FootpathPlaceAction(
+                        CoordsXYZ{ world.x, world.y, z }, FootpathSlope{ FootpathSlopeType::flat, 0 }, type,
+                        gFootpathSelection.railings, dir, flags);
+                    if (GameActions::Query(&lifted, getGameState()).error == GameActions::Status::ok)
+                    {
+                        baseZ = z;
+                        slope = { FootpathSlopeType::flat, 0 };
+                        actionDir = dir;
+                        const int32_t steps = (z - groundZ) / kPathHeightStep;
+                        what = gFootpathSelection.isQueueSelected ? "Queue built over the ride"
+                                                                  : "Path built over the ride";
+                        if (steps > 0)
+                            what += ", " + std::to_string(steps) + (steps == 1 ? " tile up" : " tiles up");
+                        break;
+                    }
+                }
+            }
         }
         else
         {
