@@ -33,6 +33,10 @@ namespace OpenRCT2::Ui::Accessibility
     // navigation), so a menu can default to its first item when it opens.
     void FocusFirstItem(WindowBase& w);
 
+    // Polled once per frame. Announces "Menu closed" when the front-most accessible window closes and
+    // focus returns to the game, so every top-level window gives the same cue the toolbar menu does.
+    void TickMenuClosedAnnounce();
+
     // The window that currently owns accessible keyboard navigation (the front-most window we know
     // how to navigate), or nullptr if none. Exposed so other subsystems - e.g. the F1 context help -
     // can tell when a navigable menu is focused.

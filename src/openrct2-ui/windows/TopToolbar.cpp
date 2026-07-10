@@ -1225,6 +1225,10 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::activate:
                     commitAccessibilityDropdown();
                     return true;
+                case AccessibilityAction::announce:
+                    // Re-speak the current item, e.g. when a window opened over this dropdown closes.
+                    announceDropdownHighlight();
+                    return true;
                 case AccessibilityAction::cancel:
                 {
                     // Closing the sub-menu returns to the parent toolbar item; announce it.
@@ -1259,6 +1263,21 @@ namespace OpenRCT2::Ui::Windows
                 return;
 
             gDropdown.highlightedIndex = idx;
+            announceDropdownHighlight();
+
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+
+        // Speaks the currently highlighted dropdown item and its position, without moving the
+        // highlight. Used both when the highlight moves and when re-announcing the dropdown on return
+        // from a window opened over it (so returning to a reopened menu speaks where you land).
+        void announceDropdownHighlight()
+        {
+            const int32_t idx = gDropdown.highlightedIndex;
+            if (idx < 0 || idx >= gDropdown.numItems || gDropdown.items[idx].isSeparator())
+                return;
 
             std::string text = gDropdown.items[idx].text;
             if (gDropdown.items[idx].isChecked())
@@ -1277,10 +1296,6 @@ namespace OpenRCT2::Ui::Windows
                 total++;
             }
             Accessibility::ScreenReaderSpeakItem(text, pos, total);
-
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
         }
 
         // After a File-menu action, returns true if focus should stay in the menu (the action

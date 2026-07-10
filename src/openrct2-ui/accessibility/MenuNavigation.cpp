@@ -10,11 +10,15 @@
 #include "MenuNavigation.h"
 
 #include "MapNavigation.h"
+#include "RidePlacement.h"
+#include "SceneryPlacement.h"
 #include "ScreenReader.h"
 
 #include <SDL.h>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/input/ShortcutManager.h>
+#include <openrct2-ui/windows/Windows.h>
+#include <openrct2/OpenRCT2.h>
 #include <algorithm>
 #include <openrct2/config/Config.h>
 #include <openrct2/drawing/Colour.h>
@@ -329,6 +333,35 @@ namespace OpenRCT2::Ui::Accessibility
             Drawing::Rectangle::FillBrightness::light, Drawing::Rectangle::FillMode::none);
     }
 
+    // Announces "Menu closed" when the front-most accessible window closes and focus returns to the
+    // game, so closing ANY top-level window (e.g. the guest list opened with Shift+G, not just the
+    // toolbar menu) gives the same audible cue. It watches the focus-owning window across frames
+    // rather than hooking each window's close, so every navigable window - now and in future - gets
+    // this automatically. Whatever accessible window is front-most counts as the current top level,
+    // however it was opened.
+    void TickMenuClosedAnnounce()
+    {
+        static bool hadWindow = false;
+
+        // Only while actually playing (so leaving the title menu to start a scenario is not mistaken
+        // for closing a menu), and never mid-placement: choosing a ride/design closes its list to
+        // start the placement tool, which is not "returning to the game".
+        const bool placing = Windows::WindowTrackPlaceIsActive() || IsAccessibleRidePlacementActive()
+            || IsAccessibleSceneryPlacementActive();
+        if (gLegacyScene != LegacyScene::playing || placing)
+        {
+            hadWindow = false;
+            return;
+        }
+
+        const bool hasWindow = GetActiveAccessibleWindow() != nullptr;
+        // When the last accessible window closes we are back in the game - unless we dropped into the
+        // toolbar menu, which announces its own "Menu closed" via ExitMenuMode.
+        if (hadWindow && !hasWindow && !IsInMenuMode())
+            ScreenReaderSpeak("Menu closed");
+        hadWindow = hasWindow;
+    }
+
     bool HandleMenuNavigationKey(const InputEvent& e)
     {
         if (e.deviceKind != InputDeviceKind::keyboard)
@@ -411,8 +444,24 @@ namespace OpenRCT2::Ui::Accessibility
         // player always hears where they are - at any nesting depth.
         if (handled)
         {
-            if (auto* now = GetActiveAccessibleWindow(); now != nullptr && now != w)
+            auto* now = GetActiveAccessibleWindow();
+            if (now != nullptr && now != w)
+            {
                 now->onAccessibilityAction(AccessibilityAction::announce);
+            }
+            else if (now == nullptr && IsInMenuMode())
+            {
+                // The window closed and no navigable window is front, but the toolbar menu (which
+                // opened it) still owns focus underneath - e.g. Escaping the Options window opened
+                // from the File dropdown lands back on the "Options" dropdown item. The toolbar isn't
+                // a "navigable window", so re-announce via it directly. This works at any depth (a
+                // reopened dropdown item or a toolbar button), matching the dropdown->toolbar case.
+                if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                {
+                    if (auto* toolbar = windowMgr->FindByClass(WindowClass::topToolbar); toolbar != nullptr)
+                        toolbar->onAccessibilityAction(AccessibilityAction::announce);
+                }
+            }
         }
 
         _lastHandledKey = handled ? e.button : 0;

@@ -229,6 +229,9 @@ void InputManager::process()
 
     // Keep the on-screen focus highlight on the map cursor's tile (visual indicator for sighted users).
     Accessibility::TickFocusHighlight();
+
+    // Announce "Menu closed" when a top-level accessible window closes and focus returns to the game.
+    Accessibility::TickMenuClosedAnnounce();
 }
 
 void InputManager::handleViewScrolling()
