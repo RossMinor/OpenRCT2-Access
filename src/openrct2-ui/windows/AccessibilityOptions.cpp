@@ -281,24 +281,24 @@ namespace OpenRCT2::Ui::Windows
                     {
                         adjustMenuMusicVolume(delta);
                     }
-                    announceFocus();
+                    announceValue();
                     return true;
                 }
                 case AccessibilityAction::activate:
                     if (_accessIndex == 1)
                     {
                         cycleStepMode(1); // Enter advances the step mode too
-                        announceFocus();
+                        announceValue();
                     }
                     else if (_accessIndex == 2)
                     {
                         cycleTileMode(1);
-                        announceFocus();
+                        announceValue();
                     }
                     else if (_accessIndex == 3)
                     {
                         cycleFocusColour(1); // Enter advances the focus colour too
-                        announceFocus();
+                        announceValue();
                     }
                     else if (_accessIndex == 5)
                     {
@@ -367,30 +367,50 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeak("Opening the Patreon page in your browser.");
         }
 
+        // The category label of the focused control (spoken when it is first focused).
+        const char* labelText() const
+        {
+            switch (_accessIndex)
+            {
+                case 0:
+                    return "Accessibility sounds volume";
+                case 1:
+                    return "Step sounds";
+                case 2:
+                    return "Tile reading";
+                case 3:
+                    return "Focus colour";
+                case 4:
+                    return "Menu music volume";
+                default:
+                    return "Support Ross's work, button";
+            }
+        }
+
+        // The current value of the focused control, with no label (spoken while adjusting the value).
+        std::string valueText() const
+        {
+            switch (_accessIndex)
+            {
+                case 0:
+                    return std::to_string(Config::Get().sound.accessibilityCueVolume) + " percent";
+                case 1:
+                    return stepModeName(Config::Get().sound.accessibilityStepSoundMode);
+                case 2:
+                    return tileModeName(Config::Get().sound.accessibilityTileSpeechMode);
+                case 3:
+                    return focusColourName(Config::Get().sound.accessibilityFocusColour);
+                case 4:
+                    return std::to_string(Config::Get().sound.titleMusicVolume) + " percent";
+                default:
+                    return {};
+            }
+        }
+
         std::string focusText()
         {
-            if (_accessIndex == 0)
-            {
-                return "Accessibility sounds volume, " + std::to_string(Config::Get().sound.accessibilityCueVolume)
-                    + " percent";
-            }
-            if (_accessIndex == 1)
-            {
-                return std::string("Step sounds, ") + stepModeName(Config::Get().sound.accessibilityStepSoundMode);
-            }
-            if (_accessIndex == 2)
-            {
-                return std::string("Tile reading, ") + tileModeName(Config::Get().sound.accessibilityTileSpeechMode);
-            }
-            if (_accessIndex == 3)
-            {
-                return std::string("Focus colour, ") + focusColourName(Config::Get().sound.accessibilityFocusColour);
-            }
-            if (_accessIndex == 4)
-            {
-                return "Menu music volume, " + std::to_string(Config::Get().sound.titleMusicVolume) + " percent";
-            }
-            return "Support Ross's work, button";
+            const std::string value = valueText();
+            return value.empty() ? std::string(labelText()) : std::string(labelText()) + ", " + value;
         }
 
         void cycleStepMode(int32_t delta)
@@ -433,6 +453,17 @@ namespace OpenRCT2::Ui::Windows
         void announceFocus()
         {
             Accessibility::ScreenReaderSpeak(focusText());
+        }
+
+        // Speaks only the value (no label) while the value is being changed, so the category is not
+        // repeated on every step. Falls back to the full focus read for controls with no value.
+        void announceValue()
+        {
+            const std::string value = valueText();
+            if (value.empty())
+                announceFocus();
+            else
+                Accessibility::ScreenReaderSpeak(value);
         }
 
         void setVolume(uint8_t pct)

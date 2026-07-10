@@ -521,7 +521,10 @@ namespace OpenRCT2::Ui::Windows
                     if (it.kind == NcKind::spinner)
                     {
                         onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (it.widget + 1) : (it.widget + 2)));
-                        ncAnnounceFocus();
+                        // Speak only the new value, not the "Duration, slider" label - the label is
+                        // read when the control is first focused, consistent with the mod's sliders.
+                        Accessibility::ScreenReaderSpeak(
+                            std::to_string(Campaign.no_weeks) + (Campaign.no_weeks == 1 ? " week" : " weeks"));
                     }
                     else if (it.kind == NcKind::dropdown)
                     {

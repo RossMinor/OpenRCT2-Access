@@ -810,6 +810,30 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeakItem(text, ci, static_cast<int32_t>(controls.size()));
         }
 
+        // Speaks only the focused control's current value, no label/kind/position. Used when the value
+        // is being changed (Left/Right on a slider or spinner) so the category is not repeated every
+        // step - it is read once when the control is first focused (announceAccessFocus). Falls back to
+        // the full focus read when the control has no readable value.
+        void announceAccessValue()
+        {
+            if (_accessDropdownOpen || _accessIndex <= 0)
+            {
+                announceAccessFocus();
+                return;
+            }
+            onPrepareDraw();
+            const auto controls = getAccessControls();
+            const int32_t ci = _accessIndex - 1;
+            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
+                return;
+            const WidgetIndex w = controls[ci];
+            const std::string value = accessControlValue(w, classifyAccessControl(w));
+            if (value.empty())
+                announceAccessFocus();
+            else
+                Accessibility::ScreenReaderSpeak(value);
+        }
+
         void accessChangeTab(int32_t delta)
         {
             const int32_t p = (page + delta + WINDOW_OPTIONS_PAGE_COUNT) % WINDOW_OPTIONS_PAGE_COUNT;
@@ -944,12 +968,12 @@ namespace OpenRCT2::Ui::Windows
                     pct = std::clamp(pct + delta * 10, 0, 100);
                     initialiseScrollPosition(w, si, pct);
                     invalidate();
-                    announceAccessFocus();
+                    announceAccessValue();
                     break;
                 }
                 case AccessControlKind::spinner:
                     onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (w + 1) : (w + 2))); // up : down
-                    announceAccessFocus();
+                    announceAccessValue();
                     break;
                 case AccessControlKind::dropdown:
                     accessOpenDropdown(static_cast<WidgetIndex>(w + 1));

@@ -819,8 +819,10 @@ namespace OpenRCT2::Ui::Windows
             FootpathUpdateProvisional();
             _windowFootpathCost = kMoney64Undefined;
             invalidate();
-            Accessibility::ScreenReaderSpeakItem(
-                (queue ? "Queue type, " : "Footpath type, ") + axPathName(chosen), idx, count);
+            // Changing the value speaks only the value and its position, not the category label -
+            // that is read when the option is first focused (axAnnounce), so it is not repeated on
+            // every step. Consistent with every other slider in the mod.
+            Accessibility::ScreenReaderSpeakItem(axPathName(chosen), idx, count);
         }
 
         // Makes footpaths or queues the active build selection (like clicking the footpath vs queue
@@ -859,7 +861,7 @@ namespace OpenRCT2::Ui::Windows
             FootpathUpdateProvisional();
             _windowFootpathCost = kMoney64Undefined;
             invalidate();
-            Accessibility::ScreenReaderSpeakItem("Railings, " + axRailingsName(options[idx]), idx, count);
+            Accessibility::ScreenReaderSpeakItem(axRailingsName(options[idx]), idx, count);
         }
 
         void axCycleMode(int32_t dir)
@@ -876,7 +878,7 @@ namespace OpenRCT2::Ui::Windows
             if (dir != 0)
                 cur = (cur + dir + 3) % 3;
             onMouseUp(modeWidgets[cur]);
-            Accessibility::ScreenReaderSpeakItem("Build mode, " + axModeName(), cur, 3);
+            Accessibility::ScreenReaderSpeakItem(axModeName(), cur, 3);
         }
 
         void axAdjust(int32_t dir)
