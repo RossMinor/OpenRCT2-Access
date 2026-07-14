@@ -16,6 +16,7 @@
     <DataLanguagePath Condition="'$(DataLanguagePath)' == ''">$(SolutionDir)data\language\</DataLanguagePath>
     <DataShadersPath Condition="'$(DataShadersPath)' == ''">$(SolutionDir)data\shaders\</DataShadersPath>
     <DataScenarioPath Condition="'$(DataScenarioPath)' == ''">$(SolutionDir)data\scenario_patches\</DataScenarioPath>
+    <DataSoundsPath Condition="'$(DataSoundsPath)' == ''">$(SolutionDir)data\sounds\</DataSoundsPath>
     <ResourcesPath Condition="'$(ResourcesPath)' == ''">$(SolutionDir)resources\</ResourcesPath>
     <G2InputFile Condition="'$(G2InputFile)' == ''">$(ResourcesPath)g2\sprites.json</G2InputFile>
     <FontsInputFile Condition="'$(FontsInputFile)' == ''">$(ResourcesPath)fonts\sprites.json</FontsInputFile>
@@ -42,6 +43,10 @@
     <ScenarioPatchFiles Include="$(DataScenarioPath)**\*"
                         Exclude="$(DataScenarioPath)*.bak;
                                   $(DataScenarioPath)*.tmp" />
+
+    <SoundFiles Include="$(DataSoundsPath)**\*"
+                Exclude="$(DataSoundsPath)*.bak;
+                          $(DataSoundsPath)*.tmp" />
   </ItemGroup>
 
   <!-- Target Implementations -->
@@ -103,6 +108,29 @@
     <Message Text="Copied scenario patch: %(CopiedScenarioFiles.RecursiveDir)%(CopiedScenarioFiles.Filename)%(CopiedScenarioFiles.Extension)"
              Importance="high"
              Condition="'@(CopiedScenarioFiles)' != ''" />
+  </Target>
+
+  <!-- OpenRCT2-Access: deploy the mod's custom accessibility sounds (footsteps, terraform, etc.)
+       into bin\data\sounds so the running game can load them. Without this the sound files stay in
+       the source tree only and the game plays no accessibility footstep/terraform cues. -->
+  <Target Name="CopySounds"
+          AfterTargets="Build"
+          Inputs="@(SoundFiles)"
+          Outputs="@(SoundFiles->'$(DataOutputPath)sounds\%(RecursiveDir)%(Filename)%(Extension)')">
+
+    <MakeDir Directories="@(SoundFiles->'$(DataOutputPath)sounds\%(RecursiveDir)')" />
+
+    <Copy SourceFiles="@(SoundFiles)"
+          DestinationFiles="@(SoundFiles->'$(DataOutputPath)sounds\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="true"
+          Retries="3">
+      <Output TaskParameter="CopiedFiles" ItemName="CopiedSoundFiles" />
+    </Copy>
+
+    <Message Text="Copied sound: %(CopiedSoundFiles.RecursiveDir)%(CopiedSoundFiles.Filename)%(CopiedSoundFiles.Extension)"
+             Importance="high"
+             Condition="'@(CopiedSoundFiles)' != ''" />
   </Target>
 
   <Target Name="BuildG2"
