@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
@@ -64,6 +65,26 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        // This window has no navigable contents - it is a status readout that updates itself. We
+        // support just two actions: re-speak the current status (announce), and cancel the pending
+        // connection (Escape), which closes the window and disconnects via the close callback.
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::announce:
+                    if (!_windowNetworkStatusText.empty())
+                        Accessibility::ScreenReaderSpeak(_windowNetworkStatusText);
+                    return true;
+                case AccessibilityAction::cancel:
+                    Accessibility::ScreenReaderSpeak("Cancelled");
+                    close();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         void onUpdate() override
         {
             invalidateWidget(WIDX_BACKGROUND);
@@ -111,6 +132,15 @@ namespace OpenRCT2::Ui::Windows
         {
             _windowNetworkStatusText = text;
             invalidate();
+
+            // Announce connection progress automatically as it changes ("Connecting", "Requesting
+            // game data", error messages, ...). De-duplicated so the same status set repeatedly on
+            // consecutive frames is only spoken once.
+            if (!text.empty() && text != _lastAnnounced)
+            {
+                _lastAnnounced = text;
+                Accessibility::ScreenReaderSpeak(text);
+            }
         }
 
         void setPassword(char* password)
@@ -122,6 +152,7 @@ namespace OpenRCT2::Ui::Windows
         CloseCallback _onClose = nullptr;
         std::string _windowNetworkStatusText;
         std::string _password;
+        std::string _lastAnnounced;
     };
 
     WindowBase* NetworkStatusOpen(const std::string& text, CloseCallback onClose)
@@ -174,6 +205,9 @@ namespace OpenRCT2::Ui::Windows
         char password[33]{};
         WindowTextInputRawOpen(window, WIDX_PASSWORD, STR_PASSWORD_REQUIRED, STR_PASSWORD_REQUIRED_DESC, {}, password, 32);
         window->setPassword(password);
+        Accessibility::ScreenReaderSpeak(
+            "This server requires a password. Type the password and press Enter, or press Enter with no "
+            "password to cancel.");
         return window;
     }
 } // namespace OpenRCT2::Ui::Windows

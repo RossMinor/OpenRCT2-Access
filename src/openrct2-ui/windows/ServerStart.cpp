@@ -11,6 +11,8 @@
 
     #include "../interface/Theme.h"
 
+    #include <openrct2-ui/accessibility/ListNavigation.h>
+    #include <openrct2-ui/accessibility/ScreenReader.h>
     #include <openrct2-ui/interface/Widget.h>
     #include <openrct2-ui/windows/Windows.h>
     #include <openrct2/Context.h>
@@ -24,6 +26,8 @@
     #include <openrct2/network/Network.h>
     #include <openrct2/ui/WindowManager.h>
     #include <openrct2/windows/Intent.h>
+    #include <optional>
+    #include <string>
 
 namespace OpenRCT2::Ui::Windows
 {
@@ -248,7 +252,218 @@ namespace OpenRCT2::Ui::Windows
             drawText(rt, windowPos + ScreenCoordsXY{ 6, widgets[WIDX_MAXPLAYERS].top }, STR_MAX_PLAYERS, { colours[1] });
         }
 
+        // Accessible keyboard navigation. The window is a flat form, so we present its controls as a
+        // single up/down list of fields, each spoken as "label, value, position of total". Left/right
+        // adjusts the value where that makes sense (max-players spinner, advertise checkbox); Enter
+        // edits a text field or presses a button.
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            switch (action)
+            {
+                case AccessibilityAction::moveDown:
+                case AccessibilityAction::moveUp:
+                {
+                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
+                    _accessField = Accessibility::ListNav::wrap(_accessField, delta, kAxFieldCount);
+                    announceField();
+                    invalidate();
+                    return true;
+                }
+                case AccessibilityAction::moveLeft:
+                case AccessibilityAction::moveRight:
+                    adjustField(action == AccessibilityAction::moveRight);
+                    return true;
+                case AccessibilityAction::activate:
+                    activateField();
+                    return true;
+                case AccessibilityAction::cancel:
+                    close();
+                    return true;
+                case AccessibilityAction::announce:
+                    announceField();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            if (_accessField < 0 || _accessField >= kAxFieldCount)
+                return std::nullopt;
+            const auto& wdg = widgets[widgetForField(static_cast<AxField>(_accessField))];
+            return ScreenRect{ { windowPos.x + wdg.left, windowPos.y + wdg.top },
+                               { windowPos.x + wdg.right, windowPos.y + wdg.bottom } };
+        }
+
     private:
+        // Fields in top-to-bottom reading order, matching the on-screen layout.
+        enum class AxField : int32_t
+        {
+            port,
+            name,
+            description,
+            greeting,
+            password,
+            maxPlayers,
+            advertise,
+            startServer,
+            loadServer,
+        };
+        static constexpr int32_t kAxFieldCount = 9;
+        int32_t _accessField = -1;
+
+        static WidgetIndex widgetForField(AxField f)
+        {
+            switch (f)
+            {
+                case AxField::port:        return WIDX_PORT_INPUT;
+                case AxField::name:        return WIDX_NAME_INPUT;
+                case AxField::description: return WIDX_DESCRIPTION_INPUT;
+                case AxField::greeting:    return WIDX_GREETING_INPUT;
+                case AxField::password:    return WIDX_PASSWORD_INPUT;
+                case AxField::maxPlayers:  return WIDX_MAXPLAYERS;
+                case AxField::advertise:   return WIDX_ADVERTISE_CHECKBOX;
+                case AxField::startServer: return WIDX_START_SERVER;
+                case AxField::loadServer:  return WIDX_LOAD_SERVER;
+            }
+            return WIDX_PORT_INPUT;
+        }
+
+        static std::string_view labelText(AxField f)
+        {
+            switch (f)
+            {
+                case AxField::port:        return "Port";
+                case AxField::name:        return "Server name";
+                case AxField::description: return "Description";
+                case AxField::greeting:    return "Greeting";
+                case AxField::password:    return "Password";
+                case AxField::maxPlayers:  return "Maximum players";
+                case AxField::advertise:   return "Advertise server publicly";
+                case AxField::startServer: return "Start server";
+                case AxField::loadServer:  return "Load a saved game and start server";
+            }
+            return {};
+        }
+
+        // The value only, no label - spoken while adjusting a field (matching the slider convention in
+        // the accessibility options window, where left/right speaks just the new value).
+        std::string valueText(AxField f) const
+        {
+            switch (f)
+            {
+                case AxField::port:        return _port[0] ? _port : "not set";
+                case AxField::name:        return _name[0] ? _name : "not set";
+                case AxField::description: return _description[0] ? _description : "not set";
+                case AxField::greeting:    return _greeting[0] ? _greeting : "not set";
+                // Never speak the password itself; just whether one is set.
+                case AxField::password:    return _password[0] ? "set" : "not set";
+                case AxField::maxPlayers:  return std::to_string(Config::Get().network.maxplayers);
+                case AxField::advertise:   return Config::Get().network.advertise ? "on" : "off";
+                case AxField::startServer:
+                case AxField::loadServer:  return {};
+            }
+            return {};
+        }
+
+        // Label plus value - spoken when moving onto a field.
+        std::string fieldText(AxField f) const
+        {
+            if (f == AxField::startServer || f == AxField::loadServer)
+                return std::string(labelText(f)) + ", button";
+            return Accessibility::JoinSpeech({ labelText(f), valueText(f) });
+        }
+
+        void announceField()
+        {
+            if (_accessField < 0 || _accessField >= kAxFieldCount)
+                return;
+            Accessibility::ScreenReaderSpeakItem(
+                fieldText(static_cast<AxField>(_accessField)), _accessField, kAxFieldCount);
+        }
+
+        // Left/right on the two adjustable fields; a no-op elsewhere.
+        void adjustField(bool increase)
+        {
+            if (_accessField < 0 || _accessField >= kAxFieldCount)
+                return;
+            const auto f = static_cast<AxField>(_accessField);
+            switch (f)
+            {
+                case AxField::maxPlayers:
+                    onMouseUp(increase ? WIDX_MAXPLAYERS_INCREASE : WIDX_MAXPLAYERS_DECREASE);
+                    Accessibility::ScreenReaderSpeak(valueText(f));
+                    break;
+                case AxField::advertise:
+                    onMouseUp(WIDX_ADVERTISE_CHECKBOX);
+                    Accessibility::ScreenReaderSpeak(valueText(f));
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // Opens the shared modal text-input window (the same one banners, signs and the group-rename
+        // use). This is the accessible path: the modal is screen-reader aware and, crucially, the
+        // InputManager routes keys to it directly, so the confirming Enter is consumed by the modal
+        // and cannot leak back to re-activate the field - unlike the inline widget text box, which
+        // the mouse path uses and which would trap keyboard focus.
+        void openTextEditor(AxField f)
+        {
+            switch (f)
+            {
+                case AxField::port:
+                    WindowTextInputRawOpen(this, WIDX_PORT_INPUT, STR_PORT, kStringIdEmpty, {}, _port, 6);
+                    break;
+                case AxField::name:
+                    WindowTextInputRawOpen(this, WIDX_NAME_INPUT, STR_SERVER_NAME, kStringIdEmpty, {}, _name, 64);
+                    break;
+                case AxField::description:
+                    WindowTextInputRawOpen(
+                        this, WIDX_DESCRIPTION_INPUT, STR_SERVER_DESCRIPTION, kStringIdEmpty, {}, _description,
+                        Network::kMaxServerDescriptionLength);
+                    break;
+                case AxField::greeting:
+                    WindowTextInputRawOpen(
+                        this, WIDX_GREETING_INPUT, STR_SERVER_GREETING, kStringIdEmpty, {}, _greeting, kChatInputSize);
+                    break;
+                case AxField::password:
+                    WindowTextInputRawOpen(this, WIDX_PASSWORD_INPUT, STR_PASSWORD, kStringIdEmpty, {}, _password, 32);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void activateField()
+        {
+            if (_accessField < 0 || _accessField >= kAxFieldCount)
+                return;
+            const auto f = static_cast<AxField>(_accessField);
+            switch (f)
+            {
+                case AxField::port:
+                case AxField::name:
+                case AxField::description:
+                case AxField::greeting:
+                case AxField::password:
+                    openTextEditor(f);
+                    break;
+                case AxField::advertise:
+                    onMouseUp(WIDX_ADVERTISE_CHECKBOX);
+                    Accessibility::ScreenReaderSpeak(valueText(f));
+                    break;
+                case AxField::maxPlayers:
+                    announceField();
+                    break;
+                case AxField::startServer:
+                case AxField::loadServer:
+                    onMouseUp(widgetForField(f));
+                    break;
+            }
+        }
+
         char _port[7];
         char _name[65];
         char _description[Network::kMaxServerDescriptionLength];

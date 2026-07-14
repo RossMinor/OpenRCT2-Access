@@ -89,6 +89,9 @@ namespace OpenRCT2::Ui::Accessibility
             case WindowClass::firePrompt:
             case WindowClass::accessibilityOptions: // the mod's own settings (Ctrl+F1)
             case WindowClass::serverList:
+            case WindowClass::networkStatus:  // connection-progress modal + password prompt
+            case WindowClass::serverStart:    // host-a-server configuration form
+            case WindowClass::multiplayer:    // in-game players / groups / options window
             case WindowClass::scenarioSelect:
             case WindowClass::trackDesignList:      // pre-built ride design list
             case WindowClass::titleMenu:
