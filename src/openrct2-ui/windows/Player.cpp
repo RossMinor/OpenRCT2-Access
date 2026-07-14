@@ -9,6 +9,9 @@
 
 #include "../interface/Viewport.h"
 
+#include <algorithm>
+#include <openrct2-ui/accessibility/ListNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -21,9 +24,12 @@
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/network/Network.h>
 #include <openrct2/network/NetworkAction.h>
 #include <openrct2/ui/WindowManager.h>
+#include <optional>
+#include <string>
 #include <utility>
 
 namespace OpenRCT2::Ui::Windows
@@ -87,6 +93,12 @@ namespace OpenRCT2::Ui::Windows
     {
         int16_t _previousRotation = -1;
         bool _drawViewport = true;
+
+        // Accessible keyboard focus: item 0 is the tab selector, items 1..N are the page's controls
+        // and read-outs. Combo-box navigation state while the group dropdown is open.
+        int32_t _accessIndex = 0;
+        bool _accessDropdownOpen = false;
+        WidgetIndex _accessDropdownChevron = 0;
 
     public:
         void init(const uint8_t id)
@@ -204,6 +216,286 @@ namespace OpenRCT2::Ui::Windows
                     onDropdownOverview(widgetIndex, selectedIndex);
                     break;
             }
+        }
+
+        // ---- Accessible keyboard navigation ------------------------------------------------------
+        // Same multi-tab pattern as the other accessible windows: item 0 is the tab selector
+        // (Overview / Statistics), items 1..N are the page's controls and read-outs. The group
+        // selector opens as a real combo box.
+
+        bool onAccessibilityAction(AccessibilityAction action) override
+        {
+            if (_accessDropdownOpen)
+            {
+                switch (action)
+                {
+                    case AccessibilityAction::moveUp:
+                    case AccessibilityAction::moveLeft:
+                        accessMoveDropdown(-1);
+                        return true;
+                    case AccessibilityAction::moveDown:
+                    case AccessibilityAction::moveRight:
+                        accessMoveDropdown(1);
+                        return true;
+                    case AccessibilityAction::activate:
+                        accessCommitDropdown();
+                        return true;
+                    case AccessibilityAction::cancel:
+                        accessCloseDropdown();
+                        announceAccessFocus();
+                        return true;
+                    default:
+                        return true;
+                }
+            }
+            switch (action)
+            {
+                case AccessibilityAction::moveUp:    accessMove(-1); return true;
+                case AccessibilityAction::moveDown:  accessMove(1); return true;
+                case AccessibilityAction::moveLeft:  accessAdjust(-1); return true;
+                case AccessibilityAction::moveRight: accessAdjust(1); return true;
+                case AccessibilityAction::activate:  accessActivate(); return true;
+                case AccessibilityAction::nextTab:   accessChangeTab(1); return true;
+                case AccessibilityAction::prevTab:   accessChangeTab(-1); return true;
+                case AccessibilityAction::announce:  announceAccessFocus(); return true;
+                case AccessibilityAction::cancel:    close(); return true;
+                default:                             return true;
+            }
+        }
+
+        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        {
+            if (_accessDropdownOpen)
+                return std::nullopt;
+            WidgetIndex wi;
+            if (_accessIndex <= 0)
+            {
+                wi = WIDX_TAB_1 + page;
+            }
+            else
+            {
+                wi = accessItemWidget(_accessIndex - 1);
+                if (wi == WIDX_BACKGROUND)
+                    return std::nullopt; // read-only text row, no widget to box
+            }
+            if (wi >= widgets.size() || widgets[wi].type == WidgetType::empty)
+                return std::nullopt;
+            const auto& wd = widgets[wi];
+            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
+                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+        }
+
+        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        {
+            return true; // swallow letters so they don't leak to the game behind the window
+        }
+
+    private:
+        int32_t playerIdx() const
+        {
+            return Network::GetPlayerIndex(static_cast<uint8_t>(number));
+        }
+
+        std::string playerName() const
+        {
+            const int32_t p = playerIdx();
+            return p != -1 ? std::string(Network::GetPlayerName(p)) : std::string{};
+        }
+
+        static const char* accessPageName(int32_t p)
+        {
+            return (p == WINDOW_PLAYER_PAGE_STATISTICS) ? "Statistics" : "Overview";
+        }
+
+        int32_t accessItemCount() const
+        {
+            // Overview: group, locate, kick, ping, last action. Statistics: commands ran, money spent.
+            return (page == WINDOW_PLAYER_PAGE_OVERVIEW) ? 5 : 2;
+        }
+
+        void announceAccessFocus()
+        {
+            if (_accessDropdownOpen)
+                return;
+            if (_accessIndex <= 0)
+            {
+                Accessibility::ScreenReaderSpeakItem(
+                    Accessibility::JoinSpeech({ playerName(), std::string(accessPageName(page)) + " tab" }), page, 2);
+                return;
+            }
+            const int32_t i = _accessIndex - 1;
+            if (i < 0 || i >= accessItemCount())
+                return;
+            Accessibility::ScreenReaderSpeakItem(itemText(i), i, accessItemCount());
+        }
+
+        void accessChangeTab(int32_t delta)
+        {
+            const int32_t p = (page + delta + 2) % 2;
+            setPage(p);
+            _accessIndex = 0;
+            announceAccessFocus();
+        }
+
+        void accessMove(int32_t delta)
+        {
+            const int32_t total = accessItemCount() + 1; // +1 for the tab selector
+            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
+            invalidate();
+            announceAccessFocus();
+        }
+
+        std::string groupName() const
+        {
+            const int32_t p = playerIdx();
+            if (p == -1)
+                return "none";
+            const int32_t g = Network::GetGroupIndex(Network::GetPlayerGroup(p));
+            return g != -1 ? std::string(Network::GetGroupName(g)) : std::string("none");
+        }
+
+        std::string itemText(int32_t i)
+        {
+            const int32_t p = playerIdx();
+            if (page == WINDOW_PLAYER_PAGE_OVERVIEW)
+            {
+                switch (i)
+                {
+                    case 0:
+                        return Accessibility::JoinSpeech({ "Group", "combo box", groupName() });
+                    case 1:
+                        return "Locate on map, button";
+                    case 2:
+                        return isWidgetDisabled(WIDX_KICK) ? "Kick, button, not available" : "Kick, button";
+                    case 3:
+                        return p != -1 ? "Ping, " + std::to_string(Network::GetPlayerPing(p)) + " milliseconds"
+                                       : std::string{};
+                    case 4:
+                    {
+                        if (p == -1)
+                            return {};
+                        const int32_t la = Network::GetPlayerLastAction(p, 0);
+                        const std::string action = (la != -999) ? FormatStringID(Network::GetActionNameStringID(la))
+                                                                 : FormatStringID(STR_ACTION_NA);
+                        return Accessibility::JoinSpeech({ "Last action", action });
+                    }
+                }
+            }
+            else if (p != -1)
+            {
+                switch (i)
+                {
+                    case 0:
+                        return FormatStringID(STR_COMMANDS_RAN, static_cast<uint32_t>(Network::GetPlayerCommandsRan(p)));
+                    case 1:
+                        return FormatStringID(STR_MONEY_SPENT, static_cast<uint32_t>(Network::GetPlayerMoneySpent(p)));
+                }
+            }
+            return {};
+        }
+
+        WidgetIndex accessItemWidget(int32_t i) const
+        {
+            if (page == WINDOW_PLAYER_PAGE_OVERVIEW)
+            {
+                switch (i)
+                {
+                    case 0: return WIDX_GROUP;
+                    case 1: return WIDX_LOCATE;
+                    case 2: return WIDX_KICK;
+                    default: return WIDX_BACKGROUND; // ping / last action are read-only text
+                }
+            }
+            return WIDX_BACKGROUND;
+        }
+
+        void accessActivate()
+        {
+            if (_accessIndex <= 0 || page != WINDOW_PLAYER_PAGE_OVERVIEW)
+                return; // tab switches via Left/Right; statistics are read-only
+            switch (_accessIndex - 1)
+            {
+                case 0:
+                    accessOpenDropdown(WIDX_GROUP_DROPDOWN);
+                    break;
+                case 1:
+                    onMouseUp(WIDX_LOCATE);
+                    Accessibility::ScreenReaderSpeak("Locating player on the map.");
+                    break;
+                case 2:
+                    if (isWidgetDisabled(WIDX_KICK))
+                        Accessibility::ScreenReaderSpeak("Kick is not available.");
+                    else
+                    {
+                        Accessibility::ScreenReaderSpeak("Kicking " + playerName());
+                        onMouseUp(WIDX_KICK);
+                    }
+                    break;
+                default:
+                    announceAccessFocus(); // read-only rows just re-read
+                    break;
+            }
+        }
+
+        void accessAdjust(int32_t delta)
+        {
+            if (_accessIndex <= 0)
+            {
+                accessChangeTab(delta);
+                return;
+            }
+            if (page == WINDOW_PLAYER_PAGE_OVERVIEW && (_accessIndex - 1) == 0)
+            {
+                accessOpenDropdown(WIDX_GROUP_DROPDOWN);
+                return;
+            }
+            announceAccessFocus();
+        }
+
+        // ---- Group combo-box navigation, mirroring the shared dropdown pattern -------------------
+        void accessCloseDropdown()
+        {
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->CloseByClass(WindowClass::dropdown);
+            _accessDropdownOpen = false;
+        }
+
+        void accessMoveDropdown(int32_t delta)
+        {
+            const int32_t n = gDropdown.numItems;
+            if (n <= 0)
+                return;
+            int32_t idx = std::max(0, gDropdown.highlightedIndex);
+            idx = (idx + delta + n) % n;
+            gDropdown.highlightedIndex = idx;
+            std::string text = gDropdown.items[idx].text;
+            if (gDropdown.items[idx].isChecked())
+                text += ", selected";
+            Accessibility::ScreenReaderSpeakItem(text, idx, n);
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+
+        void accessOpenDropdown(WidgetIndex chevronWidx)
+        {
+            onMouseDown(chevronWidx); // populates and shows gDropdown
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+                return;
+            _accessDropdownOpen = true;
+            _accessDropdownChevron = chevronWidx;
+            accessMoveDropdown(0); // read the current selection
+        }
+
+        void accessCommitDropdown()
+        {
+            const int32_t idx = gDropdown.highlightedIndex;
+            const WidgetIndex chevron = _accessDropdownChevron;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems;
+            accessCloseDropdown();
+            if (valid)
+                onDropdown(chevron, idx);
+            announceAccessFocus();
         }
 
 #pragma endregion

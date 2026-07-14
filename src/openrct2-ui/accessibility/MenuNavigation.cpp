@@ -92,6 +92,7 @@ namespace OpenRCT2::Ui::Accessibility
             case WindowClass::networkStatus:  // connection-progress modal + password prompt
             case WindowClass::serverStart:    // host-a-server configuration form
             case WindowClass::multiplayer:    // in-game players / groups / options window
+            case WindowClass::player:         // individual player info (group, kick, stats)
             case WindowClass::scenarioSelect:
             case WindowClass::trackDesignList:      // pre-built ride design list
             case WindowClass::titleMenu:
