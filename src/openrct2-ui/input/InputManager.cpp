@@ -13,10 +13,12 @@
 
 #include <SDL.h>
 #include <openrct2-ui/accessibility/AccessFollow.h>
+#include <openrct2-ui/accessibility/AccessMultiplayer.h>
 #include <openrct2-ui/accessibility/AccessSounds.h>
 #include <openrct2-ui/accessibility/AccessUpdate.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <SDL_gamecontroller.h>
 #include <cmath>
 #include <openrct2-ui/UiContext.h>
@@ -232,6 +234,9 @@ void InputManager::process()
 
     // Announce "Menu closed" when a top-level accessible window closes and focus returns to the game.
     Accessibility::TickMenuClosedAnnounce();
+
+    // Speak new multiplayer chat/system messages and connection-status changes.
+    Accessibility::TickMultiplayerAnnounce();
 }
 
 void InputManager::handleViewScrolling()
@@ -521,6 +526,12 @@ void InputManager::processChat(const InputEvent& e)
         }
         if (input != ChatInput::none)
         {
+            // Announce the outcome before ChatInput clears the line and closes the chat. An empty
+            // "send" just closes without sending anything.
+            if (input == ChatInput::send)
+                Accessibility::ScreenReaderSpeak(ChatGetCurrentLine().empty() ? "Chat closed" : "Message sent");
+            else
+                Accessibility::ScreenReaderSpeak("Chat cancelled");
             ChatInput(input);
         }
     }

@@ -51,4 +51,16 @@ void ChatDraw(OpenRCT2::Drawing::RenderTarget& rt, OpenRCT2::ColourWithFlags cha
 void ChatAddHistory(std::string_view s);
 void ChatInput(ChatInput input);
 
+// Accessibility: read-only access to the chat history so a screen-reader poll can announce new
+// chat/system messages. ChatGetTotalMessages() is a monotonic count of every message ever added,
+// so a watcher can tell how many are new even after the 10-entry ring buffer wraps. Index 0 is the
+// newest entry.
+uint32_t ChatGetTotalMessages();
+size_t ChatGetHistoryCount();
+const u8string& ChatGetHistoryEntry(size_t index);
+
+// The message currently being composed (valid while gChatOpen). A screen-reader poll watches this
+// to echo typed characters.
+const u8string& ChatGetCurrentLine();
+
 int32_t ChatStringWrappedGetHeight(u8string_view args, int32_t width);

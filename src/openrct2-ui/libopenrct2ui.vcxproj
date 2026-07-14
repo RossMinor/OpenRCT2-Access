@@ -44,6 +44,7 @@
   <ItemGroup>
     <ClInclude Include="accessibility\AccessCrashHandler.h" />
     <ClInclude Include="accessibility\AccessFollow.h" />
+    <ClInclude Include="accessibility\AccessMultiplayer.h" />
     <ClInclude Include="accessibility\AccessSounds.h" />
     <ClInclude Include="accessibility\AccessUpdate.h" />
     <ClInclude Include="accessibility\Direction.h" />
@@ -125,6 +126,7 @@
   <ItemGroup>
     <ClCompile Include="accessibility\AccessCrashHandler.cpp" />
     <ClCompile Include="accessibility\AccessFollow.cpp" />
+    <ClCompile Include="accessibility\AccessMultiplayer.cpp" />
     <ClCompile Include="accessibility\AccessSounds.cpp" />
     <ClCompile Include="accessibility\AccessUpdate.cpp" />
     <ClCompile Include="accessibility\Direction.cpp" />

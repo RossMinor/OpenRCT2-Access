@@ -33,6 +33,9 @@ bool gChatOpen = false;
 static u8string _chatCurrentLine;
 static std::deque<u8string> _chatHistory;
 static std::deque<uint32_t> _chatHistoryTime;
+// Monotonic count of every message ever added (never resets when the ring buffer wraps), used by
+// the accessibility screen-reader poll to detect new messages.
+static uint32_t _chatTotalMessages = 0;
 static uint32_t _chatCaretTicks = 0;
 static int32_t _chatLeft;
 static int32_t _chatTop;
@@ -243,6 +246,7 @@ void ChatAddHistory(std::string_view s)
 
     _chatHistory.push_front(buffer);
     _chatHistoryTime.push_front(Platform::GetTicks());
+    _chatTotalMessages++;
 
     // Log to file (src only as logging does its own timestamp)
     Network::AppendChatLog(s);
@@ -273,6 +277,26 @@ void ChatInput(enum ChatInput input)
 static const u8string& ChatGetHistory(size_t index)
 {
     return _chatHistory[index];
+}
+
+uint32_t ChatGetTotalMessages()
+{
+    return _chatTotalMessages;
+}
+
+size_t ChatGetHistoryCount()
+{
+    return _chatHistory.size();
+}
+
+const u8string& ChatGetHistoryEntry(size_t index)
+{
+    return _chatHistory[index];
+}
+
+const u8string& ChatGetCurrentLine()
+{
+    return _chatCurrentLine;
 }
 
 static uint32_t ChatHistoryGetTime(size_t index)
