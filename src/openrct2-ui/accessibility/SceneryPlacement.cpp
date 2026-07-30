@@ -111,22 +111,98 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(std::string("Rotated, facing ") + GetWorldDirectionName(_rotation));
     }
 
-    void AccessibleSceneryPlacementSetEdge(int32_t screenEdge, const char* label)
+    // Convert a screen-relative edge (0 = top, 1 = right, 2 = bottom, 3 = left, as the player sees
+    // the tile) to a world Direction, using the SAME screen delta and camera rotation the map
+    // cursor's arrow keys use (see MoveScreen/Move in MapNavigation). This keeps "left" here meaning
+    // the same world edge the Left arrow moves toward, so fences follow the mod's direction logic
+    // instead of ending up rotated - and lets the edge be named with the mod's absolute compass.
+    static Direction ScreenEdgeToWorldDirection(int32_t screenEdge)
     {
-        if (!_active)
-            return;
-        // The screen-relative edge maps to a world edge through the current view rotation, so
-        // "top" is always the edge the player sees at the top whichever way the map is turned.
-        _edge = static_cast<Direction>((screenEdge + GetCurrentRotation()) & 3);
-        ScreenReaderSpeak(label);
+        // Screen deltas matching the arrow keys: top like Up (0,-1), right like Right (-1,0),
+        // bottom like Down (0,1), left like Left (1,0).
+        static constexpr int32_t kDx[4] = { 0, -1, 0, 1 };
+        static constexpr int32_t kDy[4] = { -1, 0, 1, 0 };
+        int32_t dx = kDx[screenEdge & 3];
+        int32_t dy = kDy[screenEdge & 3];
+        // Rotate the screen delta by the camera rotation (90-degree step (x,y) -> (y,-x)), as MoveScreen does.
+        for (int32_t i = 0, steps = GetCurrentRotation() & 3; i < steps; i++)
+        {
+            const int32_t nx = dy;
+            const int32_t ny = -dx;
+            dx = nx;
+            dy = ny;
+        }
+        // World delta to Direction, matching Move(): +x = West, -x = East, +y = South, -y = North.
+        if (dx > 0)
+            return 2; // West
+        if (dx < 0)
+            return 0; // East
+        if (dy > 0)
+            return 1; // South
+        return 3;     // North
     }
 
-    void AccessibleSceneryPlacementSetCorner(int32_t screenCorner, const char* label)
+    void AccessibleSceneryPlacementSetEdge(int32_t screenEdge, const char* /*label*/)
     {
         if (!_active)
             return;
-        _quadrant = static_cast<uint8_t>((screenCorner + GetCurrentRotation()) & 3);
-        ScreenReaderSpeak(label);
+        _edge = ScreenEdgeToWorldDirection(screenEdge);
+        // Announce the absolute world edge (e.g. "West edge"), matching how the mod names the
+        // direction the Left arrow moves, rather than the screen-relative "Left edge".
+        ScreenReaderSpeak(std::string(GetWorldDirectionName(_edge)) + " edge");
+    }
+
+    // Absolute compass name of a small-scenery quadrant (the engine's SceneryQuadrantOffsets, in the
+    // mod's world frame where -x = East, +x = West, -y = North, +y = South): 0 = NE, 1 = SE, 2 = SW,
+    // 3 = NW.
+    static const char* WorldQuadrantName(uint8_t quadrant)
+    {
+        switch (quadrant & 3)
+        {
+            case 0:
+                return "Northeast corner";
+            case 1:
+                return "Southeast corner";
+            case 2:
+                return "Southwest corner";
+            default:
+                return "Northwest corner";
+        }
+    }
+
+    // Convert a screen-relative corner (0 = top-left, 1 = top-right, 2 = bottom-right, 3 = bottom-left,
+    // as the player sees the tile) to a world quadrant, using the SAME screen deltas and camera
+    // rotation the edge/arrow-key logic uses (each corner is the sum of its two edge deltas). This
+    // keeps corners consistent with the mod's direction logic instead of landing rotated.
+    static uint8_t ScreenCornerToWorldQuadrant(int32_t screenCorner)
+    {
+        // Diagonal screen deltas = the two edge deltas combined (top/right/bottom/left from the edge
+        // helper): top-left = top+left, top-right = top+right, bottom-right = bottom+right, etc.
+        static constexpr int32_t kDx[4] = { 1, -1, -1, 1 };  // TL, TR, BR, BL
+        static constexpr int32_t kDy[4] = { -1, -1, 1, 1 };
+        int32_t dx = kDx[screenCorner & 3];
+        int32_t dy = kDy[screenCorner & 3];
+        for (int32_t i = 0, steps = GetCurrentRotation() & 3; i < steps; i++)
+        {
+            const int32_t nx = dy;
+            const int32_t ny = -dx;
+            dx = nx;
+            dy = ny;
+        }
+        // World diagonal to quadrant (SceneryQuadrantOffsets): -x,-y = 0 (NE); -x,+y = 1 (SE);
+        // +x,+y = 2 (SW); +x,-y = 3 (NW).
+        if (dx < 0)
+            return dy < 0 ? 0 : 1;
+        return dy > 0 ? 2 : 3;
+    }
+
+    void AccessibleSceneryPlacementSetCorner(int32_t screenCorner, const char* /*label*/)
+    {
+        if (!_active)
+            return;
+        _quadrant = ScreenCornerToWorldQuadrant(screenCorner);
+        // Announce the absolute world corner (e.g. "Northwest corner"), matching the mod's compass.
+        ScreenReaderSpeak(WorldQuadrantName(_quadrant));
     }
 
     static int32_t SurfaceBaseZ(const CoordsXY& tile)
@@ -235,27 +311,14 @@ namespace OpenRCT2::Ui::Accessibility
 
             case SCENERY_TYPE_WALL:
             {
-                int32_t z = SurfaceBaseZ(mapCoords);
-                if (z < 0)
-                {
-                    ScreenReaderSpeak("Cannot place here");
-                    return;
-                }
-                for (int32_t i = 0; i < 7; i++, z += kCoordsZStep)
-                {
-                    const CoordsXYZ loc = { mapCoords.x, mapCoords.y, z };
-                    auto query = GameActions::WallPlaceAction(entry, loc, _edge, kColour, kColour, kColour);
-                    if (GameActions::Query(&query, getGameState()).error == GameActions::Status::ok)
-                    {
-                        auto place = GameActions::WallPlaceAction(entry, loc, _edge, kColour, kColour, kColour);
-                        ExecutePlace(&place, loc);
-                        return;
-                    }
-                }
-                const int32_t base = SurfaceBaseZ(mapCoords);
-                auto fail = GameActions::WallPlaceAction(
-                    entry, { mapCoords.x, mapCoords.y, base }, _edge, kColour, kColour, kColour);
-                ExecutePlace(&fail, { mapCoords, base });
+                // Place with z = 0, which WallPlaceAction treats as "auto": it derives the base height
+                // from the surface and edge slope, exactly as the game's own wall tool does (which
+                // passes gSceneryPlaceZ = 0). This puts the fence on the ground/path it is placed on.
+                // Passing an explicit surface height and searching upward (as small/large scenery do)
+                // instead floated the fence one elevation step above path tiles.
+                const CoordsXYZ loc = { mapCoords.x, mapCoords.y, 0 };
+                auto place = GameActions::WallPlaceAction(entry, loc, _edge, kColour, kColour, kColour);
+                ExecutePlace(&place, loc);
                 break;
             }
 
