@@ -141,6 +141,11 @@ namespace OpenRCT2::Ui::Accessibility
     // Description of the tile the cursor was last over, so we only announce on change.
     static std::string _lastTileDescription;
 
+    // Type signature of the tile the cursor was last over, used by "on change" tile-speech mode so a
+    // move onto another tile of the same kind (e.g. path to path) stays quiet while a genuinely
+    // different kind of tile (an entrance, a queue, a ride) still announces. See TileReadout::typeKey.
+    static std::string _lastTileType;
+
     // Cache of the last computed ride footprint, to avoid rescanning the map repeatedly.
     static RideId _cachedBoundsRide = RideId::GetNull();
     static TileCoordsXY _cachedBoundsMin{};
@@ -387,15 +392,73 @@ namespace OpenRCT2::Ui::Accessibility
     struct TileReadout
     {
         std::string text;
+        // Canonical category signature of the tile (e.g. "path", "queue, path"), independent of the
+        // reading order, used by "on change" tile-speech mode to tell "the same kind of tile" from a
+        // genuinely different one. Matches the same scan that produced text, so they can never disagree.
+        std::string typeKey;
         bool bareGround = false;
     };
+
+    // Appends a category to the tile's signature, de-duplicated so a tile with several elements of
+    // the same kind (e.g. two queue segments) records the category once, in first-seen order.
+    static void AppendCategory(std::vector<std::string>& categories, std::string_view category)
+    {
+        if (std::find(categories.begin(), categories.end(), category) == categories.end())
+            categories.emplace_back(category);
+    }
+
+    static std::string JoinCategories(const std::vector<std::string>& categories)
+    {
+        std::string out;
+        for (const auto& category : categories)
+        {
+            if (!out.empty())
+                out += ", ";
+            out += category;
+        }
+        return out;
+    }
+
+    // Collapses runs of the same spoken name into a single counted entry, so a tile holding three
+    // bushes of the same kind reads "3 Bulrushes" rather than "Bulrushes, Bulrushes, Bulrushes".
+    // Only adjacent repeats merge, so the height-based reading order of different items is kept.
+    static void CollapseRepeats(std::vector<std::string>& parts)
+    {
+        std::vector<std::string> out;
+        out.reserve(parts.size());
+        for (const auto& part : parts)
+        {
+            if (out.empty() || out.back() != part)
+            {
+                out.push_back(part);
+                continue;
+            }
+            // Bump the previous (identical) entry's count: "name" -> "2 name", "2 name" -> "3 name".
+            std::string& prev = out.back();
+            int32_t count = 1;
+            std::string name = prev;
+            if (const auto space = prev.find(' '); space != std::string::npos && space + 1 < prev.size())
+            {
+                char* end = nullptr;
+                const long parsed = std::strtol(prev.substr(0, space).c_str(), &end, 10);
+                if (end != nullptr && *end == '\0' && parsed >= 2)
+                {
+                    count = static_cast<int32_t>(parsed);
+                    name = prev.substr(space + 1);
+                }
+            }
+            prev = std::to_string(count + 1) + " " + name;
+        }
+        parts = std::move(out);
+    }
 
     // Ground litter (vomit, food wrappers, cans, cups, rubbish) sits on a tile as sprites, not as
     // tile elements, so the tile-element loop never sees it. Guests drop it on paths; without this a
     // blind player has no way to know a path is filthy or needs a handyman. Litter of the same kind
     // is grouped with a count, so a messy tile reads e.g. "Vomit, 3 empty cups" rather than a dozen
     // separate items. Appends its parts to the caller's list.
-    static void GatherGroundLitter(const TileCoordsXY& tile, std::vector<std::string>& parts)
+    static void GatherGroundLitter(const TileCoordsXY& tile, std::vector<std::string>& parts,
+                                   std::vector<std::string>& categories)
     {
         // name -> count, kept in first-seen order for a stable readout.
         std::vector<std::pair<std::string, int32_t>> counts;
@@ -411,6 +474,9 @@ namespace OpenRCT2::Ui::Accessibility
             else
                 it->second++;
         }
+        if (counts.empty())
+            return;
+        AppendCategory(categories, "litter");
         for (auto& [name, n] : counts)
             parts.push_back(n > 1 ? std::to_string(n) + " " + name : name);
     }
@@ -419,7 +485,8 @@ namespace OpenRCT2::Ui::Accessibility
     // water appended last since it sits beneath any structures. Land ownership is deliberately not
     // included - the caller decides how to phrase "Empty"/"Outside park" for a single tile versus a
     // whole brush area. A tile with nothing on it returns an empty vector.
-    static std::vector<std::string> GatherTileFeatures(const TileCoordsXY& tile)
+    static std::vector<std::string> GatherTileFeatures(const TileCoordsXY& tile,
+                                                       std::vector<std::string>& categories)
     {
         // Built in a single canonical bottom-to-top order (lowest feature first): water, then the
         // tile elements in the order they are stored (which is by height), then litter on top. The
@@ -430,7 +497,10 @@ namespace OpenRCT2::Ui::Accessibility
 
         // Water is the flooded surface, sitting beneath any structure, so it is the lowest feature.
         if (auto* surface = MapGetSurfaceElementAt(tile); surface != nullptr && surface->GetWaterHeight() > 0)
+        {
             parts.push_back("Water");
+            AppendCategory(categories, "water");
+        }
 
         // In build mode (the ride construction window is open) read each placed track piece's
         // shape/slope/bank for detailed construction; otherwise read the ride as a whole - its name
@@ -449,6 +519,7 @@ namespace OpenRCT2::Ui::Accessibility
                         = DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType()));
                     if (!piece.empty())
                         parts.push_back(piece);
+                    AppendCategory(categories, "track");
                 }
                 else if (const RideId rid = track->GetRideIndex(); rid != namedRide)
                 {
@@ -463,6 +534,7 @@ namespace OpenRCT2::Ui::Accessibility
                             desc += std::string(", facing ") + GetWorldDirectionName(*facing);
                     }
                     parts.push_back(std::move(desc));
+                    AppendCategory(categories, "ride");
                 }
             }
             else if (auto* entrance = el->asEntrance(); entrance != nullptr)
@@ -471,14 +543,17 @@ namespace OpenRCT2::Ui::Accessibility
                 {
                     case ENTRANCE_TYPE_PARK_ENTRANCE:
                         parts.push_back("Park entrance");
+                        AppendCategory(categories, "park entrance");
                         break;
                     case ENTRANCE_TYPE_RIDE_ENTRANCE:
                         // The doorway (where guests enter) faces opposite the element's stored
                         // direction, which points toward the station platform.
                         parts.push_back(std::string("Ride entrance, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
+                        AppendCategory(categories, "ride entrance");
                         break;
                     case ENTRANCE_TYPE_RIDE_EXIT:
                         parts.push_back(std::string("Ride exit, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
+                        AppendCategory(categories, "ride exit");
                         break;
                 }
             }
@@ -492,6 +567,7 @@ namespace OpenRCT2::Ui::Accessibility
 
                 if (p->IsQueue())
                 {
+                    AppendCategory(categories, "queue");
                     if (name.empty())
                     {
                         parts.push_back("Queue line");
@@ -508,6 +584,7 @@ namespace OpenRCT2::Ui::Accessibility
                 }
                 else
                 {
+                    AppendCategory(categories, "path");
                     parts.push_back(name.empty() ? "Path" : name);
                 }
 
@@ -516,6 +593,7 @@ namespace OpenRCT2::Ui::Accessibility
                 // so a tile reads e.g. "Bench, Tarmac path".
                 if (p->HasAddition())
                 {
+                    AppendCategory(categories, "scenery");
                     std::string addition = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
                     if (addition.empty())
                         addition = "Path addition";
@@ -531,23 +609,27 @@ namespace OpenRCT2::Ui::Accessibility
                 // Banners are the signs placed on path edges to name areas or give directions; the
                 // player can type custom text on them. Read that text so it is not lost.
                 parts.push_back(DescribeSign("Sign", b->GetBanner()));
+                AppendCategory(categories, "scenery");
             }
             else if (auto* w = el->asWall(); w != nullptr)
             {
                 std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
                 // A wall can itself be a sign carrying custom text (e.g. a wall-mounted sign).
                 parts.push_back(DescribeSign(name.empty() ? "Fence" : name, w->GetBanner()));
+                AppendCategory(categories, "scenery");
             }
             else if (auto* ss = el->asSmallScenery(); ss != nullptr)
             {
                 std::string name = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
                 parts.push_back(name.empty() ? "Scenery" : name);
+                AppendCategory(categories, "scenery");
             }
             else if (auto* ls = el->asLargeScenery(); ls != nullptr)
             {
                 std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
                 // Large scenery with a banner is a sign (the big stand-alone signs); read its text.
                 parts.push_back(DescribeSign(name.empty() ? "Scenery" : name, ls->GetBanner()));
+                AppendCategory(categories, "scenery");
             }
 
             if (el->isLastForTile())
@@ -557,10 +639,11 @@ namespace OpenRCT2::Ui::Accessibility
 
         // Litter (dropped on the ground/paths) sits on top of the ground clutter, so it is the
         // highest feature - appended last in the canonical bottom-to-top order.
-        GatherGroundLitter(tile, parts);
+        GatherGroundLitter(tile, parts, categories);
 
         // Default reads lowest-to-highest (as built). In highest-to-lowest mode, reverse the whole
         // list so the topmost feature is announced first - the exact mirror of the default order.
+        CollapseRepeats(parts);
         if (Config::Get().sound.accessibilityTileReadingOrder == kTileReadingOrderHighestFirst)
             std::reverse(parts.begin(), parts.end());
 
@@ -593,13 +676,14 @@ namespace OpenRCT2::Ui::Accessibility
 
     static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
     {
-        auto parts = GatherTileFeatures(tile);
+        std::vector<std::string> categories;
+        auto parts = GatherTileFeatures(tile, categories);
 
         auto* surface = MapGetSurfaceElementAt(tile);
         const bool owned = surface != nullptr && (surface->GetOwnership() & OWNERSHIP_OWNED) != 0;
 
         if (parts.empty())
-            return { owned ? "Empty" : "Outside park", true };
+            return { owned ? "Empty" : "Outside park", owned ? "bare" : "outside park", true };
 
         // The composition helper owns the ", " joins and drops any empty fragment, so the seam is
         // decided in one place.
@@ -609,7 +693,7 @@ namespace OpenRCT2::Ui::Accessibility
         // The land beneath everything: note when the tile is outside the owned park area.
         if (!owned)
             sb.add("outside park");
-        return { sb.str(), false };
+        return { sb.str(), JoinCategories(categories), false };
     }
 
     // Reads out the whole square brush area (3x3, 5x5, 7x7) centred on the cursor, listing every
@@ -628,6 +712,7 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t maxY = by / kCoordsXYStep;
 
         SpeechBuilder sb;
+        std::vector<std::string> categories;
         bool anyFeature = false;
         bool anyUnowned = false;
         for (int32_t y = minY; y <= maxY; y++)
@@ -635,7 +720,7 @@ namespace OpenRCT2::Ui::Accessibility
             for (int32_t x = minX; x <= maxX; x++)
             {
                 const TileCoordsXY tile{ x, y };
-                for (auto& part : GatherTileFeatures(tile))
+                for (auto& part : GatherTileFeatures(tile, categories))
                 {
                     sb.add(part);
                     anyFeature = true;
@@ -646,11 +731,11 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         if (!anyFeature)
-            return { anyUnowned ? "Outside park" : "Empty", true };
+            return { anyUnowned ? "Outside park" : "Empty", anyUnowned ? "outside park" : "bare", true };
         // Note once if any of the area lies outside the owned park, rather than per tile.
         if (anyUnowned)
             sb.add("outside park");
-        return { sb.str(), false };
+        return { sb.str(), JoinCategories(categories), false };
     }
 
     static std::string GetTileDescription(const TileCoordsXY& tile)
@@ -663,6 +748,7 @@ namespace OpenRCT2::Ui::Accessibility
     {
         _initialised = true;
         _lastTileDescription.clear();
+        _lastTileType.clear();
         _lastElevation = -1;
 
         const auto mapSize = getGameState().mapSize;
@@ -716,7 +802,9 @@ namespace OpenRCT2::Ui::Accessibility
             _lastElevation = EffectiveElevationAt(_cursor);
             _scanHeight = surface->baseHeight;
         }
-        _lastTileDescription = GetTileDescription(_cursor);
+        const TileReadout r = DescribeTileReadout(_cursor);
+        _lastTileDescription = r.text;
+        _lastTileType = r.typeKey;
     }
 
     std::optional<ScreenCoordsXY> GetMapCursorScreenPos()
@@ -1012,13 +1100,18 @@ namespace OpenRCT2::Ui::Accessibility
             // building, so it is always spoken regardless of the tile-speech mode.
             ScreenReaderSpeak(track, !announcedCrossing);
             _lastTileDescription = std::move(description); // keep baseline coherent for leaving the track
+            _lastTileType = readout.typeKey;
         }
         else if (tileMode != TileSpeechMode::off || onPreviewTile)
         {
             // "Every tile" reads on every move; "on change" (the original behaviour) reads only when
-            // the description differs from the previous tile. A ride-preview footprint tile always
-            // reads so the player can trace the whole shape.
-            if (onPreviewTile || tileMode == TileSpeechMode::everyTile || description != _lastTileDescription)
+            // the tile's type differs from the previous one - so two plain path tiles stay quiet but
+            // an entrance, queue or ride still announces. With a larger brush the read-out is a
+            // survey of the whole area, which changes on every sweep, so it compares the description
+            // instead (sweeping over uniform ground keeps reading). A ride-preview footprint tile
+            // always reads so the player can trace the whole shape.
+            const bool changed = (_brushSize > 1) ? (description != _lastTileDescription) : (readout.typeKey != _lastTileType);
+            if (onPreviewTile || tileMode == TileSpeechMode::everyTile || changed)
             {
                 // Skip the bare-ground label right after a boundary cue (which already said it). This
                 // rides on the describer's flag, not on matching its wording.
@@ -1026,12 +1119,14 @@ namespace OpenRCT2::Ui::Accessibility
                     ScreenReaderSpeak(description, !announcedCrossing);
             }
             _lastTileDescription = std::move(description);
+            _lastTileType = readout.typeKey;
         }
         else
         {
             // Off: stay silent, but keep the baseline current so switching back to "on change" does
             // not immediately re-announce a stale tile.
             _lastTileDescription = std::move(description);
+            _lastTileType = readout.typeKey;
         }
 
         // Call out a terraform-area marker on the new tile. Queued (interrupt = false) so it is
@@ -1592,6 +1687,7 @@ namespace OpenRCT2::Ui::Accessibility
         {
             PlayAccessSound(AccessSound::place);
             _lastTileDescription.clear();
+            _lastTileType.clear();
             ScreenReaderSpeak(what);
         }
         // Failures are spoken automatically via the error window.
@@ -1728,7 +1824,9 @@ namespace OpenRCT2::Ui::Accessibility
             _scanHeight = surface->baseHeight;
         }
 
-        _lastTileDescription = GetTileDescription(_cursor);
+        const TileReadout r = DescribeTileReadout(_cursor);
+        _lastTileDescription = r.text;
+        _lastTileType = r.typeKey;
         ScreenReaderSpeak(
             std::string(label) + ", X " + std::to_string(SpokenCoordX(_cursor)) + ", Y "
             + std::to_string(SpokenCoordY(_cursor)));
@@ -1775,8 +1873,10 @@ namespace OpenRCT2::Ui::Accessibility
             _scanHeight = surface->baseHeight;
         }
 
-        const std::string description = GetTileDescription(_cursor);
+        const TileReadout r = DescribeTileReadout(_cursor);
+        const std::string description = r.text;
         _lastTileDescription = description;
+        _lastTileType = r.typeKey;
         ScreenReaderSpeak(
             "Waypoint " + std::to_string(slot + 1) + ", " + description + ", X "
             + std::to_string(SpokenCoordX(_cursor)) + ", Y " + std::to_string(SpokenCoordY(_cursor)));
@@ -1795,6 +1895,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (result.error == GameActions::Status::ok)
         {
             _lastTileDescription.clear();
+            _lastTileType.clear();
             ScreenReaderSpeak(HasMarkedArea() ? "Marked area scenery cleared" : "Scenery cleared");
         }
         // Failures are spoken automatically via the error window.
@@ -1833,6 +1934,7 @@ namespace OpenRCT2::Ui::Accessibility
         Windows::gDisableErrorWindowSound = prevErrorSound;
 
         _lastTileDescription.clear();
+        _lastTileType.clear();
         if (built > 0)
             ScreenReaderSpeak(
                 (gFootpathSelection.isQueueSelected ? "Marked area queued, " : "Marked area paved, ")
@@ -1883,6 +1985,7 @@ namespace OpenRCT2::Ui::Accessibility
         // the ClearAction applies a tick later, so recounting immediately still sees the paths and
         // wrongly reports "No paths" even though the removal worked.
         _lastTileDescription.clear();
+        _lastTileType.clear();
         if (before > 0)
             ScreenReaderSpeak("Paths removed");
         else
@@ -2129,6 +2232,7 @@ namespace OpenRCT2::Ui::Accessibility
             if (result->cost != 0)
             {
                 _lastTileDescription.clear(); // ownership changed, so re-announce the tile next move
+                _lastTileType.clear();
                 ScreenReaderSpeak(rights ? "Construction rights bought" : "Land bought");
                 return;
             }
@@ -2202,6 +2306,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (result.error == GameActions::Status::ok)
         {
             _lastTileDescription.clear();
+            _lastTileType.clear();
             ScreenReaderSpeak("Path removed");
         }
     }
@@ -2223,7 +2328,9 @@ namespace OpenRCT2::Ui::Accessibility
         _menuMode = false;
         CentreViewportOnCursor();
 
-        _lastTileDescription = GetTileDescription(_cursor);
+        const TileReadout entranceReadout = DescribeTileReadout(_cursor);
+        _lastTileDescription = entranceReadout.text;
+        _lastTileType = entranceReadout.typeKey;
         const int32_t x = SpokenCoordX(_cursor);
         const int32_t y = SpokenCoordY(_cursor);
         ScreenReaderSpeak("Park entrance, X " + std::to_string(x) + ", Y " + std::to_string(y));
@@ -2342,7 +2449,9 @@ namespace OpenRCT2::Ui::Accessibility
         _cursor = target.tile;
         _menuMode = false;
         CentreViewportOnCursor();
-        _lastTileDescription = GetTileDescription(_cursor);
+        const TileReadout snapReadout = DescribeTileReadout(_cursor);
+        _lastTileDescription = snapReadout.text;
+        _lastTileType = snapReadout.typeKey;
         ScreenReaderSpeak(std::string(target.label) + ", " + SpokenTileCoordsText(_cursor));
     }
 
@@ -2438,7 +2547,9 @@ namespace OpenRCT2::Ui::Accessibility
         _cursor = bestTile;
         _menuMode = false;
         CentreViewportOnCursor();
-        _lastTileDescription = GetTileDescription(_cursor);
+        const TileReadout rideReadout = DescribeTileReadout(_cursor);
+        _lastTileDescription = rideReadout.text;
+        _lastTileType = rideReadout.typeKey;
         ScreenReaderSpeak(_lastTileDescription);
     }
 
@@ -3176,7 +3287,8 @@ namespace OpenRCT2::Ui::Accessibility
             "Control with an arrow jumps to the nearest ride in that direction. "
             "Control E jumps between the entrance and exit of the ride you are on. Control P checks whether "
             "the current tile connects to the park entrance. P pauses. Control equals and Control minus "
-            "speed the game up and down. Control F1 opens the accessibility settings.");
+            "speed the game up and down. Control F1 opens the accessibility settings (Control A also works "
+            "if the F-keys are taken by the system, as on a Mac).");
     }
 
     // Spoken name for a point on the combined speed ladder (slow-motion factor + game speed).
@@ -3290,8 +3402,11 @@ namespace OpenRCT2::Ui::Accessibility
         if (GetShortcutManager().isPendingShortcutChange())
             return false;
 
-        // Ctrl+F1 opens the accessibility mod's own settings window.
-        if (key == SDLK_F1 && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)))
+        // Ctrl+F1 opens the accessibility mod's own settings window. Ctrl+A is a second way in for
+        // platforms where the F-keys never reach the game (macOS captures them as media keys like
+        // brightness unless the player enables "Use F1, F2, etc. as standard function keys").
+        if ((key == SDLK_F1 || key == SDLK_a) && (e.modifiers & KMOD_CTRL)
+            && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)))
         {
             Windows::AccessibilityOptionsOpen();
             _lastHandledKey = key;
@@ -3473,6 +3588,7 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t w = mx.x - mn.x + 1;
         const int32_t h = mx.y - mn.y + 1;
         _lastTileDescription = name + ", " + std::to_string(w) + " by " + std::to_string(h);
+        _lastTileType = DescribeTileReadout(_cursor).typeKey;
         ScreenReaderSpeak(_lastTileDescription);
     }
 
