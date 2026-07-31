@@ -6,8 +6,7 @@ OpenRCT2-Access is a fork of OpenRCT2 that adds screen-reader support and
 full keyboard control, so blind and low-vision players can play
 Rollercoaster Tycoon 2 without a mouse or sight. It speaks the interface
 through the **Prism** screen-reader bridge (routing speech through a running
-screen reader such as NVDA or JAWS, or a built-in TTS engine such as Windows
-TTS or macOS AVSpeech) and lets you navigate the game's menus, windows, and
+screen reader such as NVDA, JAWS or VoiceOver, as well as a built-in TTS engine such as Microsoft SAPI or macOS AVSpeech) and lets you navigate the game's menus, windows, and
 map entirely from the keyboard.
 
 ## Important Note About This Page
