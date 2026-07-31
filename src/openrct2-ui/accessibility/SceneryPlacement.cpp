@@ -24,6 +24,7 @@
 #include <openrct2/audio/Audio.h>
 #include <openrct2/core/Numerics.hpp>
 #include <openrct2/drawing/Colour.h>
+#include <openrct2/interface/Viewport.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/MapLimits.h>

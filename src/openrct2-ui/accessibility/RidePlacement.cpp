@@ -30,6 +30,7 @@
 #include <openrct2/config/Config.h>
 #include <openrct2/core/Money.hpp>
 #include <openrct2/core/Numerics.hpp>
+#include <openrct2/interface/Viewport.h>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/ride/Ride.h>
 #include <openrct2/ride/RideData.h>

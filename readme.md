@@ -5,8 +5,10 @@
 OpenRCT2-Access is a fork of OpenRCT2 that adds screen-reader support and
 full keyboard control, so blind and low-vision players can play
 Rollercoaster Tycoon 2 without a mouse or sight. It speaks the interface
-through the **NVDA** screen reader and lets you navigate the game's menus,
-windows, and map entirely from the keyboard.
+through the **Prism** screen-reader bridge (routing speech through a running
+screen reader such as NVDA or JAWS, or a built-in TTS engine such as Windows
+TTS or macOS AVSpeech) and lets you navigate the game's menus, windows, and
+map entirely from the keyboard.
 
 ## Important Note About This Page
 
@@ -18,19 +20,53 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 
 ## Requirements
 
-- Windows and the [NVDA screen reader](https://www.nvaccess.org/download/).
+- Windows 10 or later, or macOS.
+- [Prism](https://github.com/ethindp/prism) — the bridge binaries are shipped in the `prism/` directory of this repo (see "Getting the Prism binaries" below).
 - The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/).
 
 ---
 
 ## Installing and updating
 
-1. Make sure NVDA is installed and running.
+1. (Recommended) Install and run a screen reader such as [NVDA](https://www.nvaccess.org/download/). Without one, Prism falls back to a built-in TTS engine.
 2. Download the latest release of the mod under the **Releases** heading.
-3. Launch the game from Steam to generate any needed files, then close the game. It will likely ask you if you would like to install Direct Play, which you want to do.
-4. Unzip the mod folder anywhere on your computer.
-5. Run OpenRCT2Access.exe in the folder and the game will be accessible. **Note:** You will need to launch the game with this method for the time being.
-6. The mod has an updater, so you will be alerted when there's a new update.
+3. Make sure the Prism bridge for your platform is in place (see "Getting the Prism binaries" below).
+4. Launch the game from Steam to generate any needed files, then close the game. It will likely ask you if you would like to install Direct Play, which you want to do.
+5. Unzip the mod folder anywhere on your computer.
+6. Run OpenRCT2Access.exe in the folder and the game will be accessible. **Note:** You will need to launch the game with this method for the time being.
+7. The mod has an updater, so you will be alerted when there's a new update.
+
+On macOS, build the game and run it from the generated `OpenRCT2.app`;
+`libprism.dylib` is bundled automatically, so no extra step is needed.
+
+### Getting the Prism binaries
+
+The mod loads the [Prism](https://github.com/ethindp/prism) screen-reader
+bridge at runtime, so the right file just has to be reachable:
+
+| Platform | File | Location |
+|----------|------|----------|
+| Windows | `prism/prism.dll` | next to `OpenRCT2Access.exe` (or anywhere on your PATH) |
+| macOS | `prism/libprism.dylib` | inside the app bundle: `OpenRCT2.app/Contents/Frameworks/` (or `Contents/MacOS/`) |
+| Linux | `prism/libprism.so` | next to the OpenRCT2 binary |
+
+All three binaries ship in the `prism/` directory of this repository,
+together with Prism's MIT license (`prism/LICENSE`). The macOS build copies
+`libprism.dylib` into `Contents/Frameworks/` automatically, so no manual
+step is needed there.
+
+Prism picks the best speech output automatically: a running screen reader
+such as NVDA or JAWS is preferred, otherwise it falls back to a built-in TTS
+engine (Windows TTS on Windows, AVSpeech on macOS).
+
+If you'd rather build Prism yourself (e.g. to test a newer release):
+
+1. `git clone --recurse-submodules https://github.com/ethindp/prism`
+2. `cmake -S prism -B prism/build -DCMAKE_BUILD_TYPE=Release`
+3. `cmake --build prism/build --config Release --target prism`
+
+With MSVC the DLL is written to `prism/build/Release/prism.dll`; copy it
+into the mod's game folder.
 
 ---
 
@@ -45,7 +81,6 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Building custom rollercoasters
 - Online Multiplayer
 - Importing extensions.
-- MacOS compatibility
 
 ### Navigation
 

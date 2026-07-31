@@ -14,6 +14,8 @@
 #include <openrct2/audio/Audio.h>
 #include <openrct2/audio/AudioMixer.h>
 #include <openrct2/config/Config.h>
+#include <openrct2/core/Path.hpp>
+#include <openrct2/platform/Platform.h>
 #include <openrct2/world/Location.hpp>
 #include <string>
 #include <vector>
@@ -22,7 +24,7 @@ namespace
 {
     // Removes OpenRCT2 formatting tokens (e.g. "{BABYBLUE}") from text so the screen
     // reader doesn't read them aloud. Newline tokens become spaces.
-    std::string StripFormatCodes(std::string_view text)
+    [[maybe_unused]] std::string StripFormatCodes(std::string_view text)
     {
         std::string out;
         out.reserve(text.size());
@@ -57,75 +59,203 @@ namespace
     #ifndef WIN32_LEAN_AND_MEAN
         #define WIN32_LEAN_AND_MEAN
     #endif
-    #include <string>
     #include <windows.h>
+#elif defined(__APPLE__) || defined(__unix__)
+    #include <dlfcn.h>
+#endif
+
+#if defined(_WIN32) || defined(__APPLE__) || defined(__unix__)
 
 namespace OpenRCT2::Ui::Accessibility
 {
-    // Matches the NVDA Controller Client API. On x64 there is a single calling
-    // convention, so the function pointers can be declared without decoration.
-    using NvdaError = unsigned long;
-    using NvdaTestIfRunning = NvdaError (*)();
-    using NvdaSpeakText = NvdaError (*)(const wchar_t*);
-    using NvdaCancelSpeech = NvdaError (*)();
+    // Opaque Prism types plus the PrismError values this bridge relies on, matching the C ABI
+    // published in prism.h from https://github.com/ethindp/prism. The library is loaded
+    // dynamically (like the old NVDA controller client), so no build-time dependency exists.
+    using PrismError = int32_t;
+    constexpr PrismError kPrismErrorBackendNotAvailable = 16;
 
-    static HMODULE _nvdaClient = nullptr;
-    static NvdaTestIfRunning _testIfRunning = nullptr;
-    static NvdaSpeakText _speakText = nullptr;
-    static NvdaCancelSpeech _cancelSpeech = nullptr;
+    struct PrismContext;
+    struct PrismBackend;
+    struct PrismConfig;
+
+    // On x64 there is a single calling convention, so the function pointers can be declared
+    // without decoration (Prism uses __cdecl on Windows).
+    using PrismInit = PrismContext* (*)(PrismConfig*);
+    using PrismShutdown = void (*)(PrismContext*);
+    using PrismCreateBest = PrismBackend* (*)(PrismContext*);
+    using PrismSpeak = PrismError (*)(PrismBackend*, const char*, bool);
+    using PrismStop = PrismError (*)(PrismBackend*);
+    using PrismFree = void (*)(PrismBackend*);
+
+    // Platform wrapper around loading the Prism library and resolving symbols. On Windows
+    // LoadLibrary finds prism.dll in the application directory automatically; the POSIX
+    // loader does not search the executable's own directory (or an app bundle's Frameworks
+    // folder), so those are tried explicitly before falling back to the normal search path.
+#ifdef _WIN32
+    using LibraryHandle = HMODULE;
+
+    static LibraryHandle LoadPrismLibrary()
+    {
+        return LoadLibraryW(L"prism.dll");
+    }
+
+    static void* ResolvePrismSymbol(LibraryHandle handle, const char* name)
+    {
+        return reinterpret_cast<void*>(GetProcAddress(handle, name));
+    }
+
+    static void FreePrismLibrary(LibraryHandle handle)
+    {
+        FreeLibrary(handle);
+    }
+#else
+    #if defined(__APPLE__)
+        static constexpr const char* kPrismLibraryName = "libprism.dylib";
+    #else
+        static constexpr const char* kPrismLibraryName = "libprism.so";
+    #endif
+
+    using LibraryHandle = void*;
+
+    static LibraryHandle LoadPrismLibrary()
+    {
+        const auto exePath = Platform::GetCurrentExecutablePath();
+        if (!exePath.empty())
+        {
+            const auto exeDir = Path::GetDirectory(exePath);
+    #if defined(__APPLE__)
+            // Inside the .app bundle the library can sit next to the executable (Contents/MacOS)
+            // or in the bundle's Frameworks folder (Contents/Frameworks).
+            const char* const candidates[] = { "libprism.dylib", "../Frameworks/libprism.dylib" };
+    #else
+            const char* const candidates[] = { "libprism.so" };
+    #endif
+            for (const char* candidate : candidates)
+            {
+                const auto fullPath = Path::Combine(exeDir, candidate);
+                if (LibraryHandle handle = dlopen(fullPath.c_str(), RTLD_LAZY))
+                    return handle;
+            }
+        }
+        return dlopen(kPrismLibraryName, RTLD_LAZY);
+    }
+
+    static void* ResolvePrismSymbol(LibraryHandle handle, const char* name)
+    {
+        return dlsym(handle, name);
+    }
+
+    static void FreePrismLibrary(LibraryHandle handle)
+    {
+        dlclose(handle);
+    }
+#endif
+
+    static LibraryHandle _prismLibrary = nullptr;
+    static PrismContext* _context = nullptr;
+    static PrismBackend* _backend = nullptr;
+
+    static PrismInit _prismInit = nullptr;
+    static PrismShutdown _prismShutdown = nullptr;
+    static PrismCreateBest _prismCreateBest = nullptr;
+    static PrismSpeak _prismSpeak = nullptr;
+    static PrismStop _prismStop = nullptr;
+    static PrismFree _prismFree = nullptr;
+
+    // Picks the highest-priority backend that works (a running screen reader such as NVDA or JAWS
+    // first, then a platform TTS engine). Done lazily so a screen reader that starts after the
+    // game can still be picked up. Returns true once speech is available.
+    static bool EnsureBackend()
+    {
+        if (_backend != nullptr)
+            return true;
+        if (_context == nullptr || _prismCreateBest == nullptr)
+            return false;
+        _backend = _prismCreateBest(_context);
+        return _backend != nullptr;
+    }
 
     void ScreenReaderInit()
     {
-        if (_nvdaClient != nullptr)
+        if (_prismLibrary != nullptr)
             return;
 
-        _nvdaClient = LoadLibraryW(L"nvdaControllerClient64.dll");
-        if (_nvdaClient == nullptr)
+        _prismLibrary = LoadPrismLibrary();
+        if (_prismLibrary == nullptr)
             return;
 
-        _testIfRunning = reinterpret_cast<NvdaTestIfRunning>(GetProcAddress(_nvdaClient, "nvdaController_testIfRunning"));
-        _speakText = reinterpret_cast<NvdaSpeakText>(GetProcAddress(_nvdaClient, "nvdaController_speakText"));
-        _cancelSpeech = reinterpret_cast<NvdaCancelSpeech>(GetProcAddress(_nvdaClient, "nvdaController_cancelSpeech"));
+        _prismInit = reinterpret_cast<PrismInit>(ResolvePrismSymbol(_prismLibrary, "prism_init"));
+        _prismShutdown = reinterpret_cast<PrismShutdown>(ResolvePrismSymbol(_prismLibrary, "prism_shutdown"));
+        _prismCreateBest = reinterpret_cast<PrismCreateBest>(ResolvePrismSymbol(_prismLibrary, "prism_registry_create_best"));
+        _prismSpeak = reinterpret_cast<PrismSpeak>(ResolvePrismSymbol(_prismLibrary, "prism_backend_speak"));
+        _prismStop = reinterpret_cast<PrismStop>(ResolvePrismSymbol(_prismLibrary, "prism_backend_stop"));
+        _prismFree = reinterpret_cast<PrismFree>(ResolvePrismSymbol(_prismLibrary, "prism_backend_free"));
+
+        if (_prismInit == nullptr || _prismShutdown == nullptr || _prismCreateBest == nullptr
+            || _prismSpeak == nullptr || _prismFree == nullptr)
+        {
+            ScreenReaderShutdown();
+            return;
+        }
+
+        _context = _prismInit(nullptr);
     }
 
     void ScreenReaderShutdown()
     {
-        if (_nvdaClient == nullptr)
+        if (_backend != nullptr)
+        {
+            if (_prismStop != nullptr)
+                _prismStop(_backend);
+            if (_prismFree != nullptr)
+                _prismFree(_backend);
+            _backend = nullptr;
+        }
+
+        if (_context != nullptr)
+        {
+            if (_prismShutdown != nullptr)
+                _prismShutdown(_context);
+            _context = nullptr;
+        }
+
+        if (_prismLibrary == nullptr)
             return;
 
-        FreeLibrary(_nvdaClient);
-        _nvdaClient = nullptr;
-        _testIfRunning = nullptr;
-        _speakText = nullptr;
-        _cancelSpeech = nullptr;
+        FreePrismLibrary(_prismLibrary);
+        _prismLibrary = nullptr;
+        _prismInit = nullptr;
+        _prismShutdown = nullptr;
+        _prismCreateBest = nullptr;
+        _prismSpeak = nullptr;
+        _prismStop = nullptr;
+        _prismFree = nullptr;
     }
 
     bool ScreenReaderIsAvailable()
     {
-        return _testIfRunning != nullptr && _testIfRunning() == 0;
+        return EnsureBackend();
     }
 
     void ScreenReaderSpeak(std::string_view utf8Text, bool interrupt)
     {
-        if (_speakText == nullptr || utf8Text.empty())
+        if (_prismSpeak == nullptr || utf8Text.empty() || !EnsureBackend())
             return;
 
         const std::string clean = StripFormatCodes(utf8Text);
         if (clean.empty())
             return;
 
-        const int required = MultiByteToWideChar(
-            CP_UTF8, 0, clean.data(), static_cast<int>(clean.size()), nullptr, 0);
-        if (required <= 0)
-            return;
+        const PrismError result = _prismSpeak(_backend, clean.c_str(), interrupt);
 
-        std::wstring wide(static_cast<size_t>(required), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, clean.data(), static_cast<int>(clean.size()), wide.data(), required);
-
-        if (interrupt && _cancelSpeech != nullptr)
-            _cancelSpeech();
-
-        _speakText(wide.c_str());
+        // The backend's screen reader or TTS engine may have shut down. Drop it so the next call
+        // re-selects the best backend instead of silently speaking through a dead one.
+        if (result == kPrismErrorBackendNotAvailable)
+        {
+            if (_prismFree != nullptr)
+                _prismFree(_backend);
+            _backend = nullptr;
+        }
     }
 } // namespace OpenRCT2::Ui::Accessibility
 

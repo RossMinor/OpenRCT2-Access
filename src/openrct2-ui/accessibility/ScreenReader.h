@@ -29,14 +29,16 @@ namespace OpenRCT2::Ui::Accessibility
     // so they all honour the single volume control in the accessibility settings window.
     void PlayCue(Audio::SoundId soundId, const CoordsXYZ& loc);
 
-    // Loads the screen reader bridge (nvdaControllerClient64.dll on Windows).
-    // Safe to call multiple times; only the first call has an effect.
+    // Loads the screen reader bridge (prism.dll on Windows, libprism.dylib on macOS,
+    // libprism.so on Linux). Safe to call multiple times; only the first call has an effect.
     void ScreenReaderInit();
 
     // Frees the screen reader library.
     void ScreenReaderShutdown();
 
-    // Returns true if a supported screen reader (NVDA) is loaded and currently running.
+    // Returns true if a screen reader or TTS backend is available through the
+    // Prism bridge (prism.dll). Speech routes through a running screen reader
+    // (e.g. NVDA, JAWS) when there is one, otherwise a TTS engine.
     bool ScreenReaderIsAvailable();
 
     // Speaks UTF-8 text through the screen reader. When interrupt is true, any

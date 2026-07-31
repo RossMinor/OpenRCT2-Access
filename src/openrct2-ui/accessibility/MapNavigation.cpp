@@ -30,6 +30,7 @@
 #include <unordered_set>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/UiStringIds.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/input/ShortcutManager.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
@@ -215,7 +216,7 @@ namespace OpenRCT2::Ui::Accessibility
     // Order a tile's stacked features are read (Config::sound.accessibilityTileReadingOrder): from the
     // lowest feature up (default, read in build order like a queue) or the highest feature down (the
     // list reversed, like a stack). See GatherTileFeatures.
-    static constexpr uint8_t kTileReadingOrderLowestFirst = 0;
+    [[maybe_unused]] static constexpr uint8_t kTileReadingOrderLowestFirst = 0;
     static constexpr uint8_t kTileReadingOrderHighestFirst = 1;
 
     // Elevation tone: a short sine beep whose pitch rises with terrain height. It plays only

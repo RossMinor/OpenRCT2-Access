@@ -258,6 +258,19 @@ if(MACOS_BUNDLE)
         MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/distribution/macos/Info.plist
         RESOURCE "${BUNDLE_RESOURCES}")
 
+    # Ship the Prism screen reader bridge (and its MIT license) inside the bundle. The bridge
+    # locates it from the executable directory (Contents/MacOS) or Contents/Frameworks.
+    add_custom_command(TARGET openrct2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/${BUNDLE_FRAMEWORK_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ROOT_DIR}/prism/libprism.dylib"
+            "${CMAKE_BINARY_DIR}/${BUNDLE_FRAMEWORK_DIR}/libprism.dylib"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ROOT_DIR}/prism/LICENSE"
+            "${CMAKE_BINARY_DIR}/${BUNDLE_FRAMEWORK_DIR}/prism.LICENSE"
+        COMMENT "Copying libprism.dylib into ${MACOS_APP_NAME}"
+    )
+
     install(CODE "
         include(BundleUtilities)
         fixup_bundle(${CMAKE_BINARY_DIR}/${MACOS_APP_NAME} \"\" \"\")
