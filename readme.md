@@ -51,9 +51,10 @@ bridge at runtime, so the right file just has to be reachable:
 | Linux | `prism/libprism.so` | next to the OpenRCT2 binary |
 
 All three binaries ship in the `prism/` directory of this repository,
-together with Prism's MIT license (`prism/LICENSE`). The macOS build copies
-`libprism.dylib` into `Contents/Frameworks/` automatically, so no manual
-step is needed there.
+together with Prism's MIT license (`prism/LICENSE`). The builds copy the
+bridge automatically, so no manual step is needed: on macOS the build drops
+`libprism.dylib` into `OpenRCT2.app/Contents/Frameworks/`, and on Windows it
+copies `prism.dll` next to the built `OpenRCT2.exe`.
 
 Prism picks the best speech output automatically: a running screen reader
 such as NVDA or JAWS is preferred, otherwise it falls back to a built-in TTS

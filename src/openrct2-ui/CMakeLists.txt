@@ -122,6 +122,13 @@ if (WIN32)
         # Hardcode some of the libraries used by mingw builds
         target_link_libraries(openrct2 imm32 winmm setupapi version)
     endif ()
+    # Ship the Prism screen reader bridge (prism.dll) next to the executable so the build
+    # works out of the box. The bridge loads it at runtime via LoadLibrary.
+    add_custom_command(TARGET openrct2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ROOT_DIR}/prism/prism.dll"
+            "$<TARGET_FILE_DIR:openrct2>/prism.dll"
+        COMMENT "Copying prism.dll next to OpenRCT2.exe")
 endif ()
 if (MSVC)
     # Add DPI-aware manifest
