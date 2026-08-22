@@ -48,6 +48,7 @@
     <ClInclude Include="accessibility\AccessSounds.h" />
     <ClInclude Include="accessibility\AccessUpdate.h" />
     <ClInclude Include="accessibility\Direction.h" />
+    <ClInclude Include="accessibility\Elevation.h" />
     <ClInclude Include="accessibility\ElevationTone.h" />
     <ClInclude Include="accessibility\GuestRescue.h" />
     <ClInclude Include="accessibility\ListNavigation.h" />
@@ -130,6 +131,7 @@
     <ClCompile Include="accessibility\AccessSounds.cpp" />
     <ClCompile Include="accessibility\AccessUpdate.cpp" />
     <ClCompile Include="accessibility\Direction.cpp" />
+    <ClCompile Include="accessibility\Elevation.cpp" />
     <ClCompile Include="accessibility\ElevationTone.cpp" />
     <ClCompile Include="accessibility\GuestRescue.cpp" />
     <ClCompile Include="accessibility\MapNavigation.cpp" />

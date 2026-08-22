@@ -11,6 +11,7 @@
 
 #include "AccessSounds.h"
 #include "Direction.h"
+#include "Elevation.h"
 #include "ElevationTone.h"
 #include "GuestRescue.h"
 #include "MenuNavigation.h"
@@ -566,28 +567,14 @@ namespace OpenRCT2::Ui::Accessibility
         return parts;
     }
 
-    // Elevation (in the same halved units the tone and coordinate readout use) that best represents
-    // the level a player is at on this tile. Normally the land surface, but a ride entrance or exit
-    // sits elevated at its station height on supports above the ground, so when one is present its
-    // height is used instead. Without this an elevated entrance/exit would read at ground level - or
-    // sound no tone at all when the ground happens to match the previous tile - hiding the drop.
+    // The elevation number for the level a player is at on this tile, in the engine's construction
+    // units. Delegates to the shared elevation module (AccessibleTopZ), which uses the engine's own
+    // water- and slope-aware ground height and also accounts for footpaths (including bridges/raised
+    // paths) and ride entrances/exits resting above the ground - so the tone and readout reflect the
+    // real level, not just the bare land beneath.
     static int32_t EffectiveElevationAt(const TileCoordsXY& tile)
     {
-        auto* surface = MapGetSurfaceElementAt(tile);
-        int32_t baseHeight = surface != nullptr ? surface->baseHeight : 0;
-        for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
-        {
-            if (auto* entrance = el->asEntrance(); entrance != nullptr && !el->isGhost())
-            {
-                const auto type = entrance->GetEntranceType();
-                if (type == ENTRANCE_TYPE_RIDE_ENTRANCE || type == ENTRANCE_TYPE_RIDE_EXIT)
-                    baseHeight = std::max<int32_t>(baseHeight, el->baseHeight);
-            }
-            if (el->isLastForTile())
-                break;
-            el++;
-        }
-        return baseHeight / 2;
+        return ElevationNumber(AccessibleTopZ(tile.ToCoordsXY()));
     }
 
     static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
@@ -1716,7 +1703,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            const int32_t elevation = surface->baseHeight / 2;
+            const int32_t elevation = EffectiveElevationAt(_cursor);
             // Match normal movement: only sound the elevation tone when the height actually changes,
             // so jumping to a marker/waypoint at the same height as the current tile stays silent.
             if (elevation != _lastElevation)
@@ -1763,7 +1750,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            const int32_t elevation = surface->baseHeight / 2;
+            const int32_t elevation = EffectiveElevationAt(_cursor);
             // Match normal movement: only sound the elevation tone when the height actually changes,
             // so jumping to a marker/waypoint at the same height as the current tile stays silent.
             if (elevation != _lastElevation)
@@ -1984,8 +1971,9 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         _scanHeight = bestHeight;
-        PlayElevationTone(bestHeight / 2);
-        ScreenReaderSpeak(DescribeScanElement(best) + ", height " + std::to_string(bestHeight / 2));
+        const int32_t elevation = ElevationNumber(bestHeight * kCoordsZStep); // bestHeight is a baseHeight (Z / kCoordsZStep)
+        PlayElevationTone(elevation);
+        ScreenReaderSpeak(DescribeScanElement(best) + ", height " + std::to_string(elevation));
     }
 
     static void ChangeLandHeight(bool raise)
@@ -2014,7 +2002,7 @@ namespace OpenRCT2::Ui::Accessibility
             std::string spoken;
             if (auto* surface = MapGetSurfaceElementAt(sample); surface != nullptr)
             {
-                const int32_t elevation = surface->baseHeight / 2;
+                const int32_t elevation = EffectiveElevationAt(sample);
                 PlayElevationTone(elevation);
                 spoken = "elevation " + std::to_string(elevation);
                 if (!marked)
@@ -2082,10 +2070,10 @@ namespace OpenRCT2::Ui::Accessibility
             const int32_t waterHeight = surface->GetWaterHeight();
             if (waterHeight > 0)
             {
-                // The water surface sits one elevation step above the land it covers (water
-                // replaces the tile rather than stacking on it), so drop one step to report the
-                // water on the same scale the land would read at that spot.
-                const int32_t level = std::max(0, waterHeight / kWaterHeightStep - 1);
+                // Report the water surface on the same engine scale as everything else (the movement
+                // tone reads a water tile at exactly this level via AccessibleTopZ), so the number a
+                // player hears while adjusting water matches what they hear standing on it.
+                const int32_t level = ElevationNumber(waterHeight);
                 PlayElevationTone(level);
                 ScreenReaderSpeak(prefix + "Water level " + std::to_string(level));
             }
@@ -2484,7 +2472,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (OpenRCT2::findTrackGap(*ride, origin, &gap))
         {
             const TileCoordsXY tile{ CoordsXY{ gap.x, gap.y } };
-            const int32_t height = gap.element != nullptr ? gap.element->getBaseZ() / (kCoordsZStep * 2) : 0;
+            const int32_t height = gap.element != nullptr ? ElevationNumber(gap.element->getBaseZ()) : 0;
             ScreenReaderSpeak("Track break at " + SpokenTileCoordsText(tile) + ", height " + std::to_string(height));
         }
         else
