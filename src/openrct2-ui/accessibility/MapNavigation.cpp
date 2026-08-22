@@ -191,10 +191,6 @@ namespace OpenRCT2::Ui::Accessibility
     static TileCoordsXY _waypoints[kWaypointCount]{};
     static bool _waypointSet[kWaypointCount] = {};
 
-    // The world direction (0..3) of the cursor's most recent arrow move. Used as the "facing" for
-    // building sloped paths: a ramp rises (or falls) toward this direction.
-    static Direction _lastMoveDir = 0;
-
     // Footpath slope-build mode, cycled with the L key. In Up/Down, pressing the build-path key
     // lays a ramp rising/falling toward the facing direction (connecting to the path behind the
     // cursor), so the player can build a staircase up to an elevated ride entrance.
@@ -870,16 +866,6 @@ namespace OpenRCT2::Ui::Accessibility
         _cursor = target;
         CentreViewportOnCursor();
 
-        // Remember which world direction we just moved, as the "facing" for sloped-path building.
-        if (dx > 0)
-            _lastMoveDir = 2;
-        else if (dx < 0)
-            _lastMoveDir = 0;
-        else if (dy > 0)
-            _lastMoveDir = 1;
-        else if (dy < 0)
-            _lastMoveDir = 3;
-
         // Elevation tone: beep only when the new tile's height differs from the last one, so
         // moving across flat ground stays silent. Pitch rises with elevation. A ride entrance/exit
         // reads at its own elevated height (see EffectiveElevationAt), not the ground beneath it.
@@ -1404,6 +1390,31 @@ namespace OpenRCT2::Ui::Accessibility
     static void BuildPathArea(ObjectEntryIndex type, PathConstructFlags flags);
     static void RemovePathArea();
 
+    // The world direction the player is facing: the direction toward the top of the screen at the
+    // current camera rotation - the way the Up arrow moves the cursor, and exactly what the F key
+    // reports. Derived with the same screen-delta + camera-rotation logic the cursor movement uses,
+    // so it stays correct as the camera is rotated. A sloped path rises (or falls) toward this, so
+    // the slope follows where the player is facing rather than whichever way they last nudged.
+    static Direction CameraFacingDirection()
+    {
+        int32_t dx = 0, dy = -1; // screen "up", as MoveScreen uses it
+        for (int32_t i = 0, steps = GetCurrentRotation() & 3; i < steps; i++)
+        {
+            const int32_t nx = dy;
+            const int32_t ny = -dx;
+            dx = nx;
+            dy = ny;
+        }
+        // World delta to Direction, matching Move(): +x = West, -x = East, +y = South, -y = North.
+        if (dx > 0)
+            return 2; // West
+        if (dx < 0)
+            return 0; // East
+        if (dy > 0)
+            return 1; // South
+        return 3;     // North
+    }
+
     static void BuildPath()
     {
         // Ensure a valid default path type is selected.
@@ -1432,7 +1443,7 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         const auto world = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
-        const Direction dir = _lastMoveDir & 3;
+        const Direction dir = CameraFacingDirection();
         const auto behindEdge = BehindPathEdgeHeight(dir);
 
         FootpathSlope slope{};
@@ -2218,9 +2229,9 @@ namespace OpenRCT2::Ui::Accessibility
 
     static void ReportFacing()
     {
-        static constexpr const char* kDirections[] = { "North", "East", "South", "West" };
-        const uint8_t rotation = GetCurrentRotation() & 3;
-        ScreenReaderSpeak(std::string("Facing ") + kDirections[rotation]);
+        // Uses the same facing the sloped-path build uses, named with the shared compass, so the
+        // spoken "Facing X" and the direction a slope rises can never disagree.
+        ScreenReaderSpeak(std::string("Facing ") + GetWorldDirectionName(CameraFacingDirection()));
     }
 
     // The ride whose footprint the cursor is within: first the ride whose track sits on the cursor
