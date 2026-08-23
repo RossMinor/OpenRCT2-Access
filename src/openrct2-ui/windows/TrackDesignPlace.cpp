@@ -193,6 +193,22 @@ namespace OpenRCT2::Ui::Windows
 
         void onToolUpdate(WidgetIndex widgetIndex, const ScreenCoordsXY& screenCoords) override
         {
+            // In the accessibility fork the keyboard map cursor drives placement, not the mouse. While
+            // it is active, position the ghost at the cursor's tile and ignore the mouse position - the
+            // game calls this every frame from the pointer, and when the pointer sits over the window or
+            // off the map that would otherwise clear the ghost each frame, so the keyboard-driven outline
+            // never appears.
+            if (Accessibility::IsMapCursorActive())
+            {
+                if (auto cur = Accessibility::GetMapCursorScreenPos(); cur.has_value())
+                {
+                    const auto cursorTile = ViewportInteractionGetTileStartAtCursor(*cur);
+                    if (!cursorTile.IsNull())
+                        accUpdateGhost(cursorTile);
+                }
+                return;
+            }
+
             TrackDesignState tds{};
 
             gMapSelectFlags.unset(MapSelectFlag::enable);
@@ -796,6 +812,74 @@ namespace OpenRCT2::Ui::Windows
             return tiles;
         }
 
+        // Drives the game's own placement ghost (the visual outline plus the provisional ride) from
+        // the keyboard cursor's tile, so a blind player positioning by keyboard sees exactly the ghost
+        // the mouse would show - and it sits precisely where buildAtTile will place the ride, since
+        // both use the same base-height formula (getBaseZ, i.e. surface + water + TrackDesignGetZPlacement).
+        // Mirrors onToolUpdate but takes a map tile directly instead of a screen position. No-op while a
+        // preview is frozen (the ghost must stay put so the footprint can be inspected).
+        void accUpdateGhost(const CoordsXY& mapCoords)
+        {
+            if (_trackDesign == nullptr || _placingTrackDesign || _accPreviewing)
+                return;
+
+            gMapSelectFlags.unset(MapSelectFlag::enable);
+            gMapSelectFlags.unset(MapSelectFlag::enableConstruct);
+            gMapSelectFlags.unset(MapSelectFlag::enableArrow);
+
+            auto* surface = MapGetSurfaceElementAt(mapCoords);
+            if (surface == nullptr)
+            {
+                clearProvisional();
+                return;
+            }
+
+            int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
+            if (surface->GetWaterHeight() > 0)
+                baseZ = std::max<int32_t>(baseZ, surface->GetWaterHeight());
+            baseZ += TrackDesignGetZPlacement(
+                *_trackDesign, RideGetTemporaryForPreview(), { mapCoords, baseZ, _currentTrackPieceDirection });
+
+            CoordsXYZD trackLoc = { mapCoords, baseZ, _currentTrackPieceDirection };
+
+            TrackDesignState tds{};
+            if (trackLoc == _placementLoc)
+            {
+                TrackDesignPreviewDrawOutlines(
+                    tds, *_trackDesign, RideGetTemporaryForPreview(), { mapCoords, 0, _currentTrackPieceDirection },
+                    !gTrackDesignSceneryToggle);
+                return;
+            }
+
+            if (GameIsNotPaused() || getGameState().cheats.buildInPauseMode)
+            {
+                clearProvisional();
+                CoordsXYZD ghostTrackLoc = trackLoc;
+                auto res = findValidTrackDesignPlaceHeight(ghostTrackLoc, { CommandFlag::noSpend, CommandFlag::ghost });
+                if (res.error == GameActions::Status::ok)
+                {
+                    auto tdAction = GameActions::TrackDesignAction(
+                        ghostTrackLoc, *_trackDesign, !gTrackDesignSceneryToggle,
+                        Config::Get().general.defaultInspectionInterval);
+                    tdAction.SetFlags({ CommandFlag::noSpend, CommandFlag::ghost });
+                    tdAction.SetCallback([&](const GameActions::GameAction*, const GameActions::Result* result) {
+                        if (result->error == GameActions::Status::ok)
+                        {
+                            _placementGhostRideId = result->getData<RideId>();
+                            _placementGhostLoc = ghostTrackLoc;
+                            _hasPlacementGhost = true;
+                        }
+                    });
+                    GameActions::Execute(&tdAction, getGameState());
+                    VirtualFloorSetHeight(ghostTrackLoc.z);
+                }
+            }
+
+            _placementLoc = trackLoc;
+            TrackDesignPreviewDrawOutlines(
+                tds, *_trackDesign, RideGetTemporaryForPreview(), trackLoc, !gTrackDesignSceneryToggle);
+        }
+
         // First Enter: freeze the design's footprint at the cursor without building, so the player can
         // arrow around to inspect where it will sit. Announces the footprint size and the controls.
         void freezePreview(const CoordsXY& mapCoords)
@@ -878,6 +962,12 @@ namespace OpenRCT2::Ui::Windows
             int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
             if (surface->GetWaterHeight() > 0)
                 baseZ = std::max<int32_t>(baseZ, surface->GetWaterHeight());
+            // Strictly follow the game's own placement height: getBaseZ (which positions the
+            // construction ghost, and the mouse tool's real placement) adds this design-specific
+            // offset so the design sits where the ghost shows it, instead of dropping its origin to
+            // the ground. Without it the built ride lands at a different height than the ghost.
+            baseZ += TrackDesignGetZPlacement(
+                *_trackDesign, RideGetTemporaryForPreview(), { mapCoords, baseZ, _currentTrackPieceDirection });
 
             // Decide whether clearing scenery would actually let the ride build BEFORE destroying any.
             // The engine auto-clears small scenery as it builds track, so a probe that still fails is
@@ -1373,6 +1463,12 @@ namespace OpenRCT2::Ui::Windows
     {
         if (auto* w = GetTrackPlaceWindow(); w != nullptr)
             w->placeAtTile(mapCoords);
+    }
+
+    void WindowTrackPlaceUpdateGhost(const CoordsXY& mapCoords)
+    {
+        if (auto* w = GetTrackPlaceWindow(); w != nullptr)
+            w->accUpdateGhost(mapCoords);
     }
 
     void WindowTrackPlaceCancel()

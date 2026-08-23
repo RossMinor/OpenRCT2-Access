@@ -364,6 +364,8 @@ namespace OpenRCT2::Ui::Windows
     bool WindowTrackPlaceIsActive();
     void WindowTrackPlaceRotate();
     void WindowTrackPlaceAtTile(const CoordsXY& mapCoords);
+    // Move the game's placement ghost to follow the keyboard cursor's tile (no-op while frozen).
+    void WindowTrackPlaceUpdateGhost(const CoordsXY& mapCoords);
     void WindowTrackPlaceCancel();
     // Backspace during a frozen preview: pick the design back up so it follows the cursor again.
     void WindowTrackPlacePickup();

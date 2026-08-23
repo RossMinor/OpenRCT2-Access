@@ -866,6 +866,15 @@ namespace OpenRCT2::Ui::Accessibility
         _cursor = target;
         CentreViewportOnCursor();
 
+        // While placing a pre-built ride, drive the game's placement ghost to follow the cursor so the
+        // visual outline tracks the keyboard, showing exactly where the ride will land. No-op once the
+        // preview is frozen (the ghost stays put for footprint inspection).
+        if (Windows::WindowTrackPlaceIsActive())
+        {
+            const auto tdWorld = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
+            Windows::WindowTrackPlaceUpdateGhost(CoordsXY{ tdWorld.x, tdWorld.y });
+        }
+
         // Elevation tone: beep only when the new tile's height differs from the last one, so
         // moving across flat ground stays silent. Pitch rises with elevation. A ride entrance/exit
         // reads at its own elevated height (see EffectiveElevationAt), not the ground beneath it.
@@ -2641,8 +2650,13 @@ namespace OpenRCT2::Ui::Accessibility
             switch (key)
             {
                 case SDLK_r:
+                {
                     Windows::WindowTrackPlaceRotate();
+                    // Refresh the ghost so the rotated outline shows immediately, without waiting for a move.
+                    const auto rWorld = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
+                    Windows::WindowTrackPlaceUpdateGhost(CoordsXY{ rWorld.x, rWorld.y });
                     return true;
+                }
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER:
                 {
@@ -2653,8 +2667,13 @@ namespace OpenRCT2::Ui::Accessibility
                     return true;
                 }
                 case SDLK_BACKSPACE:
+                {
                     Windows::WindowTrackPlacePickup();
+                    // The preview is unfrozen; put the ghost back under the cursor right away.
+                    const auto bWorld = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
+                    Windows::WindowTrackPlaceUpdateGhost(CoordsXY{ bWorld.x, bWorld.y });
                     return true;
+                }
                 case SDLK_ESCAPE:
                     Windows::WindowTrackPlaceCancel();
                     return true;
