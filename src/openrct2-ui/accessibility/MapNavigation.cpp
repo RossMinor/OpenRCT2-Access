@@ -40,6 +40,9 @@
 #include <openrct2/actions/general/PauseToggleAction.h>
 #include <openrct2/actions/footpath/FootpathRemoveAction.h>
 #include <openrct2/actions/terraform/ClearAction.h>
+#include <openrct2/actions/scenery/LargeSceneryRemoveAction.h>
+#include <openrct2/actions/scenery/SmallSceneryRemoveAction.h>
+#include <openrct2/actions/scenery/WallRemoveAction.h>
 #include <openrct2/actions/park/LandBuyRightsAction.h>
 #include <openrct2/actions/peep/PeepPickupAction.h>
 #include <openrct2/actions/terraform/LandLowerAction.h>
@@ -202,12 +205,9 @@ namespace OpenRCT2::Ui::Accessibility
     };
     static SlopeMode _slopeMode = SlopeMode::flat;
 
-    // Footpath build height, in path steps above the ground under the cursor. 0 = build on the
-    // terrain as before. When raised (comma/period keys), the build-path key lays a flat elevated
-    // deck (or a ramp, per _slopeMode) at that height, so bridges can cross water and gaps at a
-    // chosen elevation. The game generates the supporting columns automatically.
-    static int32_t _buildHeightOffset = 0;
-    static constexpr int32_t kMaxBuildHeightOffset = 32; // ~64 land steps; well past any sane bridge
+    // How far the focus elevation (_scanHeight) may be raised above the ground with the comma/period
+    // keys, in elevation units - well past any sane bridge height.
+    static constexpr int32_t kMaxFocusElevationAboveGround = 64;
 
     // Order a tile's stacked features are read (Config::sound.accessibilityTileReadingOrder): from the
     // lowest feature up (default, read in build order like a queue) or the highest feature down (the
@@ -222,10 +222,14 @@ namespace OpenRCT2::Ui::Accessibility
     static int32_t _lastElevation = -1; // surface->baseHeight/2 of the previous tile; -1 = none yet
     static int32_t _lastStepCat = -1;   // step-cue category of the previous tile (for "on transition" mode)
 
-    // Read-only Z-axis probe. _scanHeight is a tile-element baseHeight; plain Page Up/Down step it
-    // to the next element above/below on the cursor's tile to report what is stacked there. Reset
-    // to the surface whenever the cursor moves to a new tile.
+    // The cursor's focus elevation, as a tile-element baseHeight. Shift+comma/period snap it to the
+    // element below/above on the tile (see ScanZLevel), and path/scenery deletion acts at this level.
+    // While it sits at the ground (not lifted onto a structure) it tracks the ground as the cursor
+    // moves; once a scan lifts it above the ground it is "locked" and stays put across moves, so the
+    // player can navigate at that level - until a scan brings it back down to the ground, or a jump
+    // resets it. _scanLocked distinguishes those two states.
     static int32_t _scanHeight = 0;
+    static bool _scanLocked = false;
 
     // Whether a (non-queue) footpath is a soft dirt/soil path rather than a hard surface (tarmac,
     // stone, etc.), so the right footstep cue plays. There is no engine flag for this, so we key off
@@ -697,6 +701,7 @@ namespace OpenRCT2::Ui::Accessibility
         {
             _lastElevation = EffectiveElevationAt(_cursor);
             _scanHeight = surface->baseHeight;
+            _scanLocked = false;
         }
         _lastTileDescription = GetTileDescription(_cursor);
     }
@@ -886,7 +891,10 @@ namespace OpenRCT2::Ui::Accessibility
                 PlayElevationTone(elevation);
                 _lastElevation = elevation;
             }
-            _scanHeight = surface->baseHeight; // the Z-axis probe starts from ground on each move
+            // The focus elevation tracks the ground as the cursor moves, unless a scan has locked it
+            // onto a raised level - then it stays put so the player can navigate at that elevation.
+            if (!_scanLocked)
+                _scanHeight = surface->baseHeight;
         }
 
         // Footstep-style cue for what the cursor just stepped onto: a dirt path, a hard path (tarmac/
@@ -1045,8 +1053,10 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t x = SpokenCoordX(_cursor);
         const int32_t y = SpokenCoordY(_cursor);
         std::string text = "X " + std::to_string(x) + ", Y " + std::to_string(y);
+        // Report the cursor's focus elevation - the single elevation set by the scan / comma-period
+        // keys - so it confirms where the cursor currently sits (e.g. after snapping up to an object).
         if (MapGetSurfaceElementAt(_cursor) != nullptr)
-            text += ", elevation " + std::to_string(EffectiveElevationAt(_cursor));
+            text += ", elevation " + std::to_string(_scanHeight / 2);
         ScreenReaderSpeak(text);
     }
 
@@ -1373,24 +1383,29 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    // Raises (+1) or lowers (-1) the footpath build height and announces it. At ground level the
-    // path follows the terrain as usual; above it, the build-path key lays an elevated deck/ramp at
-    // that many tiles above the ground under the cursor, letting the player span water and gaps.
-    static void ChangeBuildHeight(int32_t delta)
+    // Raises (+1) or lowers (-1) the cursor's focus elevation by one elevation unit and announces it.
+    // This is the same single elevation the Shift+comma/period scan sets, the read-coordinates key
+    // reports, and path building / deletion act at: at ground level it tracks the terrain; once lifted
+    // it locks and persists as the cursor moves, so the player can build, delete, and navigate at a
+    // chosen elevation (an elevated path spans water and gaps there). One unit is two baseHeight steps.
+    static void ChangeFocusElevation(int32_t delta)
     {
-        const int32_t previous = _buildHeightOffset;
-        _buildHeightOffset = std::clamp(_buildHeightOffset + delta, 0, kMaxBuildHeightOffset);
-        if (_buildHeightOffset == previous)
+        auto* surface = MapGetSurfaceElementAt(_cursor);
+        const int32_t ground = surface != nullptr ? surface->baseHeight : 0;
+        const int32_t maxHeight = ground + kMaxFocusElevationAboveGround * 2;
+
+        const int32_t previous = _scanHeight;
+        _scanHeight = std::clamp(_scanHeight + delta * 2, ground, maxHeight);
+        _scanLocked = _scanHeight > ground;
+
+        if (_scanHeight == previous)
         {
-            ScreenReaderSpeak(delta > 0 ? "Build height at maximum" : "Build height, ground level");
+            ScreenReaderSpeak(
+                std::string(delta > 0 ? "Maximum elevation, elevation " : "Ground level, elevation ")
+                + std::to_string(_scanHeight / 2));
             return;
         }
-        if (_buildHeightOffset == 0)
-            ScreenReaderSpeak("Build height, ground level");
-        else
-            ScreenReaderSpeak(
-                "Build height, " + std::to_string(_buildHeightOffset)
-                + (_buildHeightOffset == 1 ? " tile above ground" : " tiles above ground"));
+        ScreenReaderSpeak("Elevation " + std::to_string(_scanHeight / 2));
     }
 
     // Defined later in the file; declared here so the path commands can act on a marked area.
@@ -1460,17 +1475,13 @@ namespace OpenRCT2::Ui::Accessibility
         Direction actionDir = kInvalidDirection;
         std::string what;
 
-        if (_buildHeightOffset > 0)
+        auto* buildSurface = MapGetSurfaceElementAt(_cursor);
+        const bool elevated = buildSurface != nullptr && _scanHeight > buildSurface->baseHeight;
+        if (elevated)
         {
-            // Elevated build: lay a deck (or ramp) at a fixed height above the ground under the
-            // cursor, so a bridge can cross water or a gap. Supports are generated by the game.
-            auto* surface = MapGetSurfaceElementAt(_cursor);
-            if (surface == nullptr)
-            {
-                ScreenReaderSpeak("Cannot build a path here");
-                return;
-            }
-            const int32_t elevatedZ = surface->getBaseZ() + _buildHeightOffset * kPathHeightStep;
+            // Focus lifted above the ground: lay a deck (or ramp) at the focus elevation, so a bridge
+            // can cross water or a gap. Supports are generated by the game.
+            const int32_t elevatedZ = _scanHeight * kCoordsZStep;
             baseZ = elevatedZ;
             actionDir = dir;
             if (_slopeMode == SlopeMode::up)
@@ -1732,6 +1743,7 @@ namespace OpenRCT2::Ui::Accessibility
                 _lastElevation = elevation;
             }
             _scanHeight = surface->baseHeight;
+            _scanLocked = false; // a deliberate jump lands the focus back on the ground
         }
 
         _lastTileDescription = GetTileDescription(_cursor);
@@ -1779,6 +1791,7 @@ namespace OpenRCT2::Ui::Accessibility
                 _lastElevation = elevation;
             }
             _scanHeight = surface->baseHeight;
+            _scanLocked = false; // a deliberate jump lands the focus back on the ground
         }
 
         const std::string description = GetTileDescription(_cursor);
@@ -1789,10 +1802,89 @@ namespace OpenRCT2::Ui::Accessibility
     }
 
     // Removes small and large scenery (trees, bushes, statues, etc.) across the brush area.
+    // Removes scenery (small, large and walls) sitting at exactly targetBaseHeight across the given
+    // world-coordinate area. Elements are gathered before any removal, since removing one rewrites the
+    // tile's element list. Used when the cursor's focus is lifted onto a raised level, so clearing
+    // acts at that elevation rather than on everything stacked on the tile.
+    static void ClearSceneryAtElevation(int32_t ax, int32_t ay, int32_t bx, int32_t by, int32_t targetBaseHeight)
+    {
+        // type: 0 = small scenery, 1 = large scenery, 2 = wall.
+        struct Removal
+        {
+            int32_t type;
+            CoordsXYZD loc;
+            uint8_t quadrant;
+            ObjectEntryIndex entryOrSequence;
+        };
+        std::vector<Removal> removals;
+        for (int32_t wy = ay; wy <= by; wy += kCoordsXYStep)
+        {
+            for (int32_t wx = ax; wx <= bx; wx += kCoordsXYStep)
+            {
+                const TileCoordsXY tile{ wx / kCoordsXYStep, wy / kCoordsXYStep };
+                for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
+                {
+                    if (!el->isGhost() && el->baseHeight == targetBaseHeight)
+                    {
+                        if (auto* ss = el->asSmallScenery(); ss != nullptr)
+                            removals.push_back({ 0, { wx, wy, el->getBaseZ(), 0 }, ss->GetSceneryQuadrant(), ss->GetEntryIndex() });
+                        else if (auto* ls = el->asLargeScenery(); ls != nullptr)
+                            removals.push_back(
+                                { 1, { wx, wy, el->getBaseZ(), el->getDirection() }, 0, ls->GetSequenceIndex() });
+                        else if (el->asWall() != nullptr)
+                            removals.push_back({ 2, { wx, wy, el->getBaseZ(), el->getDirection() }, 0, 0 });
+                    }
+                    if (el->isLastForTile())
+                        break;
+                    el++;
+                }
+            }
+        }
+
+        int32_t removed = 0;
+        const bool prevErrorSound = Windows::gDisableErrorWindowSound;
+        Windows::gDisableErrorWindowSound = true; // several removals would otherwise stack error beeps
+        for (const auto& r : removals)
+        {
+            bool ok = false;
+            if (r.type == 0)
+            {
+                auto a = GameActions::SmallSceneryRemoveAction(
+                    { r.loc.x, r.loc.y, r.loc.z }, r.quadrant, r.entryOrSequence);
+                ok = GameActions::Execute(&a, getGameState()).error == GameActions::Status::ok;
+            }
+            else if (r.type == 1)
+            {
+                auto a = GameActions::LargeSceneryRemoveAction(r.loc, static_cast<uint16_t>(r.entryOrSequence));
+                ok = GameActions::Execute(&a, getGameState()).error == GameActions::Status::ok;
+            }
+            else
+            {
+                auto a = GameActions::WallRemoveAction(r.loc);
+                ok = GameActions::Execute(&a, getGameState()).error == GameActions::Status::ok;
+            }
+            if (ok)
+                removed++;
+        }
+        Windows::gDisableErrorWindowSound = prevErrorSound;
+
+        _lastTileDescription.clear();
+        ScreenReaderSpeak(removed > 0 ? "Scenery cleared" : "No scenery at this elevation");
+    }
+
     static void ClearSceneryAtCursor()
     {
         int32_t ax, ay, bx, by;
         GetTerraformBounds(ax, ay, bx, by);
+
+        // With the focus lifted onto a raised level, clear only scenery at that elevation. At the
+        // default ground focus, clear everything in the area (all heights) as before, so the common
+        // case and uneven terrain (where a brush spans tiles at different ground heights) are unaffected.
+        if (_scanLocked)
+        {
+            ClearSceneryAtElevation(ax, ay, bx, by, _scanHeight);
+            return;
+        }
 
         const GameActions::ClearableItems items = GameActions::CLEARABLE_ITEMS::kScenerySmall
             | GameActions::CLEARABLE_ITEMS::kSceneryLarge;
@@ -1957,27 +2049,30 @@ namespace OpenRCT2::Ui::Accessibility
         return "Object";
     }
 
-    // Read-only vertical scan: steps the probe to the next tile element above (dir > 0) or below
-    // (dir < 0) the current scan height on the cursor's tile, reporting its type and height. Plays
-    // the elevation tone at that height so the player can feel where it sits.
-    // Vertical (Z-axis) tile scan. Formerly on plain Page Up/Down, which now raise/lower land; this
-    // is kept (currently unbound) so it can be reassigned to another key later.
-    [[maybe_unused]] static void ScanZLevel(int32_t dir)
+    // Read-only vertical (Z-axis) scan, bound to Shift+period (dir > 0, next element above) and
+    // Shift+comma (dir < 0, next element below). Snaps the probe to the nearest element above/below
+    // the current scan height on the cursor's tile and reads it as "<name> <elevation>" (e.g.
+    // "Tarmac path 6"), playing the elevation tone so the player can feel where it sits. The scan
+    // height resets to the ground each time the cursor moves, so a scan starts from ground level.
+    static void ScanZLevel(int32_t dir)
     {
         TileElement* best = nullptr;
         int32_t bestHeight = (dir > 0) ? std::numeric_limits<int32_t>::max() : std::numeric_limits<int32_t>::min();
         for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
         {
-            const int32_t h = el->baseHeight;
-            if (dir > 0 && h > _scanHeight && h < bestHeight)
+            if (!el->isGhost())
             {
-                bestHeight = h;
-                best = el;
-            }
-            else if (dir < 0 && h < _scanHeight && h > bestHeight)
-            {
-                bestHeight = h;
-                best = el;
+                const int32_t h = el->baseHeight;
+                if (dir > 0 && h > _scanHeight && h < bestHeight)
+                {
+                    bestHeight = h;
+                    best = el;
+                }
+                else if (dir < 0 && h < _scanHeight && h > bestHeight)
+                {
+                    bestHeight = h;
+                    best = el;
+                }
             }
             if (el->isLastForTile())
                 break;
@@ -1991,9 +2086,14 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         _scanHeight = bestHeight;
+        // Lock the focus when it is lifted above the ground so it persists as the cursor moves; when a
+        // scan brings it back down to the ground, unlock so it tracks the ground again.
+        auto* surf = MapGetSurfaceElementAt(_cursor);
+        _scanLocked = surf != nullptr && bestHeight > surf->baseHeight;
+
         const int32_t elevation = ElevationNumber(bestHeight * kCoordsZStep); // bestHeight is a baseHeight (Z / kCoordsZStep)
         PlayElevationTone(elevation);
-        ScreenReaderSpeak(DescribeScanElement(best) + ", height " + std::to_string(elevation));
+        ScreenReaderSpeak(DescribeScanElement(best) + " " + std::to_string(elevation));
     }
 
     static void ChangeLandHeight(bool raise)
@@ -2029,6 +2129,7 @@ namespace OpenRCT2::Ui::Accessibility
                 {
                     _lastElevation = elevation;
                     _scanHeight = surface->baseHeight; // keep the Z-axis probe at the new ground level
+                    _scanLocked = false;
                 }
             }
 
@@ -2183,22 +2284,33 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
 
+        // Remove the path at the cursor's focus elevation (set by the Shift+comma/period scan). If the
+        // focus is locked onto a raised level, only a path exactly there qualifies; at the default
+        // ground focus, fall back to the tile's path so plain deletion still works without scanning.
         PathElement* pathElement = nullptr;
+        PathElement* firstPath = nullptr;
         for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
         {
             if (auto* p = el->asPath(); p != nullptr)
             {
-                pathElement = p;
-                break;
+                if (firstPath == nullptr)
+                    firstPath = p;
+                if (p->baseHeight == _scanHeight)
+                {
+                    pathElement = p;
+                    break;
+                }
             }
             if (el->isLastForTile())
                 break;
             el++;
         }
+        if (pathElement == nullptr && !_scanLocked)
+            pathElement = firstPath;
 
         if (pathElement == nullptr)
         {
-            ScreenReaderSpeak("No path here");
+            ScreenReaderSpeak(firstPath != nullptr ? "No path at this elevation" : "No path here");
             return;
         }
 
@@ -2923,11 +3035,19 @@ namespace OpenRCT2::Ui::Accessibility
                 CycleSlopeMode();
                 break;
             case SDLK_COMMA:
-                // Comma lowers, period raises the footpath build height (for bridges over water/gaps).
-                ChangeBuildHeight(-1);
+                // Comma lowers, period raises the cursor's focus elevation by one unit (the single
+                // elevation used for building, deletion and the coordinate readout). With Shift, snap
+                // the focus to the next element below (comma) or above (period) and read it.
+                if (modifiers & KMOD_SHIFT)
+                    ScanZLevel(-1);
+                else
+                    ChangeFocusElevation(-1);
                 break;
             case SDLK_PERIOD:
-                ChangeBuildHeight(1);
+                if (modifiers & KMOD_SHIFT)
+                    ScanZLevel(1);
+                else
+                    ChangeFocusElevation(1);
                 break;
             case SDLK_b:
                 // Shift+B reports track breaks; plain B cycles the terraform/clear brush size.
