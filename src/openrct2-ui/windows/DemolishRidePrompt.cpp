@@ -60,8 +60,7 @@ namespace OpenRCT2::Ui::Windows
             Formatter ft;
             currentRide.formatNameTo(ft);
             ft.Add<money64>(_demolishRideCost);
-            Accessibility::ScreenReaderSpeak(
-                OpenRCT2::FormatStringIDLegacy(stringId, ft.Data()) + ". Press Enter to demolish, or Escape to cancel.");
+            Accessibility::ScreenReaderSpeak(OpenRCT2::FormatStringIDLegacy(stringId, ft.Data()));
         }
 
         void onOpen() override
@@ -70,24 +69,11 @@ namespace OpenRCT2::Ui::Windows
             WindowInitScrollWidgets(*this);
         }
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        void onMouseUp(WidgetIndex widgetIndex) override
         {
-            return true; // modal: swallow letters so they don't reach the map cursor
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            // Modal prompt: highlight the primary (demolish) button that Enter activates.
-            const auto& wd = widgets[WIDX_DEMOLISH];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
+            switch (widgetIndex)
             {
-                case AccessibilityAction::activate:
+                case WIDX_DEMOLISH:
                 {
                     // The demolish applies a tick later, so confirm from the action callback. The
                     // refund is reported separately by the finance hook ("Earned ...").
@@ -98,25 +84,6 @@ namespace OpenRCT2::Ui::Windows
                     });
                     GameActions::Execute(&gameAction, getGameState());
                     close();
-                    return true;
-                }
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    // Modal prompt: swallow arrows and everything else so keys never reach the map.
-                    return true;
-            }
-        }
-
-        void onMouseUp(WidgetIndex widgetIndex) override
-        {
-            switch (widgetIndex)
-            {
-                case WIDX_DEMOLISH:
-                {
-                    auto gameAction = GameActions::RideDemolishAction(rideId, GameActions::RideModifyType::demolish);
-                    GameActions::Execute(&gameAction, getGameState());
                     break;
                 }
                 case WIDX_CANCEL:

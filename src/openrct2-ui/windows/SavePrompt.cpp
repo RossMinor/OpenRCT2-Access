@@ -88,8 +88,7 @@ namespace OpenRCT2::Ui::Windows
     {
     private:
         PromptMode _promptMode;
-        bool _canSave = true;            // save layout (Save/Don't save/Cancel) vs quit (OK/Cancel)
-        int32_t _accessIndex = 0;        // keyboard focus over the prompt buttons
+        bool _canSave = true; // save layout (Save/Don't save/Cancel) vs quit (OK/Cancel)
 
     public:
         SavePromptWindow(PromptMode promptMode)
@@ -101,7 +100,6 @@ namespace OpenRCT2::Ui::Windows
         {
             bool canSave = !(isInTrackDesignerOrManager());
             _canSave = canSave;
-            _accessIndex = 0;
 
             if (canSave)
                 setWidgets(_savePromptWidgets);
@@ -138,81 +136,14 @@ namespace OpenRCT2::Ui::Windows
             announceAccessibilityPrompt();
         }
 
-        std::vector<WidgetIndex> getPromptButtons() const
-        {
-            if (_canSave)
-                return { WIDX_SAVE, WIDX_DONT_SAVE, WIDX_CANCEL };
-            return { WQIDX_OK, WQIDX_CANCEL };
-        }
-
+        // The situational question is spoken on open; the Save / Don't save / Cancel buttons are then
+        // navigable graph nodes that announce themselves as the user moves across them.
         void announceAccessibilityPrompt()
         {
             std::string text = OpenRCT2::FormatStringID(widgets[WIDX_TITLE].text);
             if (_canSave)
                 text += ". " + OpenRCT2::FormatStringID(widgets[WIDX_LABEL].text);
-            text += ". Options: ";
-            const auto buttons = getPromptButtons();
-            for (size_t i = 0; i < buttons.size(); i++)
-            {
-                if (i != 0)
-                    text += ", ";
-                text += OpenRCT2::FormatStringID(widgets[buttons[i]].text);
-            }
             Accessibility::ScreenReaderSpeak(text);
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            const auto buttons = getPromptButtons();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(buttons.size()))
-                return std::nullopt;
-            const auto& wd = widgets[buttons[_accessIndex]];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            const auto buttons = getPromptButtons();
-            const int32_t count = static_cast<int32_t>(buttons.size());
-
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveRight:
-                {
-                    const bool forward = (action == AccessibilityAction::moveDown
-                                          || action == AccessibilityAction::moveRight);
-                    _accessIndex = forward ? (_accessIndex + 1) % count : (_accessIndex - 1 + count) % count;
-                    Accessibility::ScreenReaderSpeakItem(
-                        OpenRCT2::FormatStringID(widgets[buttons[_accessIndex]].text), _accessIndex, count);
-                    return true;
-                }
-
-                case AccessibilityAction::activate:
-                    // Cancel is always the last button; treat Enter on it like Escape so focus
-                    // returns to the menu cleanly.
-                    if (_accessIndex == count - 1)
-                    {
-                        close();
-                        Accessibility::ReannounceToolbarItemIfMenuMode();
-                    }
-                    else
-                    {
-                        onMouseUp(buttons[_accessIndex]); // Save / Don't save / OK
-                    }
-                    return true;
-
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-
-                default:
-                    return false;
-            }
         }
 
         void onClose() override

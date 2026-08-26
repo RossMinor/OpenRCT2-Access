@@ -58,8 +58,7 @@ namespace OpenRCT2::Ui::Windows
             Formatter ft;
             currentRide.formatNameTo(ft);
             ft.Add<money64>(_demolishRideCost / 2);
-            Accessibility::ScreenReaderSpeak(
-                OpenRCT2::FormatStringIDLegacy(stringId, ft.Data()) + ". Press Enter to refurbish, or Escape to cancel.");
+            Accessibility::ScreenReaderSpeak(OpenRCT2::FormatStringIDLegacy(stringId, ft.Data()));
         }
 
         void onOpen() override
@@ -68,24 +67,11 @@ namespace OpenRCT2::Ui::Windows
             WindowInitScrollWidgets(*this);
         }
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        void onMouseUp(WidgetIndex widgetIndex) override
         {
-            return true; // modal: swallow letters so they don't reach the map cursor
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            // Modal prompt: highlight the primary (refurbish) button that Enter activates.
-            const auto& wd = widgets[WIDX_REFURBISH];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
+            switch (widgetIndex)
             {
-                case AccessibilityAction::activate:
+                case WIDX_REFURBISH:
                 {
                     // Applies a tick later; confirm from the callback. Cost is reported by the
                     // finance hook ("Spent ...").
@@ -96,24 +82,6 @@ namespace OpenRCT2::Ui::Windows
                     });
                     GameActions::Execute(&gameAction, getGameState());
                     close();
-                    return true;
-                }
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return true; // modal: swallow arrows and everything else
-            }
-        }
-
-        void onMouseUp(WidgetIndex widgetIndex) override
-        {
-            switch (widgetIndex)
-            {
-                case WIDX_REFURBISH:
-                {
-                    auto gameAction = GameActions::RideDemolishAction(rideId, GameActions::RideModifyType::renew);
-                    GameActions::Execute(&gameAction, getGameState());
                     break;
                 }
                 case WIDX_CANCEL:

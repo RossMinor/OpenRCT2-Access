@@ -12,8 +12,12 @@
 #include "../MenuNavigation.h"
 
 #include <openrct2-ui/windows/Windows.h>
+#include <openrct2/interface/Widget.h>
 #include <openrct2/interface/Window.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/ui/WindowManager.h>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -25,6 +29,40 @@ namespace OpenRCT2::Ui::Accessibility::Graph
     void RegisterGraphScreen(GraphScreen screen)
     {
         _screens.push_back(std::move(screen));
+    }
+
+    // A generic recipe for a modal confirmation prompt (demolish / refurbish / fire / save): every
+    // button widget becomes a navigable node in declaration order, Enter routes to the window's own
+    // mouse-up handler (which runs that button's action), and Escape closes the window. The recipe is
+    // widget-driven and never casts to a concrete window type, so one registration can serve several
+    // prompt window classes - including the two different C++ prompt classes that share the demolish
+    // window class. Each prompt still speaks its situational message on open; the buttons self-announce
+    // as the user moves across them.
+    static void BuildButtonPromptGraph(GraphBuilder& b, WindowBase& w)
+    {
+        auto* wp = &w;
+        for (WidgetIndex i = 0; i < static_cast<WidgetIndex>(w.widgets.size()); i++)
+        {
+            if (w.widgets[i].type != WidgetType::button)
+                continue;
+            NodeVtable vt;
+            vt.announcements.emplace_back([wp, i]() { return OpenRCT2::FormatStringID(wp->widgets[i].text); });
+            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.onActivate = [wp, i]() { wp->onMouseUp(i); };
+            vt.focusRect = [wp, i]() -> std::optional<GraphRect> {
+                const auto& wd = wp->widgets[i];
+                return GraphRect{ wp->windowPos.x + wd.left, wp->windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+            };
+            b.AddItem(ControlId::Structural("btn:" + std::to_string(i)), std::move(vt));
+        }
+    }
+
+    static void RegisterButtonPromptScreen(WindowClass wc)
+    {
+        GraphScreen screen;
+        screen.windowClass = wc;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { BuildButtonPromptGraph(b, w); };
+        RegisterGraphScreen(std::move(screen));
     }
 
     void EnsureGraphScreensRegistered()
@@ -44,6 +82,12 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterCheatsGraphScreen();
         Windows::RegisterParkGraphScreen();
         Windows::RegisterFinancesGraphScreen();
+
+        // Modal confirmation prompts share one generic button-driven recipe. demolishRidePrompt is
+        // used by both the demolish and refurbish prompts (different C++ classes, same window class).
+        RegisterButtonPromptScreen(WindowClass::demolishRidePrompt);
+        RegisterButtonPromptScreen(WindowClass::firePrompt);
+        RegisterButtonPromptScreen(WindowClass::savePrompt);
     }
 
     bool GraphOwnsWindowClass(WindowClass wc)

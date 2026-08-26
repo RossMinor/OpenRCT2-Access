@@ -58,9 +58,7 @@ namespace OpenRCT2::Ui::Windows
             {
                 Formatter ft;
                 peep->FormatNameTo(ft);
-                Accessibility::ScreenReaderSpeak(
-                    OpenRCT2::FormatStringIDLegacy(STR_FIRE_STAFF_ID, ft.Data())
-                    + ". Press Enter to fire, or Escape to cancel.");
+                Accessibility::ScreenReaderSpeak(OpenRCT2::FormatStringIDLegacy(STR_FIRE_STAFF_ID, ft.Data()));
             }
         }
 
@@ -70,24 +68,11 @@ namespace OpenRCT2::Ui::Windows
             WindowInitScrollWidgets(*this);
         }
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        void onMouseUp(WidgetIndex widgetIndex) override
         {
-            return true; // modal: swallow letters so they don't reach the map cursor
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            // Modal prompt: highlight the primary (yes/fire) button that Enter activates.
-            const auto& wd = widgets[WIDX_YES];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
+            switch (widgetIndex)
             {
-                case AccessibilityAction::activate:
+                case WIDX_YES:
                 {
                     auto staffFireAction = GameActions::StaffFireAction(EntityId::FromUnderlying(number));
                     staffFireAction.SetCallback([](const GameActions::GameAction*, const GameActions::Result* result) {
@@ -96,24 +81,6 @@ namespace OpenRCT2::Ui::Windows
                     });
                     GameActions::Execute(&staffFireAction, getGameState());
                     close();
-                    return true;
-                }
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return true; // modal: swallow arrows and everything else
-            }
-        }
-
-        void onMouseUp(WidgetIndex widgetIndex) override
-        {
-            switch (widgetIndex)
-            {
-                case WIDX_YES:
-                {
-                    auto staffFireAction = GameActions::StaffFireAction(EntityId::FromUnderlying(number));
-                    GameActions::Execute(&staffFireAction, getGameState());
                     break;
                 }
                 case WIDX_CLOSE:
