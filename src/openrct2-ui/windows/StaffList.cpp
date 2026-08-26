@@ -14,6 +14,8 @@
 #include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -127,7 +129,6 @@ namespace OpenRCT2::Ui::Windows
         std::optional<size_t> _highlightedIndex{};
         int32_t _selectedTab{};
         uint32_t _tabAnimationIndex{};
-        int32_t _accessibilityIndex = -1; // screen-reader cursor into _staffList
 
     public:
         void onOpen() override
@@ -251,120 +252,107 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        bool onAccessibilityTypeahead(uint32_t key) override
-        {
-            const int32_t n = static_cast<int32_t>(_staffList.size());
-            if (n == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
-            for (int32_t i = 1; i <= n; i++)
-            {
-                const int32_t idx = (start + i) % n;
-                const std::string& name = _staffList[idx].Name;
-                char first = name.empty() ? '\0' : name[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessibilityIndex = idx;
-                    _highlightedIndex = static_cast<size_t>(idx);
-                    invalidate();
-                    announceAccessibilityStaff(idx);
-                    return true;
-                }
-            }
-            return true;
-        }
+        // ---- graph accessibility recipe ----
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Screen rect of a visible staff row (by list index), for the sighted-user focus box.
+        Accessibility::Graph::GraphRect AccessRowRect(int32_t index) const
         {
             const auto& lw = widgets[WIDX_STAFF_LIST_LIST];
             const int32_t viewTop = windowPos.y + lw.top;
             const int32_t viewBottom = windowPos.y + lw.bottom;
             const int32_t left = windowPos.x + lw.left;
             const int32_t right = windowPos.x + lw.right;
-
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_staffList.size()))
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-
-            const int32_t rowTop = viewTop + _accessibilityIndex * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            const int32_t rowTop = viewTop + index * kScrollableRowHeight - scrolls[0].contentOffsetY;
             int32_t top = std::max(rowTop, viewTop);
             int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
             if (bottom <= top)
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-            return ScreenRect{ { left, top }, { right, bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
             {
-                case AccessibilityAction::moveUp:
-                    moveAccessibilitySelection(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    moveAccessibilitySelection(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    changeAccessibilityTab(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    changeAccessibilityTab(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    // On a type header (no individual selected) Enter hires; on a staff member it
-                    // opens that member's window.
-                    if (_accessibilityIndex < 0)
-                        hireAccessibilityStaff();
-                    else
-                        activateAccessibilitySelection();
-                    return true;
-                case AccessibilityAction::activateAlt:
-                    followAccessibilityStaff();
-                    return true;
-                case AccessibilityAction::announce:
-                    if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_staffList.size()))
-                        announceAccessibilityStaff(_accessibilityIndex);
-                    else
-                        announceStaffTab();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
+                top = viewTop;
+                bottom = viewBottom;
             }
+            return { left, top, right - left, bottom - top };
         }
 
-        void followAccessibilityStaff()
+        std::string AccessStaffText(EntityId id, const std::string& name) const
         {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_staffList.size()))
-                return;
-
-            // Shift+Enter: lock the main camera onto this staff member and follow them until Escape.
-            // Close the list so we're cleanly in follow mode.
-            const auto id = _staffList[_accessibilityIndex].Id;
-            const auto name = _staffList[_accessibilityIndex].Name;
-            Accessibility::StartFollowingEntity(id, name);
-            close();
+            std::string text = name;
+            const auto* peep = getGameState().entities.GetEntity<Staff>(id);
+            if (peep != nullptr)
+            {
+                Formatter ft;
+                peep->FormatActionTo(ft);
+                const auto act = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
+                if (!act.empty())
+                    text += ", " + act;
+            }
+            return text;
         }
 
-        // Spoken when focused on a staff-type header (no individual selected): the type, the count,
-        // and the hire affordance.
-        void announceStaffTab()
+        // The staff-type "hire" line spoken on the header node: type, count, wage, and the hire
+        // affordance (the header's Enter hires).
+        std::string AccessHireText() const
         {
             static const char* kTabNames[] = { "Handymen", "Mechanics", "Security guards", "Entertainers" };
             static const char* kHireNames[] = { "handyman", "mechanic", "security guard", "entertainer" };
             const int32_t t = std::clamp(_selectedTab, 0, 3);
             std::string text = std::string(kTabNames[t]) + ", " + std::to_string(_staffList.size());
-            // Speak the wage up front, before the player commits to hiring.
             if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
-                text += ", wages " + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, GetStaffWage(GetSelectedStaffType()))
+                text += ", wages "
+                    + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, GetStaffWage(GetSelectedStaffType()))
                     + " per month";
             text += ", press Enter to hire a " + std::string(kHireNames[t]);
-            Accessibility::ScreenReaderSpeak(text);
+            return text;
+        }
+
+        // Declare this staff type's members as one vertical list, led by a "hire" header node (the
+        // legacy "on the type header, Enter hires" affordance becomes its own focusable node).
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            NodeVtable hire;
+            hire.announcements.emplace_back([this]() { return AccessHireText(); });
+            hire.onActivate = [this]() { hireAccessibilityStaff(); };
+            hire.excludeFromSearch = true;
+            b.AddItem(ControlId::Structural("hire"), std::move(hire));
+
+            int32_t index = 0;
+            for (const auto& entry : _staffList)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(
+                    [this, id = entry.Id, name = entry.Name]() { return AccessStaffText(id, name); });
+                vt.onActivate = [this, id = entry.Id]() {
+                    auto* peep = getGameState().entities.GetEntity<Staff>(id);
+                    if (peep == nullptr)
+                        return;
+                    auto intent = Intent(WindowClass::peep);
+                    intent.PutExtra(INTENT_EXTRA_PEEP, peep);
+                    // Open the member's info window; the list stays open behind it.
+                    ContextOpenIntent(&intent);
+                };
+                vt.onActivateShift = [this, id = entry.Id, name = entry.Name]() {
+                    // Shift+Enter: follow this staff member with the main camera until Escape.
+                    Accessibility::StartFollowingEntity(id, name);
+                    close();
+                };
+                vt.focusRect = [this, index]() {
+                    return std::optional<Accessibility::Graph::GraphRect>(AccessRowRect(index));
+                };
+                b.AddItem(ControlId::Structural("staff:" + std::to_string(entry.Id.ToUnderlying())), std::move(vt));
+                index++;
+            }
+        }
+
+        // Tab/Shift+Tab (and Left/Right): cycle the four staff-type tabs. The graph announces the
+        // new tab's landing (the hire header).
+        void AccessChangeTab(int32_t delta)
+        {
+            constexpr int32_t kNumStaffTabs = 4;
+            _selectedTab = (_selectedTab + delta + kNumStaffTabs) % kNumStaffTabs;
+            RefreshList();
+            scrolls[0].contentOffsetY = 0;
+            invalidate();
         }
 
         // Hires a new staff member of the currently selected type. Forces auto-placement (the normal
@@ -404,69 +392,6 @@ namespace OpenRCT2::Ui::Windows
                 Accessibility::ScreenReaderSpeak("Hired " + OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data()));
             });
             GameActions::Execute(&hireStaffAction, getGameState());
-        }
-
-        void announceAccessibilityStaff(int32_t index)
-        {
-            std::string text = _staffList[index].Name;
-
-            const auto* peep = getGameState().entities.GetEntity<Staff>(_staffList[index].Id);
-            if (peep != nullptr)
-            {
-                Formatter ft;
-                peep->FormatActionTo(ft);
-                const auto act = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
-                if (!act.empty())
-                {
-                    text += ", ";
-                    text += act;
-                }
-            }
-            Accessibility::ScreenReaderSpeakItem(text, index, static_cast<int32_t>(_staffList.size()));
-        }
-
-        void moveAccessibilitySelection(int32_t delta)
-        {
-            const int32_t n = static_cast<int32_t>(_staffList.size());
-            // The staff list has no hidden rows, so every item is selectable.
-            const int32_t idx = Accessibility::ListNav::wrap(_accessibilityIndex, delta, n);
-            if (idx < 0)
-            {
-                Accessibility::ScreenReaderSpeak("No staff");
-                return;
-            }
-
-            _accessibilityIndex = idx;
-            _highlightedIndex = static_cast<size_t>(idx);
-            invalidate();
-            announceAccessibilityStaff(idx);
-        }
-
-        void changeAccessibilityTab(int32_t delta)
-        {
-            constexpr int32_t kNumStaffTabs = 4;
-            _selectedTab = (_selectedTab + delta + kNumStaffTabs) % kNumStaffTabs;
-            RefreshList();
-            scrolls[0].contentOffsetY = 0;
-            _accessibilityIndex = -1;
-            invalidate();
-            announceStaffTab();
-        }
-
-        void activateAccessibilitySelection()
-        {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_staffList.size()))
-                return;
-
-            auto* peep = getGameState().entities.GetEntity<Staff>(_staffList[_accessibilityIndex].Id);
-            if (peep == nullptr)
-                return;
-
-            auto intent = Intent(WindowClass::peep);
-            intent.PutExtra(INTENT_EXTRA_PEEP, peep);
-            // Open the staff member's info window; the menu navigator hands focus to it and announces
-            // its name and tab. The list stays open behind, so closing the info window returns here.
-            ContextOpenIntent(&intent);
         }
 
         void onPrepareDraw() override
@@ -973,5 +898,19 @@ namespace OpenRCT2::Ui::Windows
         {
             static_cast<StaffListWindow*>(window)->RefreshList();
         }
+    }
+
+    void RegisterStaffListGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::staffList;
+        screen.screenName = []() { return std::string("Staff list"); };
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<StaffListWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<StaffListWindow&>(w).AccessChangeTab(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

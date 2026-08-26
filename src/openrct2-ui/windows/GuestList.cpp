@@ -12,6 +12,8 @@
 #include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -165,8 +167,7 @@ namespace OpenRCT2::Ui::Windows
 
         // Screen-reader navigation: Left/Right pick a category (group), Up/Down walk the
         // individuals within it.
-        int32_t _accessibilityCategory = -1; // index into _groups
-        int32_t _accessibilityIndex = -1;    // index into _guestList
+        int32_t _accessibilityCategory = -1; // index into _groups (the current "page")
         bool _accessibilityInitialised = false;
 
         u8string _pageDropdownCaption{};
@@ -640,187 +641,114 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        bool onAccessibilityTypeahead(uint32_t key) override
-        {
-            const int32_t n = static_cast<int32_t>(_guestList.size());
-            if (n == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
-            for (int32_t i = 1; i <= n; i++)
-            {
-                const int32_t idx = (start + i) % n;
-                const std::string& name = _guestList[idx].Name;
-                char first = name.empty() ? '\0' : name[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessibilityIndex = idx;
-                    _highlightedIndex = static_cast<size_t>(idx);
-                    invalidate();
-                    Accessibility::ScreenReaderSpeakItem(_guestList[idx].Name, idx, n);
-                    return true;
-                }
-            }
-            return true;
-        }
+        // ---- graph accessibility recipe ----
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // The guest categories ("Happy", "Hungry"...) become the window's pages: Tab/Shift+Tab (and
+        // Left/Right) switch categories, Up/Down move through the guests in the current one - the
+        // exact two-axis navigation the legacy layer had, expressed as one list under a page context.
+
+        Accessibility::Graph::GraphRect AccessRowRect(int32_t index) const
         {
             const auto& lw = widgets[WIDX_GUEST_LIST];
             const int32_t viewTop = windowPos.y + lw.top;
             const int32_t viewBottom = windowPos.y + lw.bottom;
             const int32_t left = windowPos.x + lw.left;
             const int32_t right = windowPos.x + lw.right;
-
-            // Only the individual-guest list has per-row focus; otherwise box the whole list.
-            if (_selectedTab != TabId::Individual || _accessibilityIndex < 0
-                || _accessibilityIndex >= static_cast<int32_t>(_guestList.size()))
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-
-            const int32_t rowTop = viewTop + _accessibilityIndex * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            const int32_t rowTop = viewTop + index * kScrollableRowHeight - scrolls[0].contentOffsetY;
             int32_t top = std::max(rowTop, viewTop);
             int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
             if (bottom <= top)
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-            return ScreenRect{ { left, top }, { right, bottom } };
+            {
+                top = viewTop;
+                bottom = viewBottom;
+            }
+            return { left, top, right - left, bottom - top };
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            // The opening action just initialises and announces the first category.
-            if (!_accessibilityInitialised)
-            {
-                _accessibilityInitialised = true;
-                RefreshGroups();
-                if (_groups.empty())
-                    Accessibility::ScreenReaderSpeak("No guests");
-                else
-                    selectAccessibilityCategory(0);
-                return true;
-            }
-
-            switch (action)
-            {
-                case AccessibilityAction::moveLeft:
-                    changeAccessibilityCategory(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    changeAccessibilityCategory(1);
-                    return true;
-                case AccessibilityAction::moveUp:
-                    moveAccessibilityIndividual(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    moveAccessibilityIndividual(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    activateAccessibilityGuest();
-                    return true;
-                case AccessibilityAction::activateAlt:
-                    followAccessibilityGuest();
-                    return true;
-                case AccessibilityAction::announce:
-                    if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_guestList.size()))
-                        Accessibility::ScreenReaderSpeakItem(
-                            _guestList[_accessibilityIndex].Name, _accessibilityIndex,
-                            static_cast<int32_t>(_guestList.size()));
-                    else if (_accessibilityCategory >= 0 && _accessibilityCategory < static_cast<int32_t>(_groups.size()))
-                    {
-                        std::string text = OpenRCT2::FormatStringIDLegacy(
-                            STR_STRINGID, _groups[_accessibilityCategory].Arguments.args);
-                        text += ", " + std::to_string(_groups[_accessibilityCategory].NumGuests) + " guests";
-                        Accessibility::ScreenReaderSpeakItem(
-                            text, _accessibilityCategory, static_cast<int32_t>(_groups.size()));
-                    }
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
+        // Filter the individual list to a category, without speaking (the graph announces).
         void selectAccessibilityCategory(int32_t catIndex)
         {
             if (catIndex < 0 || catIndex >= static_cast<int32_t>(_groups.size()))
                 return;
-
             _accessibilityCategory = catIndex;
-            _accessibilityIndex = -1;
-
-            // Filter the individual list down to this category, like clicking the group.
             _filterArguments = _groups[catIndex].Arguments;
             _selectedFilter = _selectedView == GuestViewType::Actions ? GuestFilterType::Guests
                                                                       : GuestFilterType::GuestsThinking;
             _selectedTab = TabId::Individual;
             RefreshList();
             invalidate();
-
-            std::string text = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, _groups[catIndex].Arguments.args);
-            text += ", " + std::to_string(_groups[catIndex].NumGuests) + " guests";
-            Accessibility::ScreenReaderSpeakItem(text, catIndex, static_cast<int32_t>(_groups.size()));
         }
 
-        void changeAccessibilityCategory(int32_t delta)
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            // First build: derive the categories and land on the first one.
+            if (!_accessibilityInitialised)
+            {
+                _accessibilityInitialised = true;
+                RefreshGroups();
+                if (!_groups.empty())
+                    selectAccessibilityCategory(0);
+            }
+
+            if (_groups.empty() || _accessibilityCategory < 0
+                || _accessibilityCategory >= static_cast<int32_t>(_groups.size()))
+            {
+                NodeVtable vt;
+                vt.announcements.push_back(NodeAnnouncement::Static("No guests"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("empty"), std::move(vt));
+                return;
+            }
+
+            const auto& grp = _groups[_accessibilityCategory];
+            std::string cat = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, grp.Arguments.args) + ", "
+                + std::to_string(grp.NumGuests) + " guests";
+            b.PushContext(cat);
+            if (_guestList.empty())
+            {
+                NodeVtable vt;
+                vt.announcements.push_back(NodeAnnouncement::Static("No guests in this category"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("cat-empty"), std::move(vt));
+            }
+            else
+            {
+                int32_t index = 0;
+                for (const auto& entry : _guestList)
+                {
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(entry.Name));
+                    vt.onActivate = [this, id = entry.Id]() {
+                        auto* guest = getGameState().entities.GetEntity<Guest>(id);
+                        if (guest != nullptr)
+                            GuestOpen(guest); // the list stays open behind the guest window
+                    };
+                    vt.onActivateShift = [this, id = entry.Id, name = std::string(entry.Name)]() {
+                        Accessibility::StartFollowingEntity(id, name); // Shift+Enter: follow until Escape
+                        close();
+                    };
+                    vt.focusRect = [this, index]() {
+                        return std::optional<Accessibility::Graph::GraphRect>(AccessRowRect(index));
+                    };
+                    b.AddItem(ControlId::Structural("guest:" + std::to_string(entry.Id.ToUnderlying())), std::move(vt));
+                    index++;
+                }
+            }
+            b.PopContext();
+        }
+
+        // Tab/Shift+Tab (and Left/Right): cycle guest categories. The graph announces the new one.
+        void AccessChangeCategory(int32_t delta)
         {
             if (_groups.empty())
                 RefreshGroups();
-
             const int32_t n = static_cast<int32_t>(_groups.size());
             const int32_t cat = Accessibility::ListNav::wrap(_accessibilityCategory, delta, n);
             if (cat < 0)
-            {
-                Accessibility::ScreenReaderSpeak("No guests");
                 return;
-            }
             selectAccessibilityCategory(cat);
-        }
-
-        void moveAccessibilityIndividual(int32_t delta)
-        {
-            const int32_t n = static_cast<int32_t>(_guestList.size());
-            const int32_t idx = Accessibility::ListNav::wrap(_accessibilityIndex, delta, n);
-            if (idx < 0)
-            {
-                Accessibility::ScreenReaderSpeak("No guests in this category");
-                return;
-            }
-
-            _accessibilityIndex = idx;
-            _highlightedIndex = static_cast<size_t>(idx);
-            invalidate();
-            Accessibility::ScreenReaderSpeakItem(_guestList[idx].Name, idx, static_cast<int32_t>(_guestList.size()));
-        }
-
-        void activateAccessibilityGuest()
-        {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_guestList.size()))
-                return;
-
-            auto* guest = getGameState().entities.GetEntity<Guest>(_guestList[_accessibilityIndex].Id);
-            if (guest == nullptr)
-                return;
-
-            // Open the guest's info window; the menu navigator hands focus to it and announces its
-            // name and tab. The list stays open behind, so closing the info window returns here.
-            GuestOpen(guest);
-        }
-
-        void followAccessibilityGuest()
-        {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_guestList.size()))
-                return;
-
-            // Shift+Enter: lock the main camera onto this guest and follow them until Escape. Close
-            // the list so we're cleanly in follow mode (and not competing for the screen reader).
-            const auto id = _guestList[_accessibilityIndex].Id;
-            const auto name = _guestList[_accessibilityIndex].Name;
-            Accessibility::StartFollowingEntity(id, name);
-            close();
         }
 
     private:
@@ -1178,5 +1106,19 @@ namespace OpenRCT2::Ui::Windows
         {
             static_cast<GuestListWindow*>(w)->RefreshList();
         }
+    }
+
+    void RegisterGuestListGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::guestList;
+        screen.screenName = []() { return std::string("Guest list"); };
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<GuestListWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<GuestListWindow&>(w).AccessChangeCategory(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

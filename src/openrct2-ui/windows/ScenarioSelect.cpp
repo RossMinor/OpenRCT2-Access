@@ -11,6 +11,8 @@
 
 #include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Objective.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -131,7 +133,6 @@ namespace OpenRCT2::Ui::Windows
     {
     private:
         bool _showLockedInformation = false;
-        int32_t _accessibilityIndex = -1; // index into _listItems for screen-reader navigation
         std::function<void(std::string_view)> _callback;
         std::vector<ScenarioListItem> _listItems;
         const ScenarioIndexEntry* _highlightedScenario = nullptr;
@@ -156,11 +157,6 @@ namespace OpenRCT2::Ui::Windows
             updatePressedTab();
             initialiseListItems();
             initScrollWidgets();
-
-            // Leave the selection unset; the window that opens us calls onAccessibilityAction
-            // (moveDown) to focus the first scenario. Auto-focusing here too would advance twice
-            // and land on the second scenario.
-            _accessibilityIndex = -1;
         }
 
         void onLanguageChange() override
@@ -186,84 +182,116 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        bool onAccessibilityTypeahead(uint32_t key) override
-        {
-            const int32_t n = static_cast<int32_t>(_listItems.size());
-            if (n == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
-            for (int32_t i = 1; i <= n; i++)
-            {
-                const int32_t idx = (start + i) % n;
-                if (_listItems[idx].type != ListItemType::Scenario)
-                    continue;
-                const std::string name = _listItems[idx].scenario.scenario->Name;
-                char first = name.empty() ? '\0' : name[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessibilityIndex = idx;
-                    _showLockedInformation = _listItems[idx].scenario.is_locked;
-                    _highlightedScenario = _listItems[idx].scenario.is_locked ? nullptr
-                                                                              : _listItems[idx].scenario.scenario;
-                    LoadPreview();
-                    invalidate();
-                    SpeakCurrentScenario();
-                    return true;
-                }
-            }
-            return true;
-        }
+        // ---- graph accessibility recipe ----
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Screen rect of the scenario at list index `listIdx` (rows are variable height: headings
+        // 18px, scenarios one item each). Also drives the visual preview pane to track keyboard
+        // focus - guarded so it only reloads when the focused scenario actually changes.
+        Accessibility::Graph::GraphRect AccessScenarioRect(int32_t listIdx)
         {
+            const auto* scenario = _listItems[listIdx].scenario.scenario;
+            if (_highlightedScenario != scenario)
+            {
+                _showLockedInformation = _listItems[listIdx].scenario.is_locked;
+                _highlightedScenario = _listItems[listIdx].scenario.is_locked ? nullptr : scenario;
+                LoadPreview();
+                invalidate();
+            }
+
             const auto& lw = widgets[WIDX_SCENARIOLIST];
             const int32_t viewTop = windowPos.y + lw.top;
             const int32_t viewBottom = windowPos.y + lw.bottom;
             const int32_t left = windowPos.x + lw.left;
             const int32_t right = windowPos.x + lw.right;
 
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_listItems.size()))
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-
-            // Rows have variable height (headings 18px, scenarios one item each): sum up to the focus.
             const int32_t itemHeight = GetScenarioListItemSize();
             int32_t contentTop = 0;
-            for (int32_t i = 0; i < _accessibilityIndex; i++)
+            for (int32_t i = 0; i < listIdx; i++)
                 contentTop += (_listItems[i].type == ListItemType::Heading) ? 18 : itemHeight;
 
             const int32_t rowTop = viewTop + contentTop - scrolls[0].contentOffsetY;
             int32_t top = std::max(rowTop, viewTop);
             int32_t bottom = std::min(rowTop + itemHeight, viewBottom);
             if (bottom <= top)
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-            return ScreenRect{ { left, top }, { right, bottom } };
+            {
+                top = viewTop;
+                bottom = viewBottom;
+            }
+            return { left, top, right - left, bottom - top };
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // Declare this tab's scenarios as one vertical list (heading rows are not focusable and are
+        // skipped, exactly as arrow navigation did before). The builder auto-stamps "n of m" over
+        // the scenarios it declares.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            switch (action)
+            using namespace Accessibility::Graph;
+            // Wrap the tab's scenarios in a context named for the origin category (RCT1, RCT2, ...)
+            // so a tab switch announces which category you landed in, then the first scenario -
+            // matching how ride list and guests announce their pages.
+            b.PushContext(OpenRCT2::FormatStringID(kScenarioOriginStringIds[selectedTab]));
+            int32_t declared = 0;
+            for (int32_t i = 0; i < static_cast<int32_t>(_listItems.size()); i++)
             {
-                case AccessibilityAction::moveDown:
-                    MoveAccessibilitySelection(1);
-                    return true;
-                case AccessibilityAction::moveUp:
-                    MoveAccessibilitySelection(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    ChangeTab(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    ChangeTab(-1);
-                    return true;
-                case AccessibilityAction::activate:
-                    ActivateAccessibilitySelection();
-                    return true;
-                default:
-                    return false;
+                if (_listItems[i].type != ListItemType::Scenario)
+                    continue;
+                const auto& sc = _listItems[i].scenario;
+                NodeVtable vt;
+                vt.announcements.emplace_back([sc]() {
+                    std::string text = sc.scenario->Name;
+                    if (sc.is_locked)
+                        text += ", locked";
+                    else if (sc.scenario->Highscore != nullptr)
+                        text += ", completed";
+                    return text;
+                });
+                vt.onActivate = [this, sc]() {
+                    if (sc.is_locked)
+                    {
+                        Accessibility::ScreenReaderSpeak("Scenario locked");
+                        return;
+                    }
+                    Accessibility::ScreenReaderSpeak("Loading " + std::string(sc.scenario->Name));
+                    OpenRCT2::Audio::Play(Audio::SoundId::click1, 0, windowPos.x + (width / 2));
+                    gFirstTimeSaving = true;
+                    _callback(sc.scenario->Path); // likely closes this window; do nothing after
+                };
+                vt.focusRect = [this, i]() {
+                    return std::optional<Accessibility::Graph::GraphRect>(AccessScenarioRect(i));
+                };
+                b.AddItem(ControlId::Structural("scenario:" + sc.scenario->Path), std::move(vt));
+                declared++;
             }
+            if (declared == 0)
+            {
+                // An empty category still needs a node, or the screen would render nothing and go
+                // silent (categories are normally non-empty; this is a safety net).
+                NodeVtable vt;
+                vt.announcements.push_back(NodeAnnouncement::Static("No scenarios available"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("empty"), std::move(vt));
+            }
+            b.PopContext();
+        }
+
+        // Tab/Shift+Tab (and Left/Right): cycle to the next non-empty category tab. The graph
+        // announces the new tab's landing.
+        void AccessChangeTab(int32_t delta)
+        {
+            int32_t tab = selectedTab;
+            for (int32_t steps = 0; steps < kNumTabs; steps++)
+            {
+                tab += delta;
+                if (tab < 0)
+                    tab = kNumTabs - 1;
+                else if (tab >= kNumTabs)
+                    tab = 0;
+                if (widgets[WIDX_TAB1 + tab].type != WidgetType::empty)
+                    break;
+            }
+            if (widgets[WIDX_TAB1 + tab].type == WidgetType::empty)
+                return;
+            SelectTab(tab);
         }
 
         int32_t GetPreviewPaneWidth() const
@@ -716,7 +744,6 @@ namespace OpenRCT2::Ui::Windows
 
             _highlightedScenario = nullptr;
             _preview = {};
-            _accessibilityIndex = -1;
 
             updatePressedTab();
             initialiseListItems();
@@ -725,104 +752,6 @@ namespace OpenRCT2::Ui::Windows
             onPrepareDraw();
             initScrollWidgets();
             invalidate();
-        }
-
-        void SpeakCurrentScenario()
-        {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_listItems.size()))
-                return;
-
-            const auto& item = _listItems[_accessibilityIndex];
-            if (item.type != ListItemType::Scenario)
-                return;
-
-            std::string text = item.scenario.scenario->Name;
-            if (item.scenario.is_locked)
-                text += ", locked";
-            else if (item.scenario.scenario->Highscore != nullptr)
-                text += ", completed";
-
-            // Position among the scenario entries (ignoring heading rows).
-            const auto [pos, total] = Accessibility::ListNav::visiblePosition(
-                _accessibilityIndex, static_cast<int32_t>(_listItems.size()),
-                [this](int32_t i) { return _listItems[i].type == ListItemType::Scenario; });
-            Accessibility::ScreenReaderSpeakItem(text, pos, total);
-        }
-
-        void MoveAccessibilitySelection(int32_t delta)
-        {
-            const int32_t n = static_cast<int32_t>(_listItems.size());
-            if (n == 0)
-            {
-                Accessibility::ScreenReaderSpeak("No scenarios available");
-                return;
-            }
-
-            // Step over headings to land on the next/previous scenario entry, wrapping.
-            const int32_t idx = Accessibility::ListNav::stepVisible(
-                _accessibilityIndex, delta, n,
-                [this](int32_t i) { return _listItems[i].type == ListItemType::Scenario; });
-            if (idx < 0)
-                return; // only heading rows, nothing selectable
-
-            _accessibilityIndex = idx;
-            const auto& item = _listItems[idx];
-            _showLockedInformation = item.scenario.is_locked;
-            _highlightedScenario = item.scenario.is_locked ? nullptr : item.scenario.scenario;
-            LoadPreview();
-            invalidate();
-            SpeakCurrentScenario();
-        }
-
-        void ActivateAccessibilitySelection()
-        {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_listItems.size()))
-                return;
-
-            const auto& item = _listItems[_accessibilityIndex];
-            if (item.type != ListItemType::Scenario)
-                return;
-
-            if (item.scenario.is_locked)
-            {
-                Accessibility::ScreenReaderSpeak("Scenario locked");
-                return;
-            }
-
-            Accessibility::ScreenReaderSpeak("Loading " + std::string(item.scenario.scenario->Name));
-            OpenRCT2::Audio::Play(Audio::SoundId::click1, 0, windowPos.x + (width / 2));
-            gFirstTimeSaving = true;
-            // Callback will likely close this window, so do nothing after it.
-            _callback(item.scenario.scenario->Path);
-        }
-
-        void ChangeTab(int32_t delta)
-        {
-            int32_t tab = selectedTab;
-            for (int32_t steps = 0; steps < kNumTabs; steps++)
-            {
-                tab += delta;
-                if (tab < 0)
-                    tab = kNumTabs - 1;
-                else if (tab >= kNumTabs)
-                    tab = 0;
-                if (widgets[WIDX_TAB1 + tab].type != WidgetType::empty)
-                    break;
-            }
-            if (widgets[WIDX_TAB1 + tab].type == WidgetType::empty)
-                return;
-
-            SelectTab(tab);
-
-            std::string text = OpenRCT2::FormatStringID(kScenarioOriginStringIds[selectedTab]);
-            int32_t count = 0;
-            for (const auto& item : _listItems)
-            {
-                if (item.type == ListItemType::Scenario)
-                    count++;
-            }
-            text += ", " + std::to_string(count) + " scenarios";
-            Accessibility::ScreenReaderSpeak(text);
         }
 
         void updatePressedTab()
@@ -1073,5 +1002,21 @@ namespace OpenRCT2::Ui::Windows
         window = windowMgr->Create<ScenarioSelectWindow>(
             WindowClass::scenarioSelect, {}, kWindowSize, { WindowFlag::autoPosition, WindowFlag::centreScreen }, callback);
         return window;
+    }
+
+    void RegisterScenarioSelectGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::scenarioSelect;
+        screen.screenName = []() { return std::string("Select scenario"); };
+        screen.build = [](GraphBuilder& b, WindowBase& w) {
+            static_cast<ScenarioSelectWindow&>(w).BuildAccessGraph(b);
+        };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<ScenarioSelectWindow&>(w).AccessChangeTab(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

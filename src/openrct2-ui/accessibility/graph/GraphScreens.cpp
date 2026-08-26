@@ -38,6 +38,9 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         // the window's internals). Add new migrations here.
         Windows::RegisterRideListGraphScreen();
         Windows::RegisterOptionsGraphScreen();
+        Windows::RegisterStaffListGraphScreen();
+        Windows::RegisterScenarioSelectGraphScreen();
+        Windows::RegisterGuestListGraphScreen();
     }
 
     bool GraphOwnsWindowClass(WindowClass wc)

@@ -10,6 +10,7 @@
 #include <openrct2-ui/accessibility/AccessCrashHandler.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/scripting/CustomMenu.h>
@@ -443,7 +444,13 @@ namespace OpenRCT2::Ui::Windows
                         WindowBase* opened = (windowMgr != nullptr && openedClass != WindowClass::null)
                             ? windowMgr->FindByClass(openedClass)
                             : nullptr;
-                        if (opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
+                        // A graph-owned window announces itself through the graph screen manager;
+                        // poking or speaking here would double-announce (migration seam, spec 10.5).
+                        if (opened != nullptr && Accessibility::Graph::GraphOwnsWindowClass(openedClass))
+                        {
+                            // The graph manager speaks the screen name and landing.
+                        }
+                        else if (opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
                             Accessibility::ScreenReaderSpeak(std::string("Selected ") + getMenuItemName(widgetIndex));
                     }
                     return true;

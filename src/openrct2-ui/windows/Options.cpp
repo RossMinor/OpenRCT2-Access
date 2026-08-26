@@ -873,7 +873,9 @@ namespace OpenRCT2::Ui::Windows
                 return;
             }
 
-            b.PushContext(getAccessPageName(page), "tab");
+            // Label only, no role word - consistent with the other tabbed windows (ride list,
+            // staff, scenarios), which announce just the page/category name on a tab switch.
+            b.PushContext(getAccessPageName(page));
             for (const WidgetIndex w : getAccessControls())
             {
                 const auto kind = classifyAccessControl(w);
