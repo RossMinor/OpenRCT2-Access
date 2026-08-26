@@ -41,6 +41,9 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterStaffListGraphScreen();
         Windows::RegisterScenarioSelectGraphScreen();
         Windows::RegisterGuestListGraphScreen();
+        Windows::RegisterCheatsGraphScreen();
+        Windows::RegisterParkGraphScreen();
+        Windows::RegisterFinancesGraphScreen();
     }
 
     bool GraphOwnsWindowClass(WindowClass wc)

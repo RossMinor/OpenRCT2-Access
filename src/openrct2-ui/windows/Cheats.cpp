@@ -10,8 +10,9 @@
 #include "../UiStringIds.h"
 
 #include <iterator>
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -488,10 +489,9 @@ static StringId window_cheats_page_titles[] = {
         }
 
 #pragma region Accessibility
-        // Screen-reader navigation. _accessIndex 0 = the tab selector; 1..n = the current page's
-        // controls. Up/Down move through them, Left/Right change tabs (on the selector) or adjust the
-        // focused control, Enter toggles/activates/opens. Modelled on the Options window.
-        int32_t _accessIndex = 0;
+        // Screen-reader navigation (graph recipe, modelled on the Options window). The dropdown pair
+        // tracks an open combo box: while set (and the dropdown window really exists), BuildAccessGraph
+        // declares the dropdown's items instead of the page's controls.
         bool _accessDropdownOpen = false;
         WidgetIndex _accessDropdownChevron = 0;
 
@@ -686,44 +686,20 @@ static StringId window_cheats_page_titles[] = {
             return (p >= 0 && p < WINDOW_CHEATS_PAGE_COUNT) ? kNames[p] : "Cheats";
         }
 
-        void announceAccessFocus()
+        // Stable per-page identity for a control node. Widget indices overlap across pages (each
+        // page reuses WIDX_TAB_CONTENT), so the page must be part of the key - without it a tab
+        // switch would silently "persist" focus onto an unrelated control of the new page.
+        std::string accessControlKey(WidgetIndex w) const
         {
-            if (_accessDropdownOpen)
-                return;
-            onPrepareDraw(); // refresh dropdown value text before reading it
-
-            if (_accessIndex <= 0)
-            {
-                Accessibility::ScreenReaderSpeakItem(
-                    std::string(getAccessPageName(page)) + " tab", page, WINDOW_CHEATS_PAGE_COUNT);
-                return;
-            }
-            const auto controls = getAccessControls();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
-                return;
-            const WidgetIndex w = controls[ci];
-            const auto kind = classifyAccessControl(w);
-            std::string text = accessControlLabel(w, kind) + ", " + accessKindWord(kind);
-            const std::string value = accessControlValue(w, kind);
-            if (!value.empty())
-                text += ", " + value;
-            Accessibility::ScreenReaderSpeakItem(text, ci, static_cast<int32_t>(controls.size()));
+            return "cheat:" + std::to_string(page) + ":" + std::to_string(w);
         }
 
-        void accessChangeTab(int32_t delta)
+        // Ask the graph to land on this control at its next render (used to return focus to the
+        // combo box that owned a dropdown once the dropdown closes).
+        void accessSuggestFocus(WidgetIndex w)
         {
-            const int32_t p = (page + delta + WINDOW_CHEATS_PAGE_COUNT) % WINDOW_CHEATS_PAGE_COUNT;
-            setPage(p);
-            _accessIndex = 0;
-            announceAccessFocus();
-        }
-
-        void accessMove(int32_t delta)
-        {
-            const int32_t total = static_cast<int32_t>(getAccessControls().size()) + 1; // +1 for the tab selector
-            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
-            announceAccessFocus();
+            Accessibility::Graph::GraphStateForClass(WindowClass::cheats).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(accessControlKey(w));
         }
 
         void accessCloseDropdown()
@@ -731,31 +707,6 @@ static StringId window_cheats_page_titles[] = {
             if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
                 windowMgr->CloseByClass(WindowClass::dropdown);
             _accessDropdownOpen = false;
-        }
-
-        void accessMoveDropdown(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-            int32_t idx = std::max(0, gDropdown.highlightedIndex);
-            for (int32_t steps = 0; steps <= n; steps++)
-            {
-                idx = (idx + delta + n) % n;
-                if (!gDropdown.items[idx].isSeparator())
-                    break;
-                if (delta == 0)
-                    delta = 1;
-            }
-            if (gDropdown.items[idx].isSeparator())
-                return;
-            gDropdown.highlightedIndex = idx;
-            std::string text = gDropdown.items[idx].text;
-            if (gDropdown.items[idx].isChecked())
-                text += ", selected";
-            Accessibility::ScreenReaderSpeakItem(text, idx, n);
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
         }
 
         void accessOpenDropdown(WidgetIndex chevronWidx)
@@ -766,161 +717,129 @@ static StringId window_cheats_page_titles[] = {
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevronWidx;
-            accessMoveDropdown(0);
+            // The graph rebuild now declares the dropdown's items; its differ announces the landing.
         }
 
-        void accessCommitDropdown()
+        void accessCommitDropdown(int32_t idx)
         {
-            const int32_t idx = gDropdown.highlightedIndex;
             const WidgetIndex chevron = _accessDropdownChevron;
-            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator();
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
             accessCloseDropdown();
             if (valid)
                 onDropdown(chevron, idx);
-            announceAccessFocus();
+            accessSuggestFocus(static_cast<WidgetIndex>(chevron - 1));
         }
 
-        void accessActivate()
-        {
-            if (_accessIndex <= 0)
-                return;
-            const auto controls = getAccessControls();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
-                return;
-            const WidgetIndex w = controls[ci];
-            switch (classifyAccessControl(w))
-            {
-                case AccessControlKind::checkbox:
-                    onMouseUp(w);
-                    Accessibility::ScreenReaderSpeak(widgetIsPressed(*this, w) ? "checked" : "unchecked");
-                    break;
-                case AccessControlKind::dropdown:
-                    accessOpenDropdown(static_cast<WidgetIndex>(w + 1)); // chevron follows the value widget
-                    break;
-                case AccessControlKind::button:
-                    onMouseUp(w);
-                    break;
-                default:
-                    break; // spinners use Left/Right
-            }
-        }
+    public:
+        // ---- graph accessibility recipe ----
 
-        void accessAdjust(int32_t delta)
+        // Declare the current page's controls (or, while a combo box's dropdown is open, just the
+        // dropdown's items) fresh from live widget state. Immediate mode makes the dropdown a plain
+        // modal sub-list: no per-window sub-mode dispatch.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            if (_accessIndex <= 0)
-            {
-                accessChangeTab(delta);
-                return;
-            }
-            const auto controls = getAccessControls();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
-                return;
-            const WidgetIndex w = controls[ci];
-            switch (classifyAccessControl(w))
-            {
-                case AccessControlKind::spinner:
-                    onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (w + 1) : (w + 2))); // up : down
-                    announceAccessFocus();
-                    break;
-                case AccessControlKind::dropdown:
-                    accessOpenDropdown(static_cast<WidgetIndex>(w + 1));
-                    break;
-                default:
-                    announceAccessFocus(); // checkboxes/buttons just re-read
-                    break;
-            }
-        }
+            using namespace Accessibility::Graph;
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
-        {
-            return true; // settings dialog: swallow letters so they don't leak to the toolbar behind
-        }
+            // Re-derive the dropdown state from reality every build: the dropdown window can be
+            // dismissed behind our back (a stray click), and a stale flag would strand the menu.
+            auto* windowMgr = GetWindowManager();
+            if (_accessDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessDropdownOpen = false;
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            if (_accessDropdownOpen)
-                return std::nullopt;
-            WidgetIndex w;
-            if (_accessIndex <= 0)
-            {
-                w = WIDX_TAB_1 + page;
-            }
-            else
-            {
-                const auto controls = getAccessControls();
-                const int32_t ci = _accessIndex - 1;
-                if (ci < 0 || ci >= static_cast<int32_t>(controls.size()))
-                    return std::nullopt;
-                w = controls[ci];
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
+            onPrepareDraw(); // refresh widget captions (dropdown values) before reading them
 
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
             if (_accessDropdownOpen)
             {
-                switch (action)
+                const auto owner = static_cast<WidgetIndex>(_accessDropdownChevron - 1);
+                b.PushContext(accessControlLabel(owner, classifyAccessControl(owner)), "menu");
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveLeft:
-                        accessMoveDropdown(-1);
-                        return true;
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::moveRight:
-                        accessMoveDropdown(1);
-                        return true;
-                    case AccessibilityAction::activate:
-                        accessCommitDropdown();
-                        return true;
-                    case AccessibilityAction::cancel:
-                        accessCloseDropdown();
-                        announceAccessFocus();
-                        return true;
-                    default:
-                        return true;
+                    if (gDropdown.items[i].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
+                    if (gDropdown.items[i].isChecked())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                    if (gDropdown.items[i].isDisabled())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
+                    vt.onActivate = [this, i]() { accessCommitDropdown(i); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
                 }
+                b.PopContext();
+                return;
             }
 
-            switch (action)
+            // Label only, no role word - consistent with the other tabbed windows, which announce
+            // just the page name on a tab switch.
+            b.PushContext(getAccessPageName(page));
+            for (const WidgetIndex w : getAccessControls())
             {
-                case AccessibilityAction::moveUp:
-                    accessMove(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    accessMove(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    accessAdjust(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    accessAdjust(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    accessActivate();
-                    return true;
-                case AccessibilityAction::nextTab:
-                    accessChangeTab(1);
-                    return true;
-                case AccessibilityAction::prevTab:
-                    accessChangeTab(-1);
-                    return true;
-                case AccessibilityAction::announce:
-                    announceAccessFocus();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return true;
+                const auto kind = classifyAccessControl(w);
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, w, kind]() { return accessControlLabel(w, kind); });
+                vt.announcements.emplace_back(NodeAnnouncement::Static(accessKindWord(kind), AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(
+                    [this, w, kind]() { return accessControlValue(w, kind); }, false, AnnouncementKinds::kValue);
+                // Synchronous feedback after Enter/adjust: just the new value, no label repeated.
+                vt.stateText = [this, w, kind]() {
+                    onPrepareDraw();
+                    return accessControlValue(w, kind);
+                };
+                vt.focusRect = [this, w]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                            wd.width() + 1, wd.height() + 1 };
+                };
+
+                switch (kind)
+                {
+                    case AccessControlKind::checkbox:
+                        vt.onActivate = [this, w]() { onMouseUp(w); }; // toggle and save
+                        break;
+                    case AccessControlKind::dropdown:
+                        // Enter opens the combo box's list (the chevron follows the value widget).
+                        vt.onActivate = [this, w]() { accessOpenDropdown(static_cast<WidgetIndex>(w + 1)); };
+                        break;
+                    case AccessControlKind::button:
+                        vt.onActivate = [this, w]() { onMouseUp(w); };
+                        break;
+                    case AccessControlKind::spinner:
+                        vt.onAdjust = [this, w](int32_t sign, bool) {
+                            onMouseDown(static_cast<WidgetIndex>(sign > 0 ? (w + 1) : (w + 2))); // up : down
+                        };
+                        break;
+                    default:
+                        break;
+                }
+                b.AddItem(ControlId::Structural(accessControlKey(w)), std::move(vt));
             }
+            b.PopContext();
         }
+
+        // Tab/Shift+Tab: cycle the cheat pages via the window's own page switch; the graph
+        // announces the new page's landing.
+        void AccessChangePage(int32_t delta)
+        {
+            const int32_t p = (page + delta + WINDOW_CHEATS_PAGE_COUNT) % WINDOW_CHEATS_PAGE_COUNT;
+            setPage(p);
+        }
+
+        // Escape: close an open dropdown sub-list first (staying in the window, focus returning to
+        // the combo box); with none open, let the navigator close the window.
+        bool AccessEscape()
+        {
+            if (!_accessDropdownOpen)
+                return false;
+            const WidgetIndex chevron = _accessDropdownChevron;
+            accessCloseDropdown();
+            accessSuggestFocus(static_cast<WidgetIndex>(chevron - 1));
+            return true;
+        }
+
+    private:
 #pragma endregion
 
         void onPrepareDraw() override
@@ -1780,5 +1699,23 @@ static StringId window_cheats_page_titles[] = {
             window = windowMgr->Create<CheatsWindow>(WindowClass::cheats, ScreenCoordsXY(32, 32), kWindowSize);
         }
         return window;
+    }
+
+    // Register the cheats window with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterCheatsGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::cheats;
+        screen.screenName = []() { return std::string("Cheats"); };
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<CheatsWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<CheatsWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        screen.onEscape = [](WindowBase& w) { return static_cast<CheatsWindow&>(w).AccessEscape(); };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

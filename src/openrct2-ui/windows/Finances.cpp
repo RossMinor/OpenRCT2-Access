@@ -9,6 +9,8 @@
 
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Graph.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -228,17 +230,6 @@ namespace OpenRCT2::Ui::Windows
         u8string _loanSpinnerText{};
         ParkData& _parkData;
 
-        // Accessibility: loan-adjust sub-mode (entered with Enter on the Summary page) and the
-        // currently focused marketing campaign on the Marketing page.
-        bool _accessLoanMode = false;
-        int32_t _accessMarketingIndex = -1;
-        // Focused line in the Summary page's detailed read-out (the expenditure/income table). -1
-        // means nothing focused yet, so the first Down arrow lands on the first line.
-        int32_t _accessSummaryIndex = -1;
-        // Focused row in the Research page's funding controls (funding level + 7 priority
-        // checkboxes), navigated with up/down and toggled with Enter. -1 = nothing focused yet.
-        int32_t _accessResearchIndex = -1;
-
         void SetDisabledTabs()
         {
             setWidgetDisabled(WIDX_TAB_5, (_parkData.flags & PARK_FLAGS_FORBID_MARKETING_CAMPAIGN) != 0);
@@ -323,7 +314,7 @@ namespace OpenRCT2::Ui::Windows
                 case WINDOW_FINANCES_PAGE_SUMMARY:
                     return "Overview: Cash " + cash(park.cash) + ", Loan " + cash(park.bankLoan) + ", Company value "
                         + cash(park.companyValue) + ", Weekly profit " + cash(park.currentProfit)
-                        + ", press Enter to adjust the loan";
+                        + ". Use up and down to review; on the Loan line, left and right adjust it";
                 case WINDOW_FINANCES_PAGE_FINANCIAL_GRAPH:
                     return "Cash " + cash(park.cash);
                 case WINDOW_FINANCES_PAGE_VALUE_GRAPH:
@@ -369,7 +360,7 @@ namespace OpenRCT2::Ui::Windows
             }
             lines.push_back("Month profit, " + cash(profit));
 
-            lines.push_back("Loan, " + cash(park.bankLoan) + ", press Enter to adjust");
+            lines.push_back("Loan, " + cash(park.bankLoan) + ", use left and right to adjust");
             if (!(_parkData.flags & PARK_FLAGS_RCT1_INTEREST))
                 lines.push_back(
                     "Interest rate, "
@@ -382,14 +373,11 @@ namespace OpenRCT2::Ui::Windows
             return lines;
         }
 
-        void accessMoveSummary(int32_t delta)
+        // Index of the loan line inside buildSummaryLines(): the expenditure/income categories come
+        // first, then the month-profit line, then the loan line.
+        int32_t accessLoanLineIndex() const
         {
-            const auto lines = buildSummaryLines();
-            if (lines.empty())
-                return;
-            const int32_t n = static_cast<int32_t>(lines.size());
-            _accessSummaryIndex = (_accessSummaryIndex + delta + n) % n;
-            Accessibility::ScreenReaderSpeakItem(lines[_accessSummaryIndex], _accessSummaryIndex, n);
+            return static_cast<int32_t>(EnumValue(ExpenditureType::count)) + 1;
         }
 
         // One navigable row on the Research page's funding controls. category -1 is the funding-level
@@ -434,55 +422,42 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        void accessMoveResearch(int32_t delta)
+        // Enter on a Research row. category -1 cycles the funding level (None -> Minimum -> Normal ->
+        // Maximum -> None, the same game action the funding dropdown runs); 0..6 toggle the priority
+        // checkbox. Both apply immediately in single player; the node's stateText re-reads the result.
+        void accessToggleResearch(int32_t category)
         {
-            const auto items = buildResearchItems();
-            if (items.empty())
-                return;
-            const int32_t n = static_cast<int32_t>(items.size());
-            _accessResearchIndex = (_accessResearchIndex + delta + n) % n;
-            Accessibility::ScreenReaderSpeakItem(items[_accessResearchIndex].label, _accessResearchIndex, n);
-        }
-
-        void accessActivateResearch()
-        {
-            const auto items = buildResearchItems();
-            if (_accessResearchIndex < 0 || _accessResearchIndex >= static_cast<int32_t>(items.size()))
-                return;
-            const auto& it = items[_accessResearchIndex];
-
-            if (it.category < 0)
+            if (category < 0)
             {
-                // Cycle the funding level (None -> Minimum -> Normal -> Maximum -> None) - the same
-                // game action the funding dropdown runs.
                 const auto& gameState = getGameState();
                 const int32_t newLevel = (gameState.researchFundingLevel + 1) & 3;
                 auto action = GameActions::ParkSetResearchFundingAction(gameState.researchPriorities, newLevel);
                 GameActions::Execute(&action, getGameState());
-
-                // The action applies immediately in single player; re-read the funding row so the
-                // new level is heard.
-                const auto updated = buildResearchItems();
-                if (_accessResearchIndex >= 0 && _accessResearchIndex < static_cast<int32_t>(updated.size()))
-                    Accessibility::ScreenReaderSpeak(updated[_accessResearchIndex].label);
+                return;
             }
-            else if (!it.enabled)
-            {
-                Accessibility::ScreenReaderSpeak("That category is fully researched and cannot be changed");
-            }
-            else
-            {
-                // Route through the window's own mouse-up handler, the exact path a checkbox click
-                // takes (WindowResearchFundingMouseUp), so the toggle matches the game precisely.
-                onMouseUp(static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + it.category));
-
-                // Announce just the resulting checkbox state, matching the other settings windows.
-                const bool nowChecked = (getGameState().researchPriorities & (1 << it.category)) != 0;
-                Accessibility::ScreenReaderSpeak(nowChecked ? "checked" : "unchecked");
-            }
+            const int32_t mask = 1 << category;
+            if ((getGameState().researchUncompletedCategories & mask) == 0)
+                return; // fully researched, cannot be changed
+            // Route through the window's own mouse-up handler, the exact path a checkbox click takes.
+            onMouseUp(static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + category));
         }
 
-        void changeAccessibilityTab(int32_t delta)
+        // Short spoken feedback for a Research row after Enter: the funding level, or the checkbox
+        // state, matching the other settings windows.
+        std::string accessResearchState(int32_t category)
+        {
+            const auto& gameState = getGameState();
+            if (category < 0)
+                return OpenRCT2::FormatStringID(kResearchFundingLevelNames[gameState.researchFundingLevel & 3]);
+            const int32_t mask = 1 << category;
+            if ((gameState.researchUncompletedCategories & mask) == 0)
+                return "fully researched";
+            return (gameState.researchPriorities & mask) ? "checked" : "unchecked";
+        }
+
+        // Tab/Shift+Tab: cycle the visible finance pages via the window's own page switch (skipping
+        // tabs hidden for the current scenario); the graph announces the new page's header + landing.
+        void AccessChangePage(int32_t delta)
         {
             int32_t newPage = page;
             for (int32_t i = 0; i < WINDOW_FINANCES_PAGE_COUNT; i++)
@@ -492,25 +467,6 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
             setPage(newPage);
-            _accessSummaryIndex = -1;  // restart the Summary table read-out from the top
-            _accessResearchIndex = -1; // and the Research funding rows
-
-            // Position among the visible tabs.
-            int32_t total = 0, pos = 0;
-            for (int32_t p = 0; p < WINDOW_FINANCES_PAGE_COUNT; p++)
-            {
-                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty)
-                    continue;
-                if (p == page)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(getAccessibilityPageSummary(), pos, total);
-        }
-
-        std::string accessLoanText()
-        {
-            return "Loan " + OpenRCT2::FormatStringID(STR_CURRENCY_FORMAT, getGameState().park.bankLoan);
         }
 
         void accessAdjustLoan(bool borrow)
@@ -557,147 +513,112 @@ namespace OpenRCT2::Ui::Windows
                 + OpenRCT2::FormatStringID(STR_MARKETING_PER_WEEK, AdvertisingCampaignPricePerWeek[i]);
         }
 
-        void accessMoveMarketing(int32_t delta)
+        // Screen-shaped focus rectangle for a widget (host tag for the visual focus box).
+        std::optional<Accessibility::Graph::GraphRect> accessWidgetRect(WidgetIndex w)
         {
-            std::vector<int32_t> avail;
-            for (int32_t i = 0; i < 6; i++)
-                if (widgets[WIDX_CAMPAIGN_1 + i].type != WidgetType::empty)
-                    avail.push_back(i);
-            if (avail.empty())
-            {
-                Accessibility::ScreenReaderSpeak("No campaigns available to start");
-                return;
-            }
-            const int32_t n = static_cast<int32_t>(avail.size());
-            int32_t cur = -1;
-            for (int32_t k = 0; k < n; k++)
-                if (avail[k] == _accessMarketingIndex)
-                    cur = k;
-            if (cur < 0)
-                cur = (delta >= 0) ? 0 : n - 1;
-            else
-                cur = (cur + delta + n) % n;
-            _accessMarketingIndex = avail[cur];
-            Accessibility::ScreenReaderSpeakItem(accessCampaignName(_accessMarketingIndex) + ", press Enter to set up", cur, n);
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            // Loan-adjust sub-mode: Left repays, Right borrows, Enter/Escape exits.
-            if (_accessLoanMode)
-            {
-                switch (action)
-                {
-                    case AccessibilityAction::moveLeft:
-                        accessAdjustLoan(false);
-                        return true;
-                    case AccessibilityAction::moveRight:
-                        accessAdjustLoan(true);
-                        return true;
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::announce:
-                        Accessibility::ScreenReaderSpeak(accessLoanText());
-                        return true;
-                    case AccessibilityAction::activate:
-                    case AccessibilityAction::cancel:
-                        _accessLoanMode = false;
-                        Accessibility::ScreenReaderSpeak("Finished adjusting loan");
-                        return true;
-                    default:
-                        return true; // swallow other keys while adjusting
-                }
-            }
-
-            switch (action)
-            {
-                case AccessibilityAction::moveLeft:
-                    _accessMarketingIndex = -1;
-                    changeAccessibilityTab(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    _accessMarketingIndex = -1;
-                    changeAccessibilityTab(1);
-                    return true;
-                case AccessibilityAction::moveUp:
-                    if (page == WINDOW_FINANCES_PAGE_MARKETING)
-                        accessMoveMarketing(-1);
-                    else if (page == WINDOW_FINANCES_PAGE_SUMMARY)
-                        accessMoveSummary(-1);
-                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH)
-                        accessMoveResearch(-1);
-                    else
-                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                    return true;
-                case AccessibilityAction::moveDown:
-                    if (page == WINDOW_FINANCES_PAGE_MARKETING)
-                        accessMoveMarketing(1);
-                    else if (page == WINDOW_FINANCES_PAGE_SUMMARY)
-                        accessMoveSummary(1);
-                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH)
-                        accessMoveResearch(1);
-                    else
-                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                    return true;
-                case AccessibilityAction::activate:
-                    if (page == WINDOW_FINANCES_PAGE_SUMMARY)
-                    {
-                        _accessLoanMode = true;
-                        Accessibility::ScreenReaderSpeak(
-                            "Adjusting loan. " + accessLoanText()
-                            + ". Left arrow repays, right arrow borrows, Escape when done.");
-                    }
-                    else if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
-                    {
-                        onMouseUp(WIDX_CAMPAIGN_1 + _accessMarketingIndex); // opens the New Campaign window
-                    }
-                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH)
-                    {
-                        accessActivateResearch();
-                    }
-                    return true;
-                case AccessibilityAction::announce:
-                    if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
-                        Accessibility::ScreenReaderSpeak(accessCampaignName(_accessMarketingIndex) + ", press Enter to set up");
-                    else if (page == WINDOW_FINANCES_PAGE_RESEARCH && _accessResearchIndex >= 0)
-                    {
-                        const auto items = buildResearchItems();
-                        if (_accessResearchIndex < static_cast<int32_t>(items.size()))
-                            Accessibility::ScreenReaderSpeak(items[_accessResearchIndex].label);
-                    }
-                    else
-                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            WidgetIndex w = WIDX_TAB_1 + page;
-            if (_accessLoanMode)
-                w = WIDX_LOAN;
-            else if (page == WINDOW_FINANCES_PAGE_MARKETING && _accessMarketingIndex >= 0)
-                w = WIDX_CAMPAIGN_1 + _accessMarketingIndex;
-            else if (page == WINDOW_FINANCES_PAGE_RESEARCH && _accessResearchIndex >= 0)
-            {
-                const auto items = buildResearchItems();
-                if (_accessResearchIndex < static_cast<int32_t>(items.size()))
-                {
-                    const int32_t cat = items[_accessResearchIndex].category;
-                    w = (cat < 0) ? WIDX_RESEARCH_FUNDING : static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + cat);
-                }
-            }
             if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
                 return std::nullopt;
             const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+            return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                    wd.height() + 1 };
+        }
+
+        // ---- graph accessibility recipe ----
+
+        // Declare the current page's navigable content fresh from live state. Each list page groups
+        // its rows under the page header (the former per-tab summary) so a Tab switch reads the
+        // header before the first row; the chart pages are a single info node reading their value.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            const WidgetIndex tab = static_cast<WidgetIndex>(WIDX_TAB_1 + page);
+
+            switch (page)
+            {
+                case WINDOW_FINANCES_PAGE_SUMMARY:
+                {
+                    b.PushContext(getAccessibilityPageSummary());
+                    const auto lines = buildSummaryLines();
+                    const int32_t loanLine = accessLoanLineIndex();
+                    for (int32_t i = 0; i < static_cast<int32_t>(lines.size()); i++)
+                    {
+                        NodeVtable vt;
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(lines[i]));
+                        if (i == loanLine)
+                        {
+                            // Left/Right repay/borrow; the game-action callback speaks the new loan.
+                            vt.onAdjust = [this](int32_t sign, bool) { accessAdjustLoan(sign > 0); };
+                            vt.focusRect = [this]() { return accessWidgetRect(WIDX_LOAN); };
+                        }
+                        else
+                        {
+                            vt.focusRect = [this, tab]() { return accessWidgetRect(tab); };
+                        }
+                        b.AddItem(ControlId::Structural("fin:sum:" + std::to_string(i)), std::move(vt));
+                    }
+                    b.PopContext();
+                    break;
+                }
+                case WINDOW_FINANCES_PAGE_MARKETING:
+                {
+                    b.PushContext(getAccessibilityPageSummary());
+                    int32_t declared = 0;
+                    for (int32_t i = 0; i < 6; i++)
+                    {
+                        if (widgets[WIDX_CAMPAIGN_1 + i].type == WidgetType::empty)
+                            continue;
+                        NodeVtable vt;
+                        vt.announcements.emplace_back([this, i]() { return accessCampaignName(i); });
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("press Enter to set up"));
+                        vt.onActivate = [this, i]() { onMouseUp(static_cast<WidgetIndex>(WIDX_CAMPAIGN_1 + i)); };
+                        vt.focusRect = [this, i]() {
+                            return accessWidgetRect(static_cast<WidgetIndex>(WIDX_CAMPAIGN_1 + i));
+                        };
+                        b.AddItem(ControlId::Structural("fin:mkt:" + std::to_string(i)), std::move(vt));
+                        declared++;
+                    }
+                    if (declared == 0)
+                    {
+                        NodeVtable vt;
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("No campaigns available to start"));
+                        vt.focusRect = [this, tab]() { return accessWidgetRect(tab); };
+                        b.AddItem(ControlId::Structural("fin:mkt:none"), std::move(vt));
+                    }
+                    b.PopContext();
+                    break;
+                }
+                case WINDOW_FINANCES_PAGE_RESEARCH:
+                {
+                    b.PushContext(getAccessibilityPageSummary());
+                    for (const auto& it : buildResearchItems())
+                    {
+                        const int32_t cat = it.category;
+                        NodeVtable vt;
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(it.label));
+                        // Enter cycles the funding level / toggles the priority checkbox; the state
+                        // text reads the result back.
+                        vt.onActivate = [this, cat]() { accessToggleResearch(cat); };
+                        vt.stateText = [this, cat]() { return accessResearchState(cat); };
+                        vt.focusRect = [this, cat]() {
+                            return accessWidgetRect(
+                                cat < 0 ? WIDX_RESEARCH_FUNDING : static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + cat));
+                        };
+                        b.AddItem(ControlId::Structural("fin:res:" + std::to_string(cat)), std::move(vt));
+                    }
+                    b.PopContext();
+                    break;
+                }
+                default:
+                {
+                    // Chart pages (cash / value / profit graphs): one info node reading the value.
+                    NodeVtable vt;
+                    vt.announcements.emplace_back([this]() { return getAccessibilityPageSummary(); });
+                    vt.focusRect = [this, tab]() { return accessWidgetRect(tab); };
+                    b.AddItem(ControlId::Structural("fin:graph:" + std::to_string(page)), std::move(vt));
+                    break;
+                }
+            }
         }
 
         void onDropdown(WidgetIndex widgetIndex, int32_t selectedIndex) override
@@ -1307,5 +1228,21 @@ namespace OpenRCT2::Ui::Windows
     WindowBase* FinancesMarketingOpen()
     {
         return FinancesWindowOpen(WINDOW_FINANCES_PAGE_MARKETING);
+    }
+
+    // Register the finances window with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterFinancesGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::finances;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<FinancesWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<FinancesWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

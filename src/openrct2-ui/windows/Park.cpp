@@ -13,6 +13,8 @@
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Objective.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -193,9 +195,6 @@ namespace OpenRCT2::Ui::Windows
         int32_t _numberOfStaff = -1;
         int32_t _numberOfRides = -1;
         uint8_t _peepAnimationFrame = 0;
-        // Accessibility: admission-price adjust sub-mode, entered with Enter on the Price page.
-        // While active, Left/Right lower/raise the entrance fee.
-        bool _accessPriceMode = false;
 
         Graph::GraphProperties<uint16_t> _ratingProps{};
         Graph::GraphProperties<uint32_t> _guestProps{};
@@ -324,41 +323,6 @@ namespace OpenRCT2::Ui::Windows
             return {};
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            const WidgetIndex w = WIDX_TAB_1 + page;
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        void changeAccessibilityTab(int32_t delta)
-        {
-            _accessPriceMode = false; // leave price-adjust mode if it was somehow still active
-            int32_t newPage = page;
-            for (int32_t i = 0; i < WINDOW_PARK_PAGE_COUNT; i++)
-            {
-                newPage = (newPage + delta + WINDOW_PARK_PAGE_COUNT) % WINDOW_PARK_PAGE_COUNT;
-                if (widgets[WIDX_TAB_1 + newPage].type != WidgetType::empty)
-                    break;
-            }
-            setPage(newPage);
-
-            // Position among the visible tabs.
-            int32_t total = 0, pos = 0;
-            for (int32_t p = 0; p < WINDOW_PARK_PAGE_COUNT; p++)
-            {
-                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty)
-                    continue;
-                if (p == page)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(getAccessibilityPageSummary(), pos, total);
-        }
-
         // Lowers or raises the park admission fee by one pound, then announces the new fee. The fee
         // can only be set when the park charges for admission (the spinner is hidden for pay-per-ride
         // scenarios). Applies a tick later, so the new value is read from the game-action callback.
@@ -383,82 +347,61 @@ namespace OpenRCT2::Ui::Windows
             GameActions::Execute(&action, getGameState());
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // ---- graph accessibility recipe ----
+
+        // Each park page is a single info node: its summary names the page (so a Tab switch reads it),
+        // Enter runs the page's one action where it has one, and the Price page adjusts with Left/Right.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            // Admission-price adjust sub-mode (entered with Enter on the Price page): Left lowers the
-            // fee, Right raises it, Enter/Escape leaves the mode.
-            if (_accessPriceMode)
+            using namespace Accessibility::Graph;
+
+            NodeVtable vt;
+            vt.announcements.emplace_back([this]() { return getAccessibilityPageSummary(); });
+            vt.focusRect = [this]() -> std::optional<Accessibility::Graph::GraphRect> {
+                const WidgetIndex w = WIDX_TAB_1 + page;
+                if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                    return std::nullopt;
+                const auto& wd = widgets[w];
+                return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                        wd.width() + 1, wd.height() + 1 };
+            };
+
+            switch (page)
             {
-                switch (action)
-                {
-                    case AccessibilityAction::moveLeft:
-                        accessAdjustPrice(false);
-                        return true;
-                    case AccessibilityAction::moveRight:
-                        accessAdjustPrice(true);
-                        return true;
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::announce:
-                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                        return true;
-                    case AccessibilityAction::activate:
-                    case AccessibilityAction::cancel:
-                        _accessPriceMode = false;
-                        Accessibility::ScreenReaderSpeak("Finished adjusting admission price");
-                        return true;
-                    default:
-                        return true; // swallow other keys while adjusting
-                }
+                case WINDOW_PARK_PAGE_ENTRANCE:
+                    // Enter toggles the park open/closed; the state text gives brief feedback.
+                    vt.onActivate = [this]() {
+                        auto& park = getGameState().park;
+                        Park::SetOpen(park, !Park::IsOpen(park));
+                    };
+                    vt.stateText = [this]() {
+                        return Park::IsOpen(getGameState().park) ? std::string("Park opened") : std::string("Park closed");
+                    };
+                    break;
+                case WINDOW_PARK_PAGE_PRICE:
+                    // Left/Right lower/raise the admission fee (only when the park charges admission);
+                    // the game-action callback speaks the new value a tick later.
+                    vt.onAdjust = [this](int32_t sign, bool) { accessAdjustPrice(sign > 0); };
+                    break;
+                default:
+                    break;
             }
 
-            switch (action)
+            b.AddItem(ControlId::Structural("park:" + std::to_string(page)), std::move(vt));
+        }
+
+        // Tab/Shift+Tab: cycle the visible park pages via the window's own page switch (skipping tabs
+        // hidden for the current scenario); the graph announces the new page's summary.
+        void AccessChangePage(int32_t delta)
+        {
+            int32_t newPage = page;
+            for (int32_t i = 0; i < WINDOW_PARK_PAGE_COUNT; i++)
             {
-                case AccessibilityAction::moveLeft:
-                    changeAccessibilityTab(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    changeAccessibilityTab(1);
-                    return true;
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveDown:
-                    Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                    return true;
-                case AccessibilityAction::activate:
-                    if (page == WINDOW_PARK_PAGE_OBJECTIVE)
-                    {
-                        close();
-                        Accessibility::ReannounceToolbarItemIfMenuMode();
-                    }
-                    else if (page == WINDOW_PARK_PAGE_ENTRANCE)
-                    {
-                        auto& park = getGameState().park;
-                        const bool willOpen = !Park::IsOpen(park);
-                        Park::SetOpen(park, willOpen);
-                        Accessibility::ScreenReaderSpeak(willOpen ? "Park opened" : "Park closed");
-                    }
-                    else if (page == WINDOW_PARK_PAGE_PRICE)
-                    {
-                        if (widgets[WIDX_INCREASE_PRICE].type == WidgetType::empty)
-                        {
-                            Accessibility::ScreenReaderSpeak("Admission price cannot be changed in this scenario");
-                        }
-                        else
-                        {
-                            _accessPriceMode = true;
-                            Accessibility::ScreenReaderSpeak(
-                                "Adjusting admission price. " + accessPriceText()
-                                + ". Left arrow lowers, right arrow raises, Escape when done.");
-                        }
-                    }
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
+                newPage = (newPage + delta + WINDOW_PARK_PAGE_COUNT) % WINDOW_PARK_PAGE_COUNT;
+                if (widgets[WIDX_TAB_1 + newPage].type != WidgetType::empty)
+                    break;
             }
+            setPage(newPage);
         }
 
         void onResize() override
@@ -1583,5 +1526,21 @@ namespace OpenRCT2::Ui::Windows
     WindowBase* ParkAwardsOpen()
     {
         return ParkWindowOpen(WINDOW_PARK_PAGE_AWARDS);
+    }
+
+    // Register the park information window with the graph accessibility navigator (called once at
+    // startup via EnsureGraphScreensRegistered). From here on the graph owns this window class; the
+    // legacy accessibility dispatcher stands down for it.
+    void RegisterParkGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::parkInformation;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ParkWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<ParkWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows
