@@ -11,6 +11,8 @@
 #include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -193,7 +195,6 @@ namespace OpenRCT2::Ui::Windows
             bool Visible;
         };
         std::vector<RideListEntry> _rideList;
-        int32_t _accessibilityIndex = -1; // screen-reader cursor into _rideList
 
     public:
         void onOpen() override
@@ -308,108 +309,15 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        bool onAccessibilityTypeahead(uint32_t key) override
+        // ---- graph accessibility recipe (spec: one Build declaring nodes from live state) ----
+
+        // The ride's spoken readout: name, live status, capacity, and map location. The list
+        // position ("n of m") is auto-stamped by the graph builder from the declared nodes.
+        std::string AccessRideText(RideId entryId, const std::string& name) const
         {
-            const int32_t n = static_cast<int32_t>(_rideList.size());
-            if (n == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
-            for (int32_t i = 1; i <= n; i++)
-            {
-                const int32_t idx = (start + i) % n;
-                if (!_rideList[idx].Visible)
-                    continue;
-                const std::string& name = _rideList[idx].Name;
-                char first = name.empty() ? '\0' : name[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessibilityIndex = idx;
-                    selectedListItem = idx;
-                    invalidate();
-                    announceAccessibilityRide(idx);
-                    return true;
-                }
-            }
-            return true;
-        }
+            std::string text = name;
 
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                    moveAccessibilitySelection(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    moveAccessibilitySelection(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    changeAccessibilityPage(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    changeAccessibilityPage(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    activateAccessibilitySelection();
-                    return true;
-                case AccessibilityAction::activateAlt:
-                    locateAccessibilitySelection();
-                    return true;
-                case AccessibilityAction::announce:
-                    if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_rideList.size()))
-                        announceAccessibilityRide(_accessibilityIndex);
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    // Returning to the toolbar menu: re-announce the item we land on.
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            const auto& lw = widgets[WIDX_LIST];
-            const int32_t viewTop = windowPos.y + lw.top;
-            const int32_t viewBottom = windowPos.y + lw.bottom;
-            const int32_t left = windowPos.x + lw.left;
-            const int32_t right = windowPos.x + lw.right;
-
-            // Find the focused ride's position among the visible rows (rows are packed in order).
-            int32_t rowPos = -1;
-            if (_accessibilityIndex >= 0 && _accessibilityIndex < static_cast<int32_t>(_rideList.size())
-                && _rideList[_accessibilityIndex].Visible)
-            {
-                int32_t pos = 0;
-                for (int32_t i = 0; i < _accessibilityIndex; i++)
-                    if (_rideList[i].Visible)
-                        pos++;
-                rowPos = pos;
-            }
-            if (rowPos < 0) // nothing focused: box the whole list
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-
-            const int32_t rowTop = viewTop + rowPos * kScrollableRowHeight - scrolls[0].contentOffsetY;
-            int32_t top = std::max(rowTop, viewTop);
-            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
-            if (bottom <= top) // focused row scrolled out of view: box the whole list
-            {
-                top = viewTop;
-                bottom = viewBottom;
-            }
-            return ScreenRect{ { left, top }, { right, bottom } };
-        }
-
-        void announceAccessibilityRide(int32_t index)
-        {
-            std::string text = _rideList[index].Name;
-
-            const auto* ride = GetRide(_rideList[index].Id);
+            const auto* ride = GetRide(entryId);
             if (ride != nullptr)
             {
                 Formatter ft;
@@ -436,85 +344,92 @@ namespace OpenRCT2::Ui::Windows
             }
 
             // Bottom-left tile coordinates of the ride.
-            const auto location = Accessibility::GetRideLocationText(_rideList[index].Id);
+            const auto location = Accessibility::GetRideLocationText(entryId);
             if (!location.empty())
                 text += ", " + location;
-
-            // Position among the visible rides on this page.
-            const auto [pos, total] = Accessibility::ListNav::visiblePosition(
-                index, static_cast<int32_t>(_rideList.size()), [this](int32_t i) { return _rideList[i].Visible; });
-            Accessibility::ScreenReaderSpeakItem(text, pos, total);
+            return text;
         }
 
-        void moveAccessibilitySelection(int32_t delta)
+        // The screen rectangle of a visible row (by its position among visible rows), for the
+        // sighted-user focus box.
+        Accessibility::Graph::GraphRect AccessRowRect(int32_t rowPos) const
         {
-            const int32_t n = static_cast<int32_t>(_rideList.size());
-            const int32_t idx = Accessibility::ListNav::stepVisible(
-                _accessibilityIndex, delta, n, [this](int32_t i) { return _rideList[i].Visible; });
-            if (idx < 0)
+            const auto& lw = widgets[WIDX_LIST];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+
+            const int32_t rowTop = viewTop + rowPos * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            if (bottom <= top) // scrolled out of view: box the whole list
             {
-                Accessibility::ScreenReaderSpeak("No rides");
-                return;
+                top = viewTop;
+                bottom = viewBottom;
+            }
+            return { left, top, right - left, bottom - top };
+        }
+
+        // Declare this page's rides as one vertical list under the page-name context. Runs fresh
+        // on every operation, so the list is always current and focus follows rides by identity
+        // ("ride:<id>") across resorts and rebuilds.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            static constexpr const char* kPageNames[] = { "Rides", "Shops and stalls", "Kiosks and facilities" };
+            b.PushContext(kPageNames[page]);
+
+            int32_t rowPos = 0;
+            for (const auto& entry : _rideList)
+            {
+                if (!entry.Visible)
+                    continue;
+                NodeVtable vt;
+                vt.announcements.emplace_back(
+                    [this, entryId = entry.Id, name = entry.Name]() { return AccessRideText(entryId, name); });
+                vt.onActivate = [this, entryId = entry.Id]() {
+                    auto* ride = GetRide(entryId);
+                    if (ride == nullptr)
+                        return;
+                    // Open the ride's management window and hand keyboard focus to it. Close the
+                    // list first so focus is unambiguous.
+                    close();
+                    RideMainOpen(*ride);
+                };
+                vt.onActivateShift = [this, entryId = entry.Id]() {
+                    // Close the list and snap the map cursor to the ride's bottom-left corner.
+                    close();
+                    Accessibility::GoToRide(entryId);
+                };
+                vt.focusRect = [this, rowPos]() { return std::optional<Accessibility::Graph::GraphRect>(AccessRowRect(rowPos)); };
+                b.AddItem(
+                    ControlId::Structural("ride:" + std::to_string(entry.Id.ToUnderlying())), std::move(vt));
+                rowPos++;
             }
 
-            _accessibilityIndex = idx;
-            selectedListItem = idx;
-            invalidate();
-            announceAccessibilityRide(idx);
+            if (rowPos == 0)
+            {
+                // An empty page still needs a node, or the screen would go silent: Tab onto it
+                // should say where you are.
+                NodeVtable vt;
+                vt.announcements.push_back(NodeAnnouncement::Static("No rides"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("empty"), std::move(vt));
+            }
+            b.PopContext();
         }
 
-        void changeAccessibilityPage(int32_t delta)
+        // Tab/Shift+Tab: cycle the Rides / Shops / Facilities pages via the window's own page
+        // switch. The graph navigator announces the new page's landing - no speech here.
+        void AccessChangePage(int32_t delta)
         {
             page = (page + delta + PAGE_COUNT) % PAGE_COUNT;
             currentFrame = 0;
             if (page != PAGE_RIDES && _windowRideListInformationType > INFORMATION_TYPE_RUNNING_COST)
                 _windowRideListInformationType = INFORMATION_TYPE_STATUS;
             RefreshList();
-            _accessibilityIndex = -1;
             invalidate();
-
-            int32_t count = 0;
-            for (const auto& entry : _rideList)
-            {
-                if (entry.Visible)
-                    count++;
-            }
-
-            static constexpr const char* kPageNames[] = { "Rides", "Shops and stalls", "Kiosks and facilities" };
-            std::string text = kPageNames[page];
-            text += ", " + std::to_string(count);
-            Accessibility::ScreenReaderSpeak(text);
-        }
-
-        void activateAccessibilitySelection()
-        {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_rideList.size()))
-                return;
-            if (!_rideList[_accessibilityIndex].Visible)
-                return;
-
-            auto* ride = GetRide(_rideList[_accessibilityIndex].Id);
-            if (ride == nullptr)
-                return;
-
-            // Open the ride's management window (status, operating, prices, maintenance, etc.) and
-            // hand keyboard focus to it. Close the list first so focus is unambiguous. The menu
-            // navigator re-announces the newly focused window automatically.
-            close();
-            RideMainOpen(*ride);
-        }
-
-        void locateAccessibilitySelection()
-        {
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(_rideList.size()))
-                return;
-            if (!_rideList[_accessibilityIndex].Visible)
-                return;
-
-            const auto selectedRideId = _rideList[_accessibilityIndex].Id;
-            // Close the list and snap the map cursor to the ride's bottom-left corner.
-            close();
-            Accessibility::GoToRide(selectedRideId);
         }
 
         /**
@@ -1388,5 +1303,22 @@ namespace OpenRCT2::Ui::Windows
     void WindowRideListRefreshList(WindowBase* w)
     {
         dynamic_cast<RideListWindow*>(w)->RefreshListWrapper();
+    }
+
+    // Register the ride list with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterRideListGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::rideList;
+        screen.screenName = []() { return std::string("Ride list"); };
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<RideListWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<RideListWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

@@ -10,6 +10,7 @@
 #pragma once
 
 #include <openrct2-ui/input/InputManager.h>
+#include <openrct2/interface/WindowClasses.h>
 
 namespace OpenRCT2
 {
@@ -41,6 +42,11 @@ namespace OpenRCT2::Ui::Accessibility
     // how to navigate), or nullptr if none. Exposed so other subsystems - e.g. the F1 context help -
     // can tell when a navigable menu is focused.
     WindowBase* GetActiveAccessibleWindow();
+
+    // Whether the LEGACY accessibility layer knows how to navigate this window class. Exposed for
+    // the graph navigator's z-order arbitration: the front-most window across (legacy-navigable
+    // union graph-owned) decides which of the two models owns the keyboard this frame.
+    bool IsLegacyNavigableAccessibleClass(WindowClass wc);
 
     // Draws a visible focus box around the element the keyboard accessibility focus is on (the
     // focused toolbar item in menu mode, or the active accessible window's focused widget). Called

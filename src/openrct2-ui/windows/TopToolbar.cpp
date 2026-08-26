@@ -14,6 +14,7 @@
 #include <iterator>
 #include <limits>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -1170,12 +1171,19 @@ namespace OpenRCT2::Ui::Windows
                         else
                         {
                             // If a navigable window opened, focus and announce its first item;
-                            // otherwise just announce the window's name.
+                            // otherwise just announce the window's name. Graph-owned windows
+                            // announce themselves through the graph screen manager - poking or
+                            // speaking here would double-announce (migration seam, spec 10.5).
                             const WindowClass wc = getToolbarWindowClass(widgetIndex);
                             WindowBase* opened = (windowMgr != nullptr && wc != WindowClass::null)
                                 ? windowMgr->FindByClass(wc)
                                 : nullptr;
-                            if (opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
+                            if (opened != nullptr && Accessibility::Graph::GraphOwnsWindowClass(wc))
+                            {
+                                // The graph manager speaks the screen name and landing.
+                            }
+                            else if (
+                                opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
                                 Accessibility::ScreenReaderSpeak(getToolbarItemName(widgetIndex));
                         }
                     }

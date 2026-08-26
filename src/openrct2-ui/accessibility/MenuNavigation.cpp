@@ -13,6 +13,8 @@
 #include "RidePlacement.h"
 #include "SceneryPlacement.h"
 #include "ScreenReader.h"
+#include "graph/GraphNavigator.h"
+#include "graph/GraphScreens.h"
 
 #include <SDL.h>
 #include <openrct2-ui/UiContext.h>
@@ -119,6 +121,11 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    bool IsLegacyNavigableAccessibleClass(WindowClass wc)
+    {
+        return IsNavigableAccessibleClass(wc);
+    }
+
     // The window that currently owns accessible keyboard navigation: the frontmost open window we
     // know how to navigate. We ask the window system for its real front-to-back order rather than
     // guessing from a hand-authored ranking, so keys always go to the window the player raised most
@@ -136,10 +143,12 @@ namespace OpenRCT2::Ui::Accessibility
             return nullptr;
 
         // WindowVisitEach walks the window list back-to-front, so the last navigable window it
-        // visits is the one currently in front.
+        // visits is the one currently in front. Window classes owned by the graph navigator are
+        // skipped wholesale (the migration ownership gate): the graph consumes their keys before
+        // this dispatcher ever runs, and the legacy layer must never act on them.
         WindowBase* result = nullptr;
         WindowVisitEach([&result](WindowBase* w) {
-            if (IsNavigableAccessibleClass(w->classification))
+            if (IsNavigableAccessibleClass(w->classification) && !Graph::GraphOwnsWindowClass(w->classification))
                 result = w;
         });
         return result;
@@ -306,12 +315,21 @@ namespace OpenRCT2::Ui::Accessibility
             // An open combo box draws its own highlighted item; don't double up.
             if (windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
             {
-                // In toolbar menu mode the toolbar owns focus (it isn't an "active accessible window"),
-                // otherwise use whichever accessible window currently has focus.
-                WindowBase* w = IsInMenuMode() ? windowMgr->FindByClass(WindowClass::topToolbar)
-                                               : GetActiveAccessibleWindow();
-                if (w != nullptr)
-                    rect = w->getAccessibilityFocusRect();
+                // A graph-owned screen provides its focused node's rect through the navigator;
+                // in toolbar menu mode the toolbar owns focus (it isn't an "active accessible
+                // window"); otherwise use whichever accessible window currently has focus.
+                if (auto graphRect = GraphFocusScreenRect(); graphRect.has_value())
+                {
+                    rect = ScreenRect{ { graphRect->x, graphRect->y },
+                                       { graphRect->x + graphRect->width, graphRect->y + graphRect->height } };
+                }
+                else
+                {
+                    WindowBase* w = IsInMenuMode() ? windowMgr->FindByClass(WindowClass::topToolbar)
+                                                   : GetActiveAccessibleWindow();
+                    if (w != nullptr)
+                        rect = w->getAccessibilityFocusRect();
+                }
             }
         }
 
@@ -358,7 +376,9 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
 
-        const bool hasWindow = GetActiveAccessibleWindow() != nullptr;
+        // The union of legacy-navigable and graph-owned windows: a graph screen being open must
+        // never read as "no window" (that would speak a false "Menu closed" while it is up).
+        const bool hasWindow = Graph::FrontNavigableWindow() != nullptr;
         // When the last accessible window closes we are back in the game - unless we dropped into the
         // toolbar menu, which announces its own "Menu closed" via ExitMenuMode.
         if (hadWindow && !hasWindow && !IsInMenuMode())
@@ -390,6 +410,14 @@ namespace OpenRCT2::Ui::Accessibility
             }
             return false;
         }
+
+        // The migration ownership gate (one keypress, one model): while the front-most navigable
+        // window is graph-owned, the graph navigator has already had first refusal on this key -
+        // anything it declined must fall through to the map/shortcuts, never be dispatched by
+        // this legacy path to a covered window underneath.
+        if (auto* graphFront = Graph::FrontNavigableWindow();
+            graphFront != nullptr && Graph::GraphOwnsWindowClass(graphFront->classification))
+            return false;
 
         const auto action = MapKeyToAction(e.button, e.modifiers);
         if (!action.has_value())

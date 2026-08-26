@@ -111,6 +111,12 @@
     <ClCompile Include="tests_pch.cpp" Condition="'$(UsePCH)'=='true'">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="GraphA11yTests.cpp" />
+    <!-- The Graph A11y Kernel compiles standalone (no engine dependency); building it directly
+         into the test project is what mechanically enforces the kernel/host boundary. -->
+    <ClCompile Include="..\..\src\openrct2-ui\accessibility\graph\GraphAnnouncer.cpp" />
+    <ClCompile Include="..\..\src\openrct2-ui\accessibility\graph\GraphBuilder.cpp" />
+    <ClCompile Include="..\..\src\openrct2-ui\accessibility\graph\KeyGraph.cpp" />
     <ClCompile Include="TileElements.cpp" />
     <ClCompile Include="TileElementsView.cpp" />
     <ClCompile Include="WidgetStateTests.cpp" />

@@ -19,6 +19,7 @@
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphNavigator.h>
 #include <SDL_gamecontroller.h>
 #include <cmath>
 #include <openrct2-ui/UiContext.h>
@@ -231,6 +232,9 @@ void InputManager::process()
 
     // Keep the on-screen focus highlight on the map cursor's tile (visual indicator for sighted users).
     Accessibility::TickFocusHighlight();
+
+    // Graph-navigated windows: screen manager attach/detach, the frame differ, and the live watch.
+    Accessibility::TickGraphScreens();
 
     // Announce "Menu closed" when a top-level accessible window closes and focus returns to the game.
     Accessibility::TickMenuClosedAnnounce();
@@ -465,6 +469,10 @@ void InputManager::process(const InputEvent& e)
             Accessibility::StopFollowingEntity();
             return;
         }
+        // The graph navigator (migrated windows) gets first refusal; the legacy menu dispatcher
+        // stands down for graph-owned windows via the ownership gate inside it.
+        if (Accessibility::HandleGraphNavigationKey(e))
+            return;
         if (Accessibility::HandleMenuNavigationKey(e))
             return;
         if (Accessibility::HandleMapNavigationKey(e))

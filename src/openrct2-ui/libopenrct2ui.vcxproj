@@ -59,6 +59,14 @@
     <ClInclude Include="accessibility\SceneryPlacement.h" />
     <ClInclude Include="accessibility\TrackDesignDescription.h" />
     <ClInclude Include="accessibility\ScreenReader.h" />
+    <ClInclude Include="accessibility\graph\ControlId.h" />
+    <ClInclude Include="accessibility\graph\GraphAnnouncer.h" />
+    <ClInclude Include="accessibility\graph\GraphBuilder.h" />
+    <ClInclude Include="accessibility\graph\GraphNavigator.h" />
+    <ClInclude Include="accessibility\graph\GraphScreens.h" />
+    <ClInclude Include="accessibility\graph\GraphTypes.h" />
+    <ClInclude Include="accessibility\graph\GraphVocab.h" />
+    <ClInclude Include="accessibility\graph\KeyGraph.h" />
     <ClInclude Include="audio\AudioContext.h" />
     <ClInclude Include="audio\AudioFormat.h" />
     <ClInclude Include="audio\AudioMixer.h" />
@@ -141,6 +149,11 @@
     <ClCompile Include="accessibility\SceneryPlacement.cpp" />
     <ClCompile Include="accessibility\TrackDesignDescription.cpp" />
     <ClCompile Include="accessibility\ScreenReader.cpp" />
+    <ClCompile Include="accessibility\graph\GraphAnnouncer.cpp" />
+    <ClCompile Include="accessibility\graph\GraphBuilder.cpp" />
+    <ClCompile Include="accessibility\graph\GraphNavigator.cpp" />
+    <ClCompile Include="accessibility\graph\GraphScreens.cpp" />
+    <ClCompile Include="accessibility\graph\KeyGraph.cpp" />
     <ClCompile Include="audio\AudioChannel.cpp" />
     <ClCompile Include="audio\AudioContext.cpp" />
     <ClCompile Include="audio\AudioMixer.cpp" />

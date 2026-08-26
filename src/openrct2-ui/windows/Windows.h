@@ -265,6 +265,11 @@ namespace OpenRCT2::Ui::Windows
     WindowBase* RideListOpen();
     void WindowRideListRefreshList(WindowBase* w);
 
+    // Graph accessibility screen registrations (one per migrated window; called once at startup
+    // by EnsureGraphScreensRegistered).
+    void RegisterRideListGraphScreen();
+    void RegisterOptionsGraphScreen();
+
     // SavePrompt
     WindowBase* SavePromptOpen();
 
