@@ -10,6 +10,8 @@
 #include <openrct2-ui/ProvisionalElements.h>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/input/ShortcutIds.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -254,7 +256,6 @@ namespace OpenRCT2::Ui::Windows
 
             _footpathPlaceCtrlState = false;
             _footpathPlaceShiftState = false;
-            _accessIndex = 0;
             Accessibility::ScreenReaderSpeak("Footpath construction");
         }
 
@@ -631,74 +632,46 @@ namespace OpenRCT2::Ui::Windows
         // set the same gFootpathSelection the map-cursor building (Space) uses, so the choices apply
         // everywhere. The directional/elevated bridge construction is a separate (later) step.
     public:
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            WidgetIndex w = WIDX_FOOTPATH_TYPE;
-            switch (_accessIndex)
-            {
-                case kAxFootpathType:
-                    w = WIDX_FOOTPATH_TYPE;
-                    break;
-                case kAxQueueType:
-                    w = WIDX_QUEUELINE_TYPE;
-                    break;
-                case kAxRailings:
-                    w = WIDX_RAILINGS_TYPE;
-                    break;
-                case kAxBuildMode:
-                    if (_footpathConstructionMode == PathConstructionMode::dragArea)
-                        w = WIDX_CONSTRUCT_DRAG_AREA;
-                    else if (
-                        _footpathConstructionMode == PathConstructionMode::bridgeOrTunnel
-                        || _footpathConstructionMode == PathConstructionMode::bridgeOrTunnelPick)
-                        w = WIDX_CONSTRUCT_BRIDGE_OR_TUNNEL;
-                    else
-                        w = WIDX_CONSTRUCT_ON_LAND;
-                    break;
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
+        // ---- graph accessibility recipe ----
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // A vertical list of the footpath options: footpath (surface) type, queue type, railings,
+        // build mode. Left/Right cycle the focused option in place; Enter makes footpaths/queues the
+        // active selection or re-activates the build mode. These set the same gFootpathSelection the
+        // map-cursor building (Space) uses.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            switch (action)
+            using namespace Accessibility::Graph;
+            for (int32_t i = 0; i < kAxItemCount; i++)
             {
-                case AccessibilityAction::moveUp:
-                    _accessIndex = (_accessIndex - 1 + kAxItemCount) % kAxItemCount;
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::moveDown:
-                    _accessIndex = (_accessIndex + 1) % kAxItemCount;
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    axAdjust(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    axAdjust(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    if (_accessIndex == kAxBuildMode)
-                        axCycleMode(0); // re-activate the current mode's tool
-                    else if (_accessIndex == kAxFootpathType)
-                        axSelectMode(false); // build footpaths (like clicking the footpath button)
-                    else if (_accessIndex == kAxQueueType)
-                        axSelectMode(true); // build queues (like clicking the queue button)
-                    else
-                        axAnnounce();
-                    return true;
-                case AccessibilityAction::announce:
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return true; // own the navigation keys while open
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, i]() { return axLabel(i); });
+                vt.focusRect = [this, i]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const WidgetIndex w = axWidget(i);
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                            wd.height() + 1 };
+                };
+                switch (i)
+                {
+                    case kAxFootpathType:
+                        vt.onAdjust = [this](int32_t sign, bool) { axCycleSurface(false, sign); };
+                        vt.onActivate = [this]() { axSelectMode(false); }; // build footpaths
+                        break;
+                    case kAxQueueType:
+                        vt.onAdjust = [this](int32_t sign, bool) { axCycleSurface(true, sign); };
+                        vt.onActivate = [this]() { axSelectMode(true); }; // build queues
+                        break;
+                    case kAxRailings:
+                        vt.onAdjust = [this](int32_t sign, bool) { axCycleRailings(sign); };
+                        break;
+                    case kAxBuildMode:
+                        vt.onAdjust = [this](int32_t sign, bool) { axCycleMode(sign); };
+                        vt.onActivate = [this]() { axCycleMode(0); }; // re-activate the current mode's tool
+                        break;
+                }
+                b.AddItem(ControlId::Structural("fp:" + std::to_string(i)), std::move(vt));
             }
         }
 
@@ -711,7 +684,27 @@ namespace OpenRCT2::Ui::Windows
             kAxBuildMode,
             kAxItemCount,
         };
-        int32_t _accessIndex = 0;
+
+        WidgetIndex axWidget(int32_t index) const
+        {
+            switch (index)
+            {
+                case kAxFootpathType:
+                    return WIDX_FOOTPATH_TYPE;
+                case kAxQueueType:
+                    return WIDX_QUEUELINE_TYPE;
+                case kAxRailings:
+                    return WIDX_RAILINGS_TYPE;
+                case kAxBuildMode:
+                    if (_footpathConstructionMode == PathConstructionMode::dragArea)
+                        return WIDX_CONSTRUCT_DRAG_AREA;
+                    if (_footpathConstructionMode == PathConstructionMode::bridgeOrTunnel
+                        || _footpathConstructionMode == PathConstructionMode::bridgeOrTunnelPick)
+                        return WIDX_CONSTRUCT_BRIDGE_OR_TUNNEL;
+                    return WIDX_CONSTRUCT_ON_LAND;
+            }
+            return WIDX_FOOTPATH_TYPE;
+        }
 
         static std::string axPathName(ObjectEntryIndex surface)
         {
@@ -755,11 +748,6 @@ namespace OpenRCT2::Ui::Windows
                     return "Build mode, " + axModeName();
             }
             return {};
-        }
-
-        void axAnnounce()
-        {
-            Accessibility::ScreenReaderSpeakItem(axLabel(_accessIndex), _accessIndex, kAxItemCount);
         }
 
         std::vector<ObjectEntryIndex> axSurfaceOptions(bool queue)
@@ -879,28 +867,6 @@ namespace OpenRCT2::Ui::Windows
                 cur = (cur + dir + 3) % 3;
             onMouseUp(modeWidgets[cur]);
             Accessibility::ScreenReaderSpeakItem(axModeName(), cur, 3);
-        }
-
-        void axAdjust(int32_t dir)
-        {
-            switch (_accessIndex)
-            {
-                case kAxFootpathType:
-                    axCycleSurface(false, dir);
-                    break;
-                case kAxQueueType:
-                    axCycleSurface(true, dir);
-                    break;
-                case kAxRailings:
-                    axCycleRailings(dir);
-                    break;
-                case kAxBuildMode:
-                    axCycleMode(dir);
-                    break;
-                default:
-                    axAnnounce();
-                    break;
-            }
         }
 
     private:
@@ -2159,6 +2125,18 @@ namespace OpenRCT2::Ui::Windows
 
         auto* windowMgr = GetWindowManager();
         return windowMgr->FocusOrCreate<FootpathWindow>(WindowClass::footpath, kWindowSize, {});
+    }
+
+    // Register the footpath window with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterFootpathGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::footpath;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<FootpathWindow&>(w).BuildAccessGraph(b); };
+        RegisterGraphScreen(std::move(screen));
     }
 
     void WindowFootpathResetSelectedPath()
