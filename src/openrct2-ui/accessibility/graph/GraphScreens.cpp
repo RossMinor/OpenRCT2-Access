@@ -11,6 +11,7 @@
 
 #include "../MenuNavigation.h"
 
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/interface/Widget.h>
 #include <openrct2/interface/Window.h>
@@ -82,12 +83,27 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterCheatsGraphScreen();
         Windows::RegisterParkGraphScreen();
         Windows::RegisterFinancesGraphScreen();
+        Windows::RegisterPlayerGraphScreen();
 
         // Modal confirmation prompts share one generic button-driven recipe. demolishRidePrompt is
         // used by both the demolish and refurbish prompts (different C++ classes, same window class).
         RegisterButtonPromptScreen(WindowClass::demolishRidePrompt);
         RegisterButtonPromptScreen(WindowClass::firePrompt);
         RegisterButtonPromptScreen(WindowClass::savePrompt);
+
+        // The peep window class is shared by the staff and guest windows (two different C++ classes).
+        // Dispatch to the right recipe through the Ui::Window graph virtuals rather than a static cast.
+        {
+            GraphScreen peep;
+            peep.windowClass = WindowClass::peep;
+            peep.build = [](GraphBuilder& b, WindowBase& w) { static_cast<Ui::Window&>(w).accessGraphBuild(b); };
+            peep.onTabKey = [](WindowBase& w, int32_t dir) {
+                static_cast<Ui::Window&>(w).accessGraphChangePage(dir);
+                return true;
+            };
+            peep.onEscape = [](WindowBase& w) { return static_cast<Ui::Window&>(w).accessGraphEscape(); };
+            RegisterGraphScreen(std::move(peep));
+        }
     }
 
     bool GraphOwnsWindowClass(WindowClass wc)

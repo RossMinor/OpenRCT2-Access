@@ -10,8 +10,9 @@
 #include "../interface/ViewportQuery.h"
 
 #include <array>
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -406,8 +407,6 @@ namespace OpenRCT2::Ui::Windows
             WidgetIndex widget = 0;
         };
 
-        int32_t _accessIndex = 0;
-
         static const char* gxPageName(int32_t p)
         {
             static const char* kNames[] = { "Overview", "Statistics", "Rides", "Finances",
@@ -583,38 +582,41 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        void gxAnnounceTab()
-        {
-            int32_t total = 0, pos = 0;
-            for (int32_t p = 0; p < WINDOW_GUEST_PAGE_COUNT; p++)
-            {
-                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty || widgetIsDisabled(*this, WIDX_TAB_1 + p))
-                    continue;
-                if (p == page)
-                    pos = total;
-                total++;
-            }
-            std::string name = gxGuestName();
-            std::string prefix = name.empty() ? "" : (name + ", ");
-            Accessibility::ScreenReaderSpeakItem(prefix + gxPageName(page) + " tab", pos, total);
-        }
+        // ---- graph accessibility recipe ----
 
-        void gxAnnounceFocus()
+        // Declare the current page's rows fresh from live state. buildGxItems() already composes each
+        // row's full spoken line, so each row is a single announcement node; only the Overview page's
+        // Locate / Rename rows are actionable.
+        void accessGraphBuild(Accessibility::Graph::GraphBuilder& b) override
         {
+            using namespace Accessibility::Graph;
             onPrepareDraw();
-            if (_accessIndex <= 0)
-            {
-                gxAnnounceTab();
-                return;
-            }
+
+            b.PushContext(Accessibility::JoinSpeech({ gxGuestName(), gxPageName(page) }));
             const auto items = buildGxItems();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                return;
-            Accessibility::ScreenReaderSpeakItem(items[ci].text, ci, static_cast<int32_t>(items.size()));
+            for (int32_t i = 0; i < static_cast<int32_t>(items.size()); i++)
+            {
+                const auto it = items[i];
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(it.text));
+                vt.focusRect = [this, it]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const WidgetIndex w = (it.kind == GxKind::button) ? it.widget : WIDX_PAGE_BACKGROUND;
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                            wd.width() + 1, wd.height() + 1 };
+                };
+                if (it.kind == GxKind::button)
+                    vt.onActivate = [this, w = it.widget]() { onMouseUp(w); };
+                b.AddItem(ControlId::Structural("guest:" + std::to_string(page) + ":" + std::to_string(i)), std::move(vt));
+            }
+            b.PopContext();
         }
 
-        void gxChangeTab(int32_t delta)
+        // Tab/Shift+Tab: cycle the visible guest pages via the window's own page switch (skipping tabs
+        // hidden or disabled for this guest); the graph announces the new page's landing.
+        void accessGraphChangePage(int32_t delta) override
         {
             int32_t newPage = page;
             for (int32_t i = 0; i < WINDOW_GUEST_PAGE_COUNT; i++)
@@ -624,91 +626,6 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
             setPage(newPage);
-            _accessIndex = 0;
-            gxAnnounceTab();
-        }
-
-        void gxMove(int32_t delta)
-        {
-            const int32_t total = static_cast<int32_t>(buildGxItems().size()) + 1;
-            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
-            gxAnnounceFocus();
-        }
-
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
-        {
-            return true; // data window: swallow letters so they don't leak to the toolbar
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            WidgetIndex w;
-            if (_accessIndex <= 0)
-            {
-                w = WIDX_TAB_1 + page;
-            }
-            else
-            {
-                const auto items = buildGxItems();
-                const int32_t ci = _accessIndex - 1;
-                if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                    return std::nullopt;
-                w = (items[ci].kind == GxKind::button) ? items[ci].widget : WIDX_PAGE_BACKGROUND;
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                    gxMove(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    gxMove(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    if (_accessIndex <= 0)
-                        gxChangeTab(-1);
-                    else
-                        gxAnnounceFocus();
-                    return true;
-                case AccessibilityAction::moveRight:
-                    if (_accessIndex <= 0)
-                        gxChangeTab(1);
-                    else
-                        gxAnnounceFocus();
-                    return true;
-                case AccessibilityAction::activate:
-                {
-                    if (_accessIndex <= 0)
-                        return true;
-                    const auto items = buildGxItems();
-                    const int32_t ci = _accessIndex - 1;
-                    if (ci >= 0 && ci < static_cast<int32_t>(items.size()) && items[ci].kind == GxKind::button)
-                        onMouseUp(items[ci].widget);
-                    return true;
-                }
-                case AccessibilityAction::nextTab:
-                    gxChangeTab(1);
-                    return true;
-                case AccessibilityAction::prevTab:
-                    gxChangeTab(-1);
-                    return true;
-                case AccessibilityAction::announce:
-                    gxAnnounceFocus();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return false;
-            }
         }
 #pragma endregion
 

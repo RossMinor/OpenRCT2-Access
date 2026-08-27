@@ -10,8 +10,9 @@
 #include "../interface/Viewport.h"
 
 #include <algorithm>
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -94,9 +95,7 @@ namespace OpenRCT2::Ui::Windows
         int16_t _previousRotation = -1;
         bool _drawViewport = true;
 
-        // Accessible keyboard focus: item 0 is the tab selector, items 1..N are the page's controls
-        // and read-outs. Combo-box navigation state while the group dropdown is open.
-        int32_t _accessIndex = 0;
+        // Combo-box navigation state while the group dropdown is open (graph recipe).
         bool _accessDropdownOpen = false;
         WidgetIndex _accessDropdownChevron = 0;
 
@@ -223,71 +222,100 @@ namespace OpenRCT2::Ui::Windows
         // (Overview / Statistics), items 1..N are the page's controls and read-outs. The group
         // selector opens as a real combo box.
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // ---- graph accessibility recipe ----
+
+        // Declare the current page's rows (or, while the group combo box's dropdown is open, that
+        // list's items) fresh from live state. itemText() already composes each row's full spoken
+        // line, so each row is a single announcement node.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
+            using namespace Accessibility::Graph;
+
+            auto* windowMgr = GetWindowManager();
+            if (_accessDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessDropdownOpen = false;
+
             if (_accessDropdownOpen)
             {
-                switch (action)
+                b.PushContext("Group", "menu");
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveLeft:
-                        accessMoveDropdown(-1);
-                        return true;
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::moveRight:
-                        accessMoveDropdown(1);
-                        return true;
-                    case AccessibilityAction::activate:
-                        accessCommitDropdown();
-                        return true;
-                    case AccessibilityAction::cancel:
-                        accessCloseDropdown();
-                        announceAccessFocus();
-                        return true;
-                    default:
-                        return true;
+                    if (gDropdown.items[i].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
+                    if (gDropdown.items[i].isChecked())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                    vt.onActivate = [this, i]() { accessCommitDropdown(i); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
                 }
+                b.PopContext();
+                return;
             }
-            switch (action)
+
+            b.PushContext(Accessibility::JoinSpeech({ playerName(), accessPageName(page) }));
+            const int32_t count = accessItemCount();
+            for (int32_t i = 0; i < count; i++)
             {
-                case AccessibilityAction::moveUp:    accessMove(-1); return true;
-                case AccessibilityAction::moveDown:  accessMove(1); return true;
-                case AccessibilityAction::moveLeft:  accessAdjust(-1); return true;
-                case AccessibilityAction::moveRight: accessAdjust(1); return true;
-                case AccessibilityAction::activate:  accessActivate(); return true;
-                case AccessibilityAction::nextTab:   accessChangeTab(1); return true;
-                case AccessibilityAction::prevTab:   accessChangeTab(-1); return true;
-                case AccessibilityAction::announce:  announceAccessFocus(); return true;
-                case AccessibilityAction::cancel:    close(); return true;
-                default:                             return true;
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, i]() { return itemText(i); });
+                vt.focusRect = [this, i]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const WidgetIndex wi = accessItemWidget(i);
+                    if (wi == WIDX_BACKGROUND || wi >= widgets.size() || widgets[wi].type == WidgetType::empty)
+                        return std::nullopt; // read-only text row, no widget to box
+                    const auto& wd = widgets[wi];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                            wd.width() + 1, wd.height() + 1 };
+                };
+                if (page == WINDOW_PLAYER_PAGE_OVERVIEW)
+                {
+                    switch (i)
+                    {
+                        case 0: // group combo box: Enter opens the list
+                            vt.onActivate = [this]() { accessOpenDropdown(WIDX_GROUP_DROPDOWN); };
+                            break;
+                        case 1: // locate on map
+                            vt.onActivate = [this]() {
+                                Accessibility::ScreenReaderSpeak("Locating player on the map.");
+                                onMouseUp(WIDX_LOCATE);
+                            };
+                            break;
+                        case 2: // kick
+                            vt.onActivate = [this]() {
+                                if (isWidgetDisabled(WIDX_KICK))
+                                {
+                                    Accessibility::ScreenReaderSpeak("Kick is not available.");
+                                    return;
+                                }
+                                Accessibility::ScreenReaderSpeak("Kicking " + playerName());
+                                onMouseUp(WIDX_KICK);
+                            };
+                            break;
+                        default:
+                            break; // ping / last action are read-only
+                    }
+                }
+                b.AddItem(
+                    ControlId::Structural("player:" + std::to_string(page) + ":" + std::to_string(i)), std::move(vt));
             }
+            b.PopContext();
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Tab/Shift+Tab: cycle the two pages (Overview / Statistics); the graph announces the landing.
+        void AccessChangePage(int32_t delta)
         {
-            if (_accessDropdownOpen)
-                return std::nullopt;
-            WidgetIndex wi;
-            if (_accessIndex <= 0)
-            {
-                wi = WIDX_TAB_1 + page;
-            }
-            else
-            {
-                wi = accessItemWidget(_accessIndex - 1);
-                if (wi == WIDX_BACKGROUND)
-                    return std::nullopt; // read-only text row, no widget to box
-            }
-            if (wi >= widgets.size() || widgets[wi].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[wi];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+            setPage((page + delta + 2) % 2);
         }
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        // Escape: close an open group dropdown first, returning focus to the combo box; otherwise let
+        // the navigator close the window.
+        bool AccessEscape()
         {
-            return true; // swallow letters so they don't leak to the game behind the window
+            if (!_accessDropdownOpen)
+                return false;
+            accessCloseDropdown();
+            accessSuggestFocus(0); // back to the group combo box
+            return true;
         }
 
     private:
@@ -311,38 +339,6 @@ namespace OpenRCT2::Ui::Windows
         {
             // Overview: group, locate, kick, ping, last action. Statistics: commands ran, money spent.
             return (page == WINDOW_PLAYER_PAGE_OVERVIEW) ? 5 : 2;
-        }
-
-        void announceAccessFocus()
-        {
-            if (_accessDropdownOpen)
-                return;
-            if (_accessIndex <= 0)
-            {
-                Accessibility::ScreenReaderSpeakItem(
-                    Accessibility::JoinSpeech({ playerName(), std::string(accessPageName(page)) + " tab" }), page, 2);
-                return;
-            }
-            const int32_t i = _accessIndex - 1;
-            if (i < 0 || i >= accessItemCount())
-                return;
-            Accessibility::ScreenReaderSpeakItem(itemText(i), i, accessItemCount());
-        }
-
-        void accessChangeTab(int32_t delta)
-        {
-            const int32_t p = (page + delta + 2) % 2;
-            setPage(p);
-            _accessIndex = 0;
-            announceAccessFocus();
-        }
-
-        void accessMove(int32_t delta)
-        {
-            const int32_t total = accessItemCount() + 1; // +1 for the tab selector
-            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
-            invalidate();
-            announceAccessFocus();
         }
 
         std::string groupName() const
@@ -409,47 +405,13 @@ namespace OpenRCT2::Ui::Windows
             return WIDX_BACKGROUND;
         }
 
-        void accessActivate()
+        // Ask the graph to land on a page row at its next render (used to return focus to the group
+        // combo box once its dropdown closes).
+        void accessSuggestFocus(int32_t itemIndex)
         {
-            if (_accessIndex <= 0 || page != WINDOW_PLAYER_PAGE_OVERVIEW)
-                return; // tab switches via Left/Right; statistics are read-only
-            switch (_accessIndex - 1)
-            {
-                case 0:
-                    accessOpenDropdown(WIDX_GROUP_DROPDOWN);
-                    break;
-                case 1:
-                    onMouseUp(WIDX_LOCATE);
-                    Accessibility::ScreenReaderSpeak("Locating player on the map.");
-                    break;
-                case 2:
-                    if (isWidgetDisabled(WIDX_KICK))
-                        Accessibility::ScreenReaderSpeak("Kick is not available.");
-                    else
-                    {
-                        Accessibility::ScreenReaderSpeak("Kicking " + playerName());
-                        onMouseUp(WIDX_KICK);
-                    }
-                    break;
-                default:
-                    announceAccessFocus(); // read-only rows just re-read
-                    break;
-            }
-        }
-
-        void accessAdjust(int32_t delta)
-        {
-            if (_accessIndex <= 0)
-            {
-                accessChangeTab(delta);
-                return;
-            }
-            if (page == WINDOW_PLAYER_PAGE_OVERVIEW && (_accessIndex - 1) == 0)
-            {
-                accessOpenDropdown(WIDX_GROUP_DROPDOWN);
-                return;
-            }
-            announceAccessFocus();
+            Accessibility::Graph::GraphStateForClass(WindowClass::player).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(
+                    "player:" + std::to_string(page) + ":" + std::to_string(itemIndex));
         }
 
         // ---- Group combo-box navigation, mirroring the shared dropdown pattern -------------------
@@ -460,22 +422,6 @@ namespace OpenRCT2::Ui::Windows
             _accessDropdownOpen = false;
         }
 
-        void accessMoveDropdown(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-            int32_t idx = std::max(0, gDropdown.highlightedIndex);
-            idx = (idx + delta + n) % n;
-            gDropdown.highlightedIndex = idx;
-            std::string text = gDropdown.items[idx].text;
-            if (gDropdown.items[idx].isChecked())
-                text += ", selected";
-            Accessibility::ScreenReaderSpeakItem(text, idx, n);
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
-        }
-
         void accessOpenDropdown(WidgetIndex chevronWidx)
         {
             onMouseDown(chevronWidx); // populates and shows gDropdown
@@ -484,18 +430,17 @@ namespace OpenRCT2::Ui::Windows
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevronWidx;
-            accessMoveDropdown(0); // read the current selection
+            // The graph rebuild now declares the dropdown's items; its differ announces the landing.
         }
 
-        void accessCommitDropdown()
+        void accessCommitDropdown(int32_t idx)
         {
-            const int32_t idx = gDropdown.highlightedIndex;
             const WidgetIndex chevron = _accessDropdownChevron;
-            const bool valid = idx >= 0 && idx < gDropdown.numItems;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator();
             accessCloseDropdown();
             if (valid)
                 onDropdown(chevron, idx);
-            announceAccessFocus();
+            accessSuggestFocus(0); // group combo box is item 0 on the overview page
         }
 
 #pragma endregion
@@ -922,5 +867,22 @@ namespace OpenRCT2::Ui::Windows
         window->init(id);
 
         return window;
+    }
+
+    // Register the player window with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterPlayerGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::player;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<PlayerWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<PlayerWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        screen.onEscape = [](WindowBase& w) { return static_cast<PlayerWindow&>(w).AccessEscape(); };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

@@ -7,8 +7,9 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -233,9 +234,9 @@ namespace OpenRCT2::Ui::Windows
             WidgetIndex widget = 0;
         };
 
-        int32_t _accessIndex = 0;
         bool _accessDropdownOpen = false;
         WidgetIndex _accessDropdownChevron = 0;
+        int32_t _accessDropdownOwner = -1; // page-row index that owns the open dropdown
 
         static const char* sxPageName(int32_t p)
         {
@@ -337,40 +338,9 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        void sxAnnounceTab()
-        {
-            int32_t total = 0, pos = 0;
-            for (int32_t p = 0; p < WINDOW_STAFF_PAGE_COUNT; p++)
-            {
-                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty || widgetIsDisabled(*this, WIDX_TAB_1 + p))
-                    continue;
-                if (p == page)
-                    pos = total;
-                total++;
-            }
-            std::string name = sxStaffName();
-            std::string prefix = name.empty() ? "" : (name + ", ");
-            Accessibility::ScreenReaderSpeakItem(prefix + sxPageName(page) + " tab", pos, total);
-        }
-
-        void sxAnnounceFocus()
-        {
-            if (_accessDropdownOpen)
-                return;
-            onPrepareDraw();
-            if (_accessIndex <= 0)
-            {
-                sxAnnounceTab();
-                return;
-            }
-            const auto items = buildSxItems();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                return;
-            Accessibility::ScreenReaderSpeakItem(items[ci].text, ci, static_cast<int32_t>(items.size()));
-        }
-
-        void sxChangeTab(int32_t delta)
+        // Tab/Shift+Tab: cycle the visible staff pages via the window's own page switch (skipping tabs
+        // hidden or disabled for this staff type); the graph announces the new page's landing.
+        void accessGraphChangePage(int32_t delta) override
         {
             int32_t newPage = page;
             for (int32_t i = 0; i < WINDOW_STAFF_PAGE_COUNT; i++)
@@ -380,15 +350,15 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
             setPage(newPage);
-            _accessIndex = 0;
-            sxAnnounceTab();
         }
 
-        void sxMove(int32_t delta)
+        // Ask the graph to land on a page row at its next render (used to return focus to the combo
+        // box that owned a dropdown once the dropdown closes).
+        void sxSuggestFocus(int32_t itemIndex)
         {
-            const int32_t total = static_cast<int32_t>(buildSxItems().size()) + 1;
-            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
-            sxAnnounceFocus();
+            Accessibility::Graph::GraphStateForClass(WindowClass::peep).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(
+                    "staff:" + std::to_string(page) + ":" + std::to_string(itemIndex));
         }
 
         void sxCloseDropdown()
@@ -398,47 +368,7 @@ namespace OpenRCT2::Ui::Windows
             _accessDropdownOpen = false;
         }
 
-        void sxMoveDropdown(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-            int32_t idx = std::max(0, gDropdown.highlightedIndex);
-            for (int32_t steps = 0; steps <= n; steps++)
-            {
-                idx = (idx + delta + n) % n;
-                if (!gDropdown.items[idx].isSeparator())
-                    break;
-                if (delta == 0)
-                    delta = 1;
-            }
-            if (gDropdown.items[idx].isSeparator())
-                return;
-            gDropdown.highlightedIndex = idx;
-
-            const auto& item = gDropdown.items[idx];
-            std::string text = item.text;
-            if (text.empty() && item.tooltip != kStringIdNone && item.tooltip != kStringIdEmpty)
-                text = OpenRCT2::FormatStringID(item.tooltip);
-            if (item.isChecked() || (item.type == Dropdown::ItemType::colour && idx == gDropdown.defaultIndex))
-                text += ", selected";
-            if (item.isDisabled())
-                text += ", unavailable";
-            int32_t total = 0, pos = 0;
-            for (int32_t j = 0; j < gDropdown.numItems; j++)
-            {
-                if (gDropdown.items[j].isSeparator())
-                    continue;
-                if (j == idx)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(text, pos, total);
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
-        }
-
-        void sxOpenDropdown(WidgetIndex chevron)
+        void sxOpenDropdown(int32_t ownerItem, WidgetIndex chevron)
         {
             onMouseDown(chevron);
             auto* windowMgr = GetWindowManager();
@@ -446,137 +376,117 @@ namespace OpenRCT2::Ui::Windows
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevron;
-            sxMoveDropdown(0);
+            _accessDropdownOwner = ownerItem;
+            // The graph rebuild now declares the dropdown's items; its differ announces the landing.
         }
 
-        void sxCommitDropdown()
+        void sxCommitDropdown(int32_t idx)
         {
-            const int32_t idx = gDropdown.highlightedIndex;
             const WidgetIndex chevron = _accessDropdownChevron;
+            const int32_t owner = _accessDropdownOwner;
             const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
                 && !gDropdown.items[idx].isDisabled();
             sxCloseDropdown();
             if (valid)
                 onDropdown(chevron, idx);
-            sxAnnounceFocus();
+            sxSuggestFocus(owner);
         }
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
-        {
-            return true;
-        }
+        // ---- graph accessibility recipe ----
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Declare the current page's rows (or, while a combo box's dropdown is open, that list's
+        // items) fresh from live state. buildSxItems() already composes each row's full spoken line,
+        // so each row is a single announcement node.
+        void accessGraphBuild(Accessibility::Graph::GraphBuilder& b) override
         {
-            if (_accessDropdownOpen)
-                return std::nullopt;
-            WidgetIndex w;
-            if (_accessIndex <= 0)
-            {
-                w = WIDX_TAB_1 + page;
-            }
-            else
-            {
-                const auto items = buildSxItems();
-                const int32_t ci = _accessIndex - 1;
-                if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                    return std::nullopt;
-                w = (items[ci].kind == SxKind::data) ? WIDX_RESIZE : items[ci].widget;
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
+            using namespace Accessibility::Graph;
 
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
+            auto* windowMgr = GetWindowManager();
+            if (_accessDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessDropdownOpen = false;
+
+            onPrepareDraw();
+
             if (_accessDropdownOpen)
             {
-                switch (action)
+                // Label the sub-list with the owning combo box (e.g. "Costume").
+                std::string ctx = "Menu";
+                const auto owners = buildSxItems();
+                if (_accessDropdownOwner >= 0 && _accessDropdownOwner < static_cast<int32_t>(owners.size()))
                 {
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveLeft:
-                        sxMoveDropdown(-1);
-                        return true;
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::moveRight:
-                        sxMoveDropdown(1);
-                        return true;
-                    case AccessibilityAction::activate:
-                        sxCommitDropdown();
-                        return true;
-                    case AccessibilityAction::cancel:
-                        sxCloseDropdown();
-                        sxAnnounceFocus();
-                        return true;
+                    ctx = owners[_accessDropdownOwner].text;
+                    if (const auto comma = ctx.find(", "); comma != std::string::npos)
+                        ctx = ctx.substr(0, comma);
+                }
+                b.PushContext(ctx, "menu");
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
+                {
+                    if (gDropdown.items[i].isSeparator())
+                        continue;
+                    const auto& item = gDropdown.items[i];
+                    std::string text = item.text;
+                    if (text.empty() && item.tooltip != kStringIdNone && item.tooltip != kStringIdEmpty)
+                        text = OpenRCT2::FormatStringID(item.tooltip);
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(text));
+                    if (item.isChecked() || (item.type == Dropdown::ItemType::colour && i == gDropdown.defaultIndex))
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                    if (item.isDisabled())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
+                    vt.onActivate = [this, i]() { sxCommitDropdown(i); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
+                }
+                b.PopContext();
+                return;
+            }
+
+            b.PushContext(Accessibility::JoinSpeech({ sxStaffName(), sxPageName(page) }));
+            const auto items = buildSxItems();
+            for (int32_t i = 0; i < static_cast<int32_t>(items.size()); i++)
+            {
+                const auto it = items[i];
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(it.text));
+                vt.focusRect = [this, it]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const WidgetIndex w = (it.kind == SxKind::data) ? WIDX_RESIZE : it.widget;
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                            wd.width() + 1, wd.height() + 1 };
+                };
+                switch (it.kind)
+                {
+                    case SxKind::checkbox:
+                        vt.onActivate = [this, w = it.widget]() { onMouseUp(w); };
+                        vt.stateText = [this, w = it.widget]() {
+                            return widgetIsPressed(*this, w) ? std::string("checked") : std::string("unchecked");
+                        };
+                        break;
+                    case SxKind::dropdown:
+                        vt.onActivate = [this, i, w = it.widget]() { sxOpenDropdown(i, w); };
+                        break;
+                    case SxKind::button:
+                        vt.onActivate = [this, w = it.widget]() { onMouseUp(w); };
+                        break;
                     default:
-                        return false;
+                        break; // data rows are read-only
                 }
+                b.AddItem(ControlId::Structural("staff:" + std::to_string(page) + ":" + std::to_string(i)), std::move(vt));
             }
+            b.PopContext();
+        }
 
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                    sxMove(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    sxMove(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    if (_accessIndex <= 0)
-                        sxChangeTab(-1);
-                    else
-                        sxAnnounceFocus();
-                    return true;
-                case AccessibilityAction::moveRight:
-                    if (_accessIndex <= 0)
-                        sxChangeTab(1);
-                    else
-                        sxAnnounceFocus();
-                    return true;
-                case AccessibilityAction::activate:
-                {
-                    if (_accessIndex <= 0)
-                        return true;
-                    const auto items = buildSxItems();
-                    const int32_t ci = _accessIndex - 1;
-                    if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                        return true;
-                    const auto& it = items[ci];
-                    switch (it.kind)
-                    {
-                        case SxKind::checkbox:
-                            onMouseUp(it.widget);
-                            Accessibility::ScreenReaderSpeak(widgetIsPressed(*this, it.widget) ? "checked" : "unchecked");
-                            break;
-                        case SxKind::dropdown:
-                            sxOpenDropdown(it.widget);
-                            break;
-                        case SxKind::button:
-                            onMouseUp(it.widget);
-                            break;
-                        default:
-                            break;
-                    }
-                    return true;
-                }
-                case AccessibilityAction::nextTab:
-                    sxChangeTab(1);
-                    return true;
-                case AccessibilityAction::prevTab:
-                    sxChangeTab(-1);
-                    return true;
-                case AccessibilityAction::announce:
-                    sxAnnounceFocus();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return false;
-            }
+        // Escape: close an open dropdown sub-list first (focus returning to its combo box); otherwise
+        // let the navigator close the window.
+        bool accessGraphEscape() override
+        {
+            if (!_accessDropdownOpen)
+                return false;
+            const int32_t owner = _accessDropdownOwner;
+            sxCloseDropdown();
+            sxSuggestFocus(owner);
+            return true;
         }
 #pragma endregion
 

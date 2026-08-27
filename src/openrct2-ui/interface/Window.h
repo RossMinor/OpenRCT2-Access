@@ -17,6 +17,11 @@ namespace OpenRCT2
     struct TextInputSession;
 }
 
+namespace OpenRCT2::Ui::Accessibility::Graph
+{
+    class GraphBuilder;
+}
+
 namespace OpenRCT2::Ui
 {
     constexpr ScreenSize kMaxWindowSize = { 5000, 5000 };
@@ -25,6 +30,22 @@ namespace OpenRCT2::Ui
     {
         void onDraw(Drawing::RenderTarget& rt) override;
         void onDrawWidget(WidgetIndex widgetIndex, Drawing::RenderTarget& rt) override;
+
+        // Graph accessibility recipe hooks (see accessibility/graph). A window opts into the graph
+        // navigator by overriding these. They exist as virtuals - rather than the static-cast-in-the
+        // -registration approach the single-type windows use - so that a screen whose WindowClass is
+        // shared by several C++ window types (the peep window is both the staff and guest windows)
+        // can dispatch to the right recipe by a plain virtual call. Default: not graph-owned.
+        virtual void accessGraphBuild(Accessibility::Graph::GraphBuilder&)
+        {
+        }
+        virtual void accessGraphChangePage(int32_t /*delta*/)
+        {
+        }
+        virtual bool accessGraphEscape()
+        {
+            return false;
+        }
 
         void scrollToViewport();
         void initScrollWidgets();
