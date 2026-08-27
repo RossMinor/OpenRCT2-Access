@@ -10,6 +10,8 @@
 #include "../UiStringIds.h"
 
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -343,8 +345,6 @@ namespace OpenRCT2::Ui::Windows
             demolish,
         };
 
-        int32_t _accessIndex = 0;
-
         static std::string axColourName(Drawing::Colour c)
         {
             std::string s = Drawing::colourToString(c);
@@ -386,19 +386,6 @@ namespace OpenRCT2::Ui::Windows
             return {};
         }
 
-        void axAnnounce()
-        {
-            auto items = buildAxItems();
-            const int32_t n = static_cast<int32_t>(items.size());
-            if (n == 0)
-            {
-                Accessibility::ScreenReaderSpeak("Sign");
-                return;
-            }
-            _accessIndex = std::clamp(_accessIndex, 0, n - 1);
-            Accessibility::ScreenReaderSpeakItem(axLabel(items[_accessIndex]), _accessIndex, n);
-        }
-
         void axApplyColours()
         {
             auto action = GameActions::SignSetStyleAction(GetBannerIndex(), _mainColour, _textColour, !_isSmall);
@@ -406,116 +393,68 @@ namespace OpenRCT2::Ui::Windows
             invalidate();
         }
 
-        void axAdjust(int32_t dir)
+        WidgetIndex axWidget(AxKind kind) const
         {
-            auto items = buildAxItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-            {
-                axAnnounce();
-                return;
-            }
-            switch (items[_accessIndex])
-            {
-                case AxKind::mainColour:
-                    _mainColour = static_cast<Drawing::Colour>(
-                        (EnumValue(_mainColour) + dir + Drawing::kColourNumNormal) % Drawing::kColourNumNormal);
-                    axApplyColours();
-                    Accessibility::ScreenReaderSpeak("Main colour, " + axColourName(_mainColour));
-                    break;
-                case AxKind::textColour:
-                    _textColour = static_cast<Drawing::Colour>(
-                        (EnumValue(_textColour) + dir + Drawing::kColourNumNormal) % Drawing::kColourNumNormal);
-                    axApplyColours();
-                    Accessibility::ScreenReaderSpeak("Text colour, " + axColourName(_textColour));
-                    break;
-                default:
-                    axAnnounce();
-                    break;
-            }
-        }
-
-        void axActivate()
-        {
-            auto items = buildAxItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                return;
-            switch (items[_accessIndex])
+            switch (kind)
             {
                 case AxKind::text:
-                    ShowTextInput(); // opens the (accessible) text-input window
-                    break;
+                    return WIDX_SIGN_TEXT;
+                case AxKind::mainColour:
+                    return WIDX_MAIN_COLOUR;
+                case AxKind::textColour:
+                    return WIDX_TEXT_COLOUR;
                 case AxKind::demolish:
-                    onMouseUp(WIDX_SIGN_DEMOLISH); // removes the sign and closes the window
-                    break;
-                default:
-                    axAnnounce(); // colours use Left/Right
                     break;
             }
+            return WIDX_SIGN_DEMOLISH;
         }
 
     public:
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            auto items = buildAxItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                return std::nullopt;
-            WidgetIndex w;
-            switch (items[_accessIndex])
-            {
-                case AxKind::text:
-                    w = WIDX_SIGN_TEXT;
-                    break;
-                case AxKind::mainColour:
-                    w = WIDX_MAIN_COLOUR;
-                    break;
-                case AxKind::textColour:
-                    w = WIDX_TEXT_COLOUR;
-                    break;
-                case AxKind::demolish:
-                default:
-                    w = WIDX_SIGN_DEMOLISH;
-                    break;
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
+        // ---- graph accessibility recipe (shared WindowClass::banner; see accessGraph* virtuals) ----
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // A single vertical list: sign text, the two colour pickers (Left/Right cycle in place), and
+        // demolish. Enter edits the text or demolishes.
+        void accessGraphBuild(Accessibility::Graph::GraphBuilder& b) override
         {
-            auto items = buildAxItems();
-            const int32_t n = static_cast<int32_t>(items.size());
-            switch (action)
+            using namespace Accessibility::Graph;
+            for (const AxKind kind : buildAxItems())
             {
-                case AccessibilityAction::moveUp:
-                    if (n > 0)
-                        _accessIndex = (_accessIndex - 1 + n) % n;
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::moveDown:
-                    if (n > 0)
-                        _accessIndex = (_accessIndex + 1) % n;
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    axAdjust(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    axAdjust(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    axActivate();
-                    return true;
-                case AccessibilityAction::announce:
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return true; // own all navigation keys while open
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, kind]() { return axLabel(kind); });
+                vt.focusRect = [this, kind]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const WidgetIndex w = axWidget(kind);
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                            wd.height() + 1 };
+                };
+                switch (kind)
+                {
+                    case AxKind::text:
+                        vt.onActivate = [this]() { ShowTextInput(); }; // opens the accessible text-input window
+                        break;
+                    case AxKind::mainColour:
+                        vt.onAdjust = [this](int32_t sign, bool) {
+                            _mainColour = static_cast<Drawing::Colour>(
+                                (EnumValue(_mainColour) + sign + Drawing::kColourNumNormal) % Drawing::kColourNumNormal);
+                            axApplyColours();
+                        };
+                        vt.stateText = [this]() { return axColourName(_mainColour); };
+                        break;
+                    case AxKind::textColour:
+                        vt.onAdjust = [this](int32_t sign, bool) {
+                            _textColour = static_cast<Drawing::Colour>(
+                                (EnumValue(_textColour) + sign + Drawing::kColourNumNormal) % Drawing::kColourNumNormal);
+                            axApplyColours();
+                        };
+                        vt.stateText = [this]() { return axColourName(_textColour); };
+                        break;
+                    case AxKind::demolish:
+                        vt.onActivate = [this]() { onMouseUp(WIDX_SIGN_DEMOLISH); }; // removes the sign, closes window
+                        break;
+                }
+                b.AddItem(ControlId::Structural("sign:" + std::to_string(EnumValue(kind))), std::move(vt));
             }
         }
     };

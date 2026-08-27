@@ -10,6 +10,8 @@
 #include "../UiStringIds.h"
 
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -325,8 +327,6 @@ namespace OpenRCT2::Ui::Windows
             demolish,
         };
 
-        int32_t _accessIndex = 0;
-
         static std::string axColourName(Drawing::Colour c)
         {
             std::string s = Drawing::colourToString(c);
@@ -379,157 +379,99 @@ namespace OpenRCT2::Ui::Windows
             return {};
         }
 
-        void axAnnounce()
+        WidgetIndex axWidget(AxKind kind) const
         {
-            auto items = buildAxItems();
-            const int32_t n = static_cast<int32_t>(items.size());
-            if (n == 0)
-            {
-                Accessibility::ScreenReaderSpeak("Banner");
-                return;
-            }
-            _accessIndex = std::clamp(_accessIndex, 0, n - 1);
-            Accessibility::ScreenReaderSpeakItem(axLabel(items[_accessIndex]), _accessIndex, n);
-        }
-
-        void axAdjust(int32_t dir)
-        {
-            auto items = buildAxItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-            {
-                axAnnounce();
-                return;
-            }
-            auto& gameState = getGameState();
-            switch (items[_accessIndex])
-            {
-                case AxKind::mainColour:
-                {
-                    auto* banner = GetBanner(GetBannerIndex());
-                    if (banner == nullptr)
-                        return;
-                    const int32_t v = (EnumValue(banner->colour) + dir + Drawing::kColourNumNormal)
-                        % Drawing::kColourNumNormal;
-                    auto action = GameActions::BannerSetStyleAction(
-                        GameActions::BannerSetStyleType::primaryColour, GetBannerIndex(), v);
-                    GameActions::Execute(&action, gameState);
-                    Accessibility::ScreenReaderSpeak("Sign colour, " + axColourName(static_cast<Drawing::Colour>(v)));
-                    break;
-                }
-                case AxKind::textColour:
-                {
-                    auto* banner = GetBanner(GetBannerIndex());
-                    if (banner == nullptr)
-                        return;
-                    // Selectable text colours are 1..13 (index 0, black, is not offered by the game).
-                    int32_t v = EnumValue(banner->textColour) + dir;
-                    if (v < 1)
-                        v = 13;
-                    else if (v > 13)
-                        v = 1;
-                    auto action = GameActions::BannerSetStyleAction(
-                        GameActions::BannerSetStyleType::textColour, GetBannerIndex(), v);
-                    GameActions::Execute(&action, gameState);
-                    Accessibility::ScreenReaderSpeak(
-                        "Text colour, " + OpenRCT2::FormatStringID(kBannerColouredTextFormats[v]));
-                    break;
-                }
-                default:
-                    axAnnounce();
-                    break;
-            }
-        }
-
-        void axActivate()
-        {
-            auto items = buildAxItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                return;
-            switch (items[_accessIndex])
+            switch (kind)
             {
                 case AxKind::text:
-                    onMouseUp(WIDX_BANNER_TEXT); // opens the (accessible) text-input window
-                    break;
+                    return WIDX_BANNER_TEXT;
                 case AxKind::noEntry:
-                    onMouseUp(WIDX_BANNER_NO_ENTRY);
-                    _accessIndex = 0; // the item list changes when no-entry hides text controls
-                    axAnnounce();
-                    break;
+                    return WIDX_BANNER_NO_ENTRY;
+                case AxKind::mainColour:
+                    return WIDX_MAIN_COLOUR;
+                case AxKind::textColour:
+                    return WIDX_TEXT_COLOUR_DROPDOWN;
                 case AxKind::demolish:
-                    onMouseUp(WIDX_BANNER_DEMOLISH); // removes the banner and closes the window
-                    break;
-                default:
-                    axAnnounce(); // colours use Left/Right
                     break;
             }
+            return WIDX_BANNER_DEMOLISH;
         }
 
     public:
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            auto items = buildAxItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                return std::nullopt;
-            WidgetIndex w;
-            switch (items[_accessIndex])
-            {
-                case AxKind::text:
-                    w = WIDX_BANNER_TEXT;
-                    break;
-                case AxKind::noEntry:
-                    w = WIDX_BANNER_NO_ENTRY;
-                    break;
-                case AxKind::mainColour:
-                    w = WIDX_MAIN_COLOUR;
-                    break;
-                case AxKind::textColour:
-                    w = WIDX_TEXT_COLOUR_DROPDOWN;
-                    break;
-                case AxKind::demolish:
-                default:
-                    w = WIDX_BANNER_DEMOLISH;
-                    break;
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
+        // ---- graph accessibility recipe (shared WindowClass::banner; see accessGraph* virtuals) ----
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // A single vertical list: banner text, the no-entry toggle, the sign/text colours (Left/Right
+        // cycle in place), and demolish. Enter edits text, toggles no-entry, or demolishes.
+        void accessGraphBuild(Accessibility::Graph::GraphBuilder& b) override
         {
-            auto items = buildAxItems();
-            const int32_t n = static_cast<int32_t>(items.size());
-            switch (action)
+            using namespace Accessibility::Graph;
+            for (const AxKind kind : buildAxItems())
             {
-                case AccessibilityAction::moveUp:
-                    if (n > 0)
-                        _accessIndex = (_accessIndex - 1 + n) % n;
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::moveDown:
-                    if (n > 0)
-                        _accessIndex = (_accessIndex + 1) % n;
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    axAdjust(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    axAdjust(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    axActivate();
-                    return true;
-                case AccessibilityAction::announce:
-                    axAnnounce();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return true; // own all navigation keys while open
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, kind]() { return axLabel(kind); });
+                vt.focusRect = [this, kind]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const WidgetIndex w = axWidget(kind);
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                            wd.height() + 1 };
+                };
+                switch (kind)
+                {
+                    case AxKind::text:
+                        vt.onActivate = [this]() { onMouseUp(WIDX_BANNER_TEXT); }; // accessible text-input window
+                        break;
+                    case AxKind::noEntry:
+                        vt.onActivate = [this]() { onMouseUp(WIDX_BANNER_NO_ENTRY); };
+                        vt.stateText = [this]() {
+                            auto* banner = GetBanner(GetBannerIndex());
+                            return std::string(banner != nullptr && banner->flags.has(BannerFlag::noEntry) ? "on" : "off");
+                        };
+                        break;
+                    case AxKind::mainColour:
+                        vt.onAdjust = [this](int32_t sign, bool) {
+                            auto* banner = GetBanner(GetBannerIndex());
+                            if (banner == nullptr)
+                                return;
+                            const int32_t v = (EnumValue(banner->colour) + sign + Drawing::kColourNumNormal)
+                                % Drawing::kColourNumNormal;
+                            auto action = GameActions::BannerSetStyleAction(
+                                GameActions::BannerSetStyleType::primaryColour, GetBannerIndex(), v);
+                            GameActions::Execute(&action, getGameState());
+                        };
+                        vt.stateText = [this]() {
+                            auto* banner = GetBanner(GetBannerIndex());
+                            return banner != nullptr ? axColourName(banner->colour) : std::string();
+                        };
+                        break;
+                    case AxKind::textColour:
+                        vt.onAdjust = [this](int32_t sign, bool) {
+                            auto* banner = GetBanner(GetBannerIndex());
+                            if (banner == nullptr)
+                                return;
+                            // Selectable text colours are 1..13 (index 0, black, is not offered).
+                            int32_t v = EnumValue(banner->textColour) + sign;
+                            if (v < 1)
+                                v = 13;
+                            else if (v > 13)
+                                v = 1;
+                            auto action = GameActions::BannerSetStyleAction(
+                                GameActions::BannerSetStyleType::textColour, GetBannerIndex(), v);
+                            GameActions::Execute(&action, getGameState());
+                        };
+                        vt.stateText = [this]() {
+                            auto* banner = GetBanner(GetBannerIndex());
+                            return banner != nullptr
+                                ? OpenRCT2::FormatStringID(kBannerColouredTextFormats[EnumValue(banner->textColour)])
+                                : std::string();
+                        };
+                        break;
+                    case AxKind::demolish:
+                        vt.onActivate = [this]() { onMouseUp(WIDX_BANNER_DEMOLISH); }; // removes banner, closes window
+                        break;
+                }
+                b.AddItem(ControlId::Structural("banner:" + std::to_string(EnumValue(kind))), std::move(vt));
             }
         }
     };

@@ -92,6 +92,9 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterServerStartGraphScreen();
         Windows::RegisterServerListGraphScreen();
         Windows::RegisterMultiplayerGraphScreen();
+        Windows::RegisterNewCampaignGraphScreen();
+        Windows::RegisterAccessibilityOptionsGraphScreen();
+        Windows::RegisterShortcutKeysGraphScreen();
 
         // Modal confirmation prompts share one generic button-driven recipe. demolishRidePrompt is
         // used by both the demolish and refurbish prompts (different C++ classes, same window class).
@@ -111,6 +114,15 @@ namespace OpenRCT2::Ui::Accessibility::Graph
             };
             peep.onEscape = [](WindowBase& w) { return static_cast<Ui::Window&>(w).accessGraphEscape(); };
             RegisterGraphScreen(std::move(peep));
+        }
+
+        // The banner window class is shared by the sign and banner windows (two different C++ classes),
+        // both single-list windows with no pages; dispatch the build through the Ui::Window virtual.
+        {
+            GraphScreen banner;
+            banner.windowClass = WindowClass::banner;
+            banner.build = [](GraphBuilder& b, WindowBase& w) { static_cast<Ui::Window&>(w).accessGraphBuild(b); };
+            RegisterGraphScreen(std::move(banner));
         }
     }
 

@@ -8,9 +8,10 @@
  *****************************************************************************/
 
 #include <algorithm>
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -329,9 +330,9 @@ namespace OpenRCT2::Ui::Windows
             WidgetIndex widget = 0;
         };
 
-        int32_t _accessIndex = 0;
         bool _accessDropdownOpen = false;
         WidgetIndex _accessDropdownChevron = 0;
+        int32_t _accessDropdownOwner = -1; // list row that owns the open combo box
 
         std::string ncWidgetText(WidgetIndex w)
         {
@@ -371,25 +372,10 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        void ncAnnounceFocus()
+        void ncSuggestFocus(int32_t itemIndex)
         {
-            if (_accessDropdownOpen)
-                return;
-            onPrepareDraw();
-            const auto items = buildNcItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                return;
-            Accessibility::ScreenReaderSpeakItem(items[_accessIndex].text, _accessIndex, static_cast<int32_t>(items.size()));
-        }
-
-        void ncMove(int32_t delta)
-        {
-            const int32_t n = static_cast<int32_t>(buildNcItems().size());
-            const int32_t idx = Accessibility::ListNav::wrap(_accessIndex, delta, n);
-            if (idx < 0)
-                return; // no items
-            _accessIndex = idx;
-            ncAnnounceFocus();
+            Accessibility::Graph::GraphStateForClass(WindowClass::newCampaign).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural("nc:" + std::to_string(itemIndex));
         }
 
         void ncCloseDropdown()
@@ -399,39 +385,7 @@ namespace OpenRCT2::Ui::Windows
             _accessDropdownOpen = false;
         }
 
-        void ncMoveDropdown(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-            int32_t idx = std::max(0, gDropdown.highlightedIndex);
-            for (int32_t steps = 0; steps <= n; steps++)
-            {
-                idx = (idx + delta + n) % n;
-                if (!gDropdown.items[idx].isSeparator())
-                    break;
-                if (delta == 0)
-                    delta = 1;
-            }
-            if (gDropdown.items[idx].isSeparator())
-                return;
-            gDropdown.highlightedIndex = idx;
-            std::string text = gDropdown.items[idx].text;
-            int32_t total = 0, pos = 0;
-            for (int32_t j = 0; j < gDropdown.numItems; j++)
-            {
-                if (gDropdown.items[j].isSeparator())
-                    continue;
-                if (j == idx)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(text, pos, total);
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
-        }
-
-        void ncOpenDropdown(WidgetIndex chevron)
+        void ncOpenDropdown(int32_t ownerItem, WidgetIndex chevron)
         {
             onMouseDown(chevron);
             auto* windowMgr = GetWindowManager();
@@ -439,124 +393,102 @@ namespace OpenRCT2::Ui::Windows
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevron;
-            ncMoveDropdown(0);
+            _accessDropdownOwner = ownerItem;
         }
 
-        void ncCommitDropdown()
+        void ncCommitDropdown(int32_t idx)
         {
-            const int32_t idx = gDropdown.highlightedIndex;
             const WidgetIndex chevron = _accessDropdownChevron;
+            const int32_t owner = _accessDropdownOwner;
             const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
                 && !gDropdown.items[idx].isDisabled();
             ncCloseDropdown();
             if (valid)
                 onDropdown(chevron, idx);
-            ncAnnounceFocus();
+            ncSuggestFocus(owner);
         }
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
-        {
-            return true;
-        }
+    public:
+        // ---- graph accessibility recipe ----
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // A single vertical list: title read-out, the ride/item combo box (when the campaign type has
+        // one), the duration spinner, the total-cost read-out, and Start. buildNcItems() composes
+        // each row; while the combo's dropdown is open its items are declared instead.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
+            using namespace Accessibility::Graph;
+
+            auto* windowMgr = GetWindowManager();
+            if (_accessDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessDropdownOpen = false;
+
             if (_accessDropdownOpen)
-                return std::nullopt;
+            {
+                b.PushContext("Ride", "menu");
+                for (int32_t k = 0; k < gDropdown.numItems; k++)
+                {
+                    if (gDropdown.items[k].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[k].text));
+                    vt.onActivate = [this, k]() { ncCommitDropdown(k); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(k)), std::move(vt));
+                }
+                b.PopContext();
+                return;
+            }
+
+            onPrepareDraw();
             const auto items = buildNcItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                return std::nullopt;
-            if (items[_accessIndex].kind == NcKind::data)
-                return std::nullopt; // data read-outs have no control to box
-            const WidgetIndex w = items[_accessIndex].widget;
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+            for (int32_t i = 0; i < static_cast<int32_t>(items.size()); i++)
+            {
+                const auto it = items[i];
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(it.text));
+                vt.focusRect = [this, it]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    if (it.kind == NcKind::data)
+                        return std::nullopt;
+                    if (it.widget >= widgets.size() || widgets[it.widget].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[it.widget];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                            wd.height() + 1 };
+                };
+                switch (it.kind)
+                {
+                    case NcKind::dropdown:
+                        vt.onActivate = [this, i, w = it.widget]() { ncOpenDropdown(i, w); };
+                        break;
+                    case NcKind::spinner:
+                        vt.onAdjust = [this, w = it.widget](int32_t sign, bool) {
+                            onMouseDown(static_cast<WidgetIndex>(sign > 0 ? (w + 1) : (w + 2))); // up : down
+                        };
+                        vt.stateText = [this]() {
+                            return std::to_string(Campaign.no_weeks) + (Campaign.no_weeks == 1 ? " week" : " weeks");
+                        };
+                        break;
+                    case NcKind::button:
+                        vt.onActivate = [this, w = it.widget]() {
+                            if (!widgetIsDisabled(*this, w))
+                                onMouseUp(w); // starts the campaign; cost announced by the finance hook
+                        };
+                        break;
+                    default:
+                        break; // data read-outs
+                }
+                b.AddItem(ControlId::Structural("nc:" + std::to_string(i)), std::move(vt));
+            }
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // Escape: close an open combo box first (focus returns to it); otherwise the navigator closes.
+        bool AccessEscape()
         {
-            if (_accessDropdownOpen)
-            {
-                switch (action)
-                {
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveLeft:
-                        ncMoveDropdown(-1);
-                        return true;
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::moveRight:
-                        ncMoveDropdown(1);
-                        return true;
-                    case AccessibilityAction::activate:
-                        ncCommitDropdown();
-                        return true;
-                    case AccessibilityAction::cancel:
-                        ncCloseDropdown();
-                        ncAnnounceFocus();
-                        return true;
-                    default:
-                        return false;
-                }
-            }
-
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                    ncMove(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    ncMove(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveRight:
-                {
-                    const auto items = buildNcItems();
-                    if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                        return true;
-                    const auto& it = items[_accessIndex];
-                    const int32_t delta = (action == AccessibilityAction::moveRight) ? 1 : -1;
-                    if (it.kind == NcKind::spinner)
-                    {
-                        onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (it.widget + 1) : (it.widget + 2)));
-                        // Speak only the new value, not the "Duration, slider" label - the label is
-                        // read when the control is first focused, consistent with the mod's sliders.
-                        Accessibility::ScreenReaderSpeak(
-                            std::to_string(Campaign.no_weeks) + (Campaign.no_weeks == 1 ? " week" : " weeks"));
-                    }
-                    else if (it.kind == NcKind::dropdown)
-                    {
-                        ncOpenDropdown(it.widget);
-                    }
-                    else
-                    {
-                        ncAnnounceFocus();
-                    }
-                    return true;
-                }
-                case AccessibilityAction::activate:
-                {
-                    const auto items = buildNcItems();
-                    if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                        return true;
-                    const auto& it = items[_accessIndex];
-                    if (it.kind == NcKind::dropdown)
-                        ncOpenDropdown(it.widget);
-                    else if (it.kind == NcKind::button && !widgetIsDisabled(*this, it.widget))
-                        onMouseUp(it.widget); // starts the campaign (closes on success; cost announced by finance hook)
-                    return true;
-                }
-                case AccessibilityAction::announce:
-                    ncAnnounceFocus();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return false;
-            }
+            if (!_accessDropdownOpen)
+                return false;
+            const int32_t owner = _accessDropdownOwner;
+            ncCloseDropdown();
+            ncSuggestFocus(owner);
+            return true;
         }
 #pragma endregion
 
@@ -667,5 +599,18 @@ namespace OpenRCT2::Ui::Windows
         {
             w->refreshRides();
         }
+    }
+
+    // Register the new-campaign window with the graph accessibility navigator (called once at startup
+    // via EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterNewCampaignGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::newCampaign;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<NewCampaignWindow&>(w).BuildAccessGraph(b); };
+        screen.onEscape = [](WindowBase& w) { return static_cast<NewCampaignWindow&>(w).AccessEscape(); };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

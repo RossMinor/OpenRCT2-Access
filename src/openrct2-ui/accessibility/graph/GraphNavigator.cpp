@@ -18,6 +18,8 @@
 
 #include <SDL.h>
 #include <cctype>
+#include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/input/ShortcutManager.h>
 #include <openrct2/Diagnostic.h>
 #include <openrct2/interface/Window.h>
 #include <openrct2/interface/WindowBase.h>
@@ -487,6 +489,27 @@ namespace OpenRCT2::Ui::Accessibility
             return false;
         EnsureGraphScreensRegistered();
         EnsureAnnouncerHooks();
+
+        // While a shortcut rebind is pending (the Change Shortcut window is open, e.g. from the
+        // graph-owned shortcut-keys window), the next key press is captured by the shortcut manager
+        // as the new binding. Let every key fall through to it, except Escape, which cancels the
+        // rebind (Escape is otherwise a valid binding). Mirrors the legacy menu dispatcher's guard,
+        // which now runs after this one.
+        if (auto& sm = GetShortcutManager(); sm.isPendingShortcutChange())
+        {
+            if (e.button == SDLK_ESCAPE)
+            {
+                if (e.state == InputEventState::down)
+                {
+                    if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                        windowMgr->CloseByClass(WindowClass::changeKeyboardShortcut);
+                    ScreenReaderSpeak("Rebind cancelled");
+                }
+                _lastHandledKey = e.button;
+                return true;
+            }
+            return false;
+        }
 
         auto* front = FrontNavigableWindow();
         if (front == nullptr || !GraphOwnsWindowClass(front->classification))

@@ -17,6 +17,8 @@
 #include <cmath>
 #include <optional>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -130,10 +132,6 @@ namespace OpenRCT2::Ui::Windows
     class AccessibilityOptionsWindow final : public Window
     {
     private:
-        // Focused control: 0 = cue volume, 1 = step sounds, 2 = tile reading, 3 = tile reading order,
-        // 4 = focus colour, 5 = menu music volume, 6 = menu sound volume, 7 = support button.
-        int32_t _accessIndex = 0;
-
         // The support button is a two-step confirm: the first Enter reads the thank-you message and
         // arms it; the second Enter actually opens the browser. Reset whenever focus moves away.
         bool _supportArmed = false;
@@ -167,10 +165,10 @@ namespace OpenRCT2::Ui::Windows
             widgets[WIDX_SUPPORT_BUTTON].setString(getSupportText());
             initScrollWidgets();
 
-            _accessIndex = 0;
             initialiseScrollPosition(WIDX_VOLUME_SLIDER, 0, Config::Get().sound.accessibilityCueVolume);
 
-            Accessibility::ScreenReaderSpeak("Accessibility Sounds Volume. " + focusText());
+            // The graph navigator announces the first control on attach; just name the window here.
+            Accessibility::ScreenReaderSpeak("Accessibility Sounds Volume.");
         }
 
         void onPrepareDraw() override
@@ -271,141 +269,82 @@ namespace OpenRCT2::Ui::Windows
             drawText(rt, soundLabelPos, "Menu sound volume", { colours[1] });
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // ---- graph accessibility recipe ----
+
+        // A flat list of eight settings: the accessibility-cue volume slider, the step/tile/order/
+        // focus-colour mode cyclers, the menu music and sound volumes, and the support button. Each
+        // control's value is a live part, so Left/Right (and Enter, on the cyclers) re-announces just
+        // the new value.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            switch (action)
+            using namespace Accessibility::Graph;
+            onPrepareDraw();
+
+            for (int32_t i = 0; i <= 7; i++)
             {
-                case AccessibilityAction::moveUp:
-                    _supportArmed = false; // moving off the support button cancels the pending confirm
-                    _accessIndex = std::max(0, _accessIndex - 1);
-                    announceFocus();
-                    return true;
-                case AccessibilityAction::moveDown:
-                    _supportArmed = false;
-                    _accessIndex = std::min(7, _accessIndex + 1);
-                    announceFocus();
-                    return true;
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveRight:
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(labelText(i)));
+                if (i != 7)
+                    vt.announcements.emplace_back([this, i]() { return valueText(i); }, true, AnnouncementKinds::kValue);
+                vt.focusRect = [this, i]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const auto& wd = widgets[axWidget(i)];
+                    if (wd.type == WidgetType::empty)
+                        return std::nullopt;
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                            wd.height() + 1 };
+                };
+
+                switch (i)
                 {
-                    _supportArmed = false;
-                    const int32_t delta = (action == AccessibilityAction::moveRight) ? 1 : -1;
-                    if (_accessIndex == 0)
-                    {
-                        const int32_t pct = std::clamp<int32_t>(
-                            Config::Get().sound.accessibilityCueVolume + delta * kVolumeStep, 0, 100);
-                        setVolume(static_cast<uint8_t>(pct));
-                    }
-                    else if (_accessIndex == 1)
-                    {
-                        cycleStepMode(delta);
-                    }
-                    else if (_accessIndex == 2)
-                    {
-                        cycleTileMode(delta);
-                    }
-                    else if (_accessIndex == 3)
-                    {
-                        cycleTileOrder(delta);
-                    }
-                    else if (_accessIndex == 4)
-                    {
-                        cycleFocusColour(delta);
-                    }
-                    else if (_accessIndex == 5)
-                    {
-                        adjustMenuMusicVolume(delta);
-                    }
-                    else if (_accessIndex == 6)
-                    {
-                        adjustMenuSoundVolume(delta);
-                    }
-                    announceValue();
-                    return true;
+                    case 0: // accessibility-cue volume slider
+                        vt.onAdjust = [this](int32_t sign, bool) {
+                            const int32_t pct = std::clamp<int32_t>(
+                                Config::Get().sound.accessibilityCueVolume + sign * kVolumeStep, 0, 100);
+                            setVolume(static_cast<uint8_t>(pct));
+                        };
+                        break;
+                    case 1:
+                        vt.onAdjust = [this](int32_t sign, bool) { cycleStepMode(sign); };
+                        vt.onActivate = [this]() { cycleStepMode(1); }; // Enter advances too
+                        break;
+                    case 2:
+                        vt.onAdjust = [this](int32_t sign, bool) { cycleTileMode(sign); };
+                        vt.onActivate = [this]() { cycleTileMode(1); };
+                        break;
+                    case 3:
+                        vt.onAdjust = [this](int32_t sign, bool) { cycleTileOrder(sign); };
+                        vt.onActivate = [this]() { cycleTileOrder(1); };
+                        break;
+                    case 4:
+                        vt.onAdjust = [this](int32_t sign, bool) { cycleFocusColour(sign); };
+                        vt.onActivate = [this]() { cycleFocusColour(1); };
+                        break;
+                    case 5:
+                        vt.onAdjust = [this](int32_t sign, bool) { adjustMenuMusicVolume(sign); };
+                        break;
+                    case 6:
+                        vt.onAdjust = [this](int32_t sign, bool) { adjustMenuSoundVolume(sign); };
+                        break;
+                    case 7: // support button: two-step confirm
+                        vt.onActivate = [this]() {
+                            if (_supportArmed)
+                            {
+                                _supportArmed = false;
+                                openSupportPage();
+                            }
+                            else
+                            {
+                                _supportArmed = true;
+                                Accessibility::ScreenReaderSpeak(
+                                    "Thank you for the support! It allows me to keep paying for Claude Pro, run "
+                                    "the Accessibility Gaming Wiki server, and continue working in the gaming "
+                                    "industry. Press Enter to continue.");
+                            }
+                        };
+                        break;
                 }
-                case AccessibilityAction::activate:
-                    if (_accessIndex == 1)
-                    {
-                        cycleStepMode(1); // Enter advances the step mode too
-                        announceValue();
-                    }
-                    else if (_accessIndex == 2)
-                    {
-                        cycleTileMode(1);
-                        announceValue();
-                    }
-                    else if (_accessIndex == 3)
-                    {
-                        cycleTileOrder(1); // Enter advances the reading order too
-                        announceValue();
-                    }
-                    else if (_accessIndex == 4)
-                    {
-                        cycleFocusColour(1); // Enter advances the focus colour too
-                        announceValue();
-                    }
-                    else if (_accessIndex == 7)
-                    {
-                        if (_supportArmed)
-                        {
-                            _supportArmed = false;
-                            openSupportPage();
-                        }
-                        else
-                        {
-                            // First Enter: read the thank-you message and wait for a confirming Enter.
-                            _supportArmed = true;
-                            Accessibility::ScreenReaderSpeak(
-                                "Thank you for the support! It allows me to keep paying for Claude Pro, run "
-                                "the Accessibility Gaming Wiki server, and continue working in the gaming "
-                                "industry. Press Enter to continue.");
-                        }
-                    }
-                    else
-                    {
-                        announceFocus();
-                    }
-                    return true;
-                case AccessibilityAction::cancel:
-                    _supportArmed = false;
-                    close();
-                    return true;
-                case AccessibilityAction::announce:
-                    announceFocus();
-                    return true;
-                default:
-                    return false;
+                b.AddItem(ControlId::Structural("ao:" + std::to_string(i)), std::move(vt));
             }
-        }
-
-        bool onAccessibilityTypeahead(uint32_t /*letterKey*/) override
-        {
-            // This is a settings dialog, not an item list; swallow letters so they don't leak to the
-            // toolbar behind the window.
-            return true;
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            WidgetIndex w = WIDX_VOLUME_SLIDER;
-            if (_accessIndex == 1)
-                w = WIDX_STEP_MODE;
-            else if (_accessIndex == 2)
-                w = WIDX_TILE_MODE;
-            else if (_accessIndex == 3)
-                w = WIDX_TILE_ORDER;
-            else if (_accessIndex == 4)
-                w = WIDX_FOCUS_COLOUR;
-            else if (_accessIndex == 5)
-                w = WIDX_MENU_MUSIC;
-            else if (_accessIndex == 6)
-                w = WIDX_MENU_SOUND;
-            else if (_accessIndex == 7)
-                w = WIDX_SUPPORT_BUTTON;
-            const auto& widget = widgets[w];
-            const auto tl = windowPos + ScreenCoordsXY{ widget.left, widget.top };
-            const auto br = windowPos + ScreenCoordsXY{ widget.right, widget.bottom };
-            return ScreenRect{ tl, br };
         }
 
     private:
@@ -415,10 +354,10 @@ namespace OpenRCT2::Ui::Windows
             Accessibility::ScreenReaderSpeak("Opening the Patreon page in your browser.");
         }
 
-        // The category label of the focused control (spoken when it is first focused).
-        const char* labelText() const
+        // The category label of control `idx`.
+        const char* labelText(int32_t idx) const
         {
-            switch (_accessIndex)
+            switch (idx)
             {
                 case 0:
                     return "Accessibility sounds volume";
@@ -439,10 +378,10 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        // The current value of the focused control, with no label (spoken while adjusting the value).
-        std::string valueText() const
+        // The current value of control `idx`, with no label.
+        std::string valueText(int32_t idx) const
         {
-            switch (_accessIndex)
+            switch (idx)
             {
                 case 0:
                     return std::to_string(Config::Get().sound.accessibilityCueVolume) + " percent";
@@ -463,10 +402,33 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        std::string focusText()
+        std::string focusText(int32_t idx) const
         {
-            const std::string value = valueText();
-            return value.empty() ? std::string(labelText()) : std::string(labelText()) + ", " + value;
+            const std::string value = valueText(idx);
+            return value.empty() ? std::string(labelText(idx)) : std::string(labelText(idx)) + ", " + value;
+        }
+
+        static WidgetIndex axWidget(int32_t idx)
+        {
+            switch (idx)
+            {
+                case 1:
+                    return WIDX_STEP_MODE;
+                case 2:
+                    return WIDX_TILE_MODE;
+                case 3:
+                    return WIDX_TILE_ORDER;
+                case 4:
+                    return WIDX_FOCUS_COLOUR;
+                case 5:
+                    return WIDX_MENU_MUSIC;
+                case 6:
+                    return WIDX_MENU_SOUND;
+                case 7:
+                    return WIDX_SUPPORT_BUTTON;
+                default:
+                    return WIDX_VOLUME_SLIDER;
+            }
         }
 
         void cycleStepMode(int32_t delta)
@@ -526,22 +488,6 @@ namespace OpenRCT2::Ui::Windows
             invalidate();
         }
 
-        void announceFocus()
-        {
-            Accessibility::ScreenReaderSpeak(focusText());
-        }
-
-        // Speaks only the value (no label) while the value is being changed, so the category is not
-        // repeated on every step. Falls back to the full focus read for controls with no value.
-        void announceValue()
-        {
-            const std::string value = valueText();
-            if (value.empty())
-                announceFocus();
-            else
-                Accessibility::ScreenReaderSpeak(value);
-        }
-
         void setVolume(uint8_t pct)
         {
             if (pct == Config::Get().sound.accessibilityCueVolume)
@@ -588,5 +534,19 @@ namespace OpenRCT2::Ui::Windows
         auto* windowMgr = GetWindowManager();
         return windowMgr->FocusOrCreate<AccessibilityOptionsWindow>(
             WindowClass::accessibilityOptions, kWindowSize, WindowFlag::centreScreen);
+    }
+
+    // Register the accessibility-options window with the graph accessibility navigator (called once
+    // at startup via EnsureGraphScreensRegistered). From here on the graph owns this window class;
+    // the legacy accessibility dispatcher stands down for it.
+    void RegisterAccessibilityOptionsGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::accessibilityOptions;
+        screen.build = [](GraphBuilder& b, WindowBase& w) {
+            static_cast<AccessibilityOptionsWindow&>(w).BuildAccessGraph(b);
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows
