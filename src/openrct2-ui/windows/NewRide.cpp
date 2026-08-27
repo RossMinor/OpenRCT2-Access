@@ -12,6 +12,8 @@
 #include <limits>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/RidePlacement.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/accessibility/RideVisualDescriptions.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -306,9 +308,6 @@ namespace OpenRCT2::Ui::Windows
             RideSelection HighlightedRide{};
             uint16_t SelectedRideCountdown{};
         } _newRideVars{};
-
-        // Keyboard-navigation cursor into the current tab's ride list (-1 = nothing focused).
-        int32_t _accessRideCursor = -1;
 
     public:
         static void SetOpeningPage(NewRideTabId tab)
@@ -695,149 +694,100 @@ namespace OpenRCT2::Ui::Windows
             return text;
         }
 
-        void announceTab()
-        {
-            std::string text = OpenRCT2::FormatStringID(RideTitles[_currentTab]);
-            const auto count = getRideListCount();
-            text += (count == 0) ? ", no rides available"
-                                 : ", " + std::to_string(count) + (count == 1 ? " ride" : " rides");
-            // Position among the six ride-category tabs (the Research tab is excluded).
-            Accessibility::ScreenReaderSpeakItem(text, static_cast<int32_t>(_currentTab), RESEARCH_TAB);
-        }
-
-        void announceRideItem()
-        {
-            const auto count = getRideListCount();
-            if (_accessRideCursor < 0 || _accessRideCursor >= count)
-                return;
-            Accessibility::ScreenReaderSpeakItem(
-                getRideListItemText(_windowNewRideListItems[_accessRideCursor]), _accessRideCursor, count);
-        }
-
-        void changeAccessibilityTab(int32_t delta)
-        {
-            // Cycle only the six ride-category tabs; the Research tab has its own dedicated window.
-            int32_t current = (_currentTab >= RESEARCH_TAB) ? static_cast<int32_t>(TRANSPORT_TAB)
-                                                            : static_cast<int32_t>(_currentTab);
-            const int32_t newTab = (current + delta + RESEARCH_TAB) % RESEARCH_TAB;
-            setPage(static_cast<NewRideTabId>(newTab));
-            _accessRideCursor = -1;
-            announceTab();
-        }
-
-        void moveRideCursor(int32_t delta)
-        {
-            const auto count = getRideListCount();
-            if (count == 0)
-            {
-                Accessibility::ScreenReaderSpeak("No rides available");
-                return;
-            }
-            if (_accessRideCursor < 0)
-                _accessRideCursor = (delta > 0) ? 0 : count - 1;
-            else
-                _accessRideCursor = (_accessRideCursor + delta + count) % count;
-            announceRideItem();
-        }
-
-        void activateSelectedRide()
-        {
-            const auto count = getRideListCount();
-            if (_accessRideCursor < 0 || _accessRideCursor >= count)
-                return;
-            const auto item = _windowNewRideListItems[_accessRideCursor];
-            Accessibility::ScreenReaderSpeak("Selected " + getRideName(item));
-            _newRideVars.SelectedRide = item;
-            RideSelect();
-        }
-
-        bool onAccessibilityTypeahead(uint32_t key) override
-        {
-            if (_currentTab >= RESEARCH_TAB)
-                return true;
-            const auto count = getRideListCount();
-            if (count == 0)
-                return true;
-            const char target = static_cast<char>(key); // SDLK_a..z are ASCII 'a'..'z'
-            const int32_t start = (_accessRideCursor < 0) ? 0 : _accessRideCursor;
-            for (int32_t i = 1; i <= count; i++)
-            {
-                const int32_t idx = (start + i) % count;
-                const std::string name = getRideName(_windowNewRideListItems[idx]);
-                char first = name.empty() ? '\0' : name[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessRideCursor = idx;
-                    announceRideItem();
-                    return true;
-                }
-            }
-            return true; // consume the key even when nothing matches
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Screen-shaped focus rectangle for the ride icon at list index (host tag for the visual
+        // focus box). Boxes the whole list when the item is scrolled out of view (parity with the
+        // former handler - the cursor does not auto-scroll the grid).
+        std::optional<Accessibility::Graph::GraphRect> accessRideRect(int32_t index)
         {
             const auto& lw = widgets[WIDX_RIDE_LIST];
             if (lw.type == WidgetType::empty)
                 return std::nullopt;
+            const auto wholeList = [&]() {
+                return Accessibility::Graph::GraphRect{ windowPos.x + lw.left, windowPos.y + lw.top, lw.width() + 1,
+                                                        lw.height() + 1 };
+            };
+            const int32_t count = getRideListCount();
+            if (index < 0 || index >= count)
+                return wholeList();
             const int32_t viewTop = windowPos.y + lw.top;
             const int32_t viewBottom = windowPos.y + lw.bottom;
-
-            // On the ride-category tabs, box the focused ride icon in the grid; elsewhere box the list.
-            const int32_t count = getRideListCount();
-            if (_currentTab >= RESEARCH_TAB || _accessRideCursor < 0 || _accessRideCursor >= count)
-                return ScreenRect{ windowPos + ScreenCoordsXY{ lw.left, lw.top },
-                                   windowPos + ScreenCoordsXY{ lw.right, lw.bottom } };
-
             const int32_t itemsPerRow = std::max(1, static_cast<int32_t>(getNumImagesPerRow()));
-            const int32_t col = _accessRideCursor % itemsPerRow;
-            const int32_t row = _accessRideCursor / itemsPerRow;
-            const int32_t cellLeft = windowPos.x + lw.left + col * kScrollItemSize;
-            const int32_t cellTop = viewTop + row * kScrollItemSize - scrolls[0].contentOffsetY;
-            int32_t top = std::max(cellTop, viewTop);
-            int32_t bottom = std::min(cellTop + kScrollItemSize, viewBottom);
-            if (bottom <= top) // scrolled out of view: box the whole list
-                return ScreenRect{ windowPos + ScreenCoordsXY{ lw.left, lw.top },
-                                   windowPos + ScreenCoordsXY{ lw.right, lw.bottom } };
-            return ScreenRect{ { cellLeft, top }, { cellLeft + kScrollItemSize, bottom } };
+            const int32_t cellLeft = windowPos.x + lw.left + (index % itemsPerRow) * kScrollItemSize;
+            const int32_t cellTop = viewTop + (index / itemsPerRow) * kScrollItemSize - scrolls[0].contentOffsetY;
+            const int32_t top = std::max(cellTop, viewTop);
+            const int32_t bottom = std::min(cellTop + kScrollItemSize, viewBottom);
+            if (bottom <= top)
+                return wholeList();
+            return Accessibility::Graph::GraphRect{ cellLeft, top, kScrollItemSize, bottom - top };
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // ---- graph accessibility recipe ----
+
+        // Declare the current category's rides as a grouped list. The category title + count is the
+        // group context (read on a Tab switch), each ride is one node whose full spoken line comes
+        // from the existing getRideListItemText().
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            // The Research tab is read-only info duplicated by the Research window; only the
-            // ride-category tabs participate in accessible navigation.
-            switch (action)
+            using namespace Accessibility::Graph;
+            onPrepareDraw();
+
+            // The Research tab is a read-only summary duplicated by the Research window; declare a
+            // single info node and let Tab move on to the ride categories.
+            if (_currentTab >= RESEARCH_TAB)
             {
-                case AccessibilityAction::moveLeft:
-                    changeAccessibilityTab(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    changeAccessibilityTab(1);
-                    return true;
-                case AccessibilityAction::moveUp:
-                    if (_currentTab >= RESEARCH_TAB)
-                        changeAccessibilityTab(0);
-                    else
-                        moveRideCursor(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    if (_currentTab >= RESEARCH_TAB)
-                        changeAccessibilityTab(0);
-                    else
-                        moveRideCursor(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    activateSelectedRide();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
+                NodeVtable vt;
+                vt.announcements.emplace_back(
+                    NodeAnnouncement::Static(OpenRCT2::FormatStringID(RideTitles[RESEARCH_TAB])));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("nr:research"), std::move(vt));
+                return;
             }
+
+            std::string header = OpenRCT2::FormatStringID(RideTitles[_currentTab]);
+            const int32_t count = getRideListCount();
+            header += (count == 0) ? ", no rides available"
+                                   : ", " + std::to_string(count) + (count == 1 ? " ride" : " rides");
+            b.PushContext(header);
+
+            if (count == 0)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("No rides available"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("nr:none"), std::move(vt));
+                b.PopContext();
+                return;
+            }
+
+            for (int32_t i = 0; i < count; i++)
+            {
+                const RideSelection item = _windowNewRideListItems[i];
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, item]() { return getRideListItemText(item); });
+                vt.searchText = [this, item]() { return getRideName(item); }; // first-letter type-ahead
+                vt.onActivate = [this, item]() {
+                    Accessibility::ScreenReaderSpeak("Selected " + getRideName(item));
+                    _newRideVars.SelectedRide = item;
+                    RideSelect(); // closes this window and starts placement / construction
+                };
+                vt.focusRect = [this, i]() { return accessRideRect(i); };
+                b.AddItem(
+                    ControlId::Structural(
+                        "nr:" + std::to_string(static_cast<int32_t>(item.Type)) + ":"
+                        + std::to_string(static_cast<int32_t>(item.EntryIndex))),
+                    std::move(vt));
+            }
+            b.PopContext();
+        }
+
+        // Tab/Shift+Tab: cycle the six ride-category tabs (the Research tab has its own window and is
+        // skipped); the graph announces the new category's header + first ride.
+        void AccessChangePage(int32_t delta)
+        {
+            const int32_t current = (_currentTab >= RESEARCH_TAB) ? static_cast<int32_t>(TRANSPORT_TAB)
+                                                                  : static_cast<int32_t>(_currentTab);
+            const int32_t newTab = (current + delta + RESEARCH_TAB) % RESEARCH_TAB;
+            setPage(static_cast<NewRideTabId>(newTab));
         }
 
 #pragma endregion
@@ -1408,5 +1358,21 @@ namespace OpenRCT2::Ui::Windows
 
         auto rideTypeIndex = rideEntry->GetFirstNonNullRideType();
         w->setPage(EnumValue(GetRideTypeDescriptor(rideTypeIndex).Category));
+    }
+
+    // Register the "construct new ride" catalog window with the graph accessibility navigator (called
+    // once at startup via EnsureGraphScreensRegistered). From here on the graph owns this window
+    // class; the legacy accessibility dispatcher stands down for it.
+    void RegisterNewRideGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::constructRide;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<NewRideWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<NewRideWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows
