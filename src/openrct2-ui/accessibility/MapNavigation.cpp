@@ -15,6 +15,7 @@
 #include "ElevationTone.h"
 #include "GuestRescue.h"
 #include "MenuNavigation.h"
+#include "graph/GraphScreens.h"
 #include "RidePlacement.h"
 #include "SceneryPlacement.h"
 #include "ScreenReader.h"
@@ -3486,8 +3487,10 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         // Plain P pauses or unpauses the game (routed through the game action so it is multiplayer
-        // safe). Announces the new state.
-        if (key == SDLK_p && !(e.modifiers & (KMOD_CTRL | KMOD_SHIFT | KMOD_ALT)))
+        // safe). Announces the new state. Only from the map cursor - not while the toolbar menu or a
+        // navigable window is focused, where P belongs to that menu, so it doesn't pause behind it.
+        if (key == SDLK_p && !(e.modifiers & (KMOD_CTRL | KMOD_SHIFT | KMOD_ALT)) && !_menuMode
+            && Graph::FrontNavigableWindow() == nullptr)
         {
             const bool willPause = !(gGamePaused & GAME_PAUSED_NORMAL);
             auto action = GameActions::PauseToggleAction();
