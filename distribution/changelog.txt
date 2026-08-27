@@ -1,3 +1,104 @@
+========================================================================
+OpenRCT2-Access - accessibility fork changelog
+========================================================================
+Changes to the blind-accessibility fork (NVDA speech and keyboard support).
+The upstream OpenRCT2 changelog follows below.
+
+0.98 (2026-08-27)
+------------------------------------------------------------------------
+- Change: Rebuilt most menu and window navigation on a single shared engine (the Graph A11y Kernel), replacing the per-window handlers that had drifted apart. Tab and Shift+Tab switch a window's pages or tabs, Up/Down move, Left/Right adjust, Enter activates, Escape closes, with first-letter type-ahead in lists - consistent across every migrated window.
+- Change: Migrated around thirty windows to the new engine, including the ride list, options, the staff/scenario/guest lists, cheats, park info, finances, the confirmation prompts, the guest/staff/player info windows, the construct-new-ride catalog, recent messages, research, the ride info window, scenery, the multiplayer windows, sign, banner, new campaign, accessibility options, shortcut keys, and the footpath window.
+- Fix: P no longer pauses the game while a menu or window is focused; it only pauses from the map cursor.
+- Fix: Corrected the spoken guidance for the Path tool.
+
+0.97 (2026-08-23)
+------------------------------------------------------------------------
+- Improved: Pre-built ride ghost follows the cursor and matches placement.
+- Improved: Sloped paths anchor to cursor elevation, rise toward the way you are facing, and read as sloped.
+- Change: Unified cursor focus elevation on the engine's height model.
+- Fix: Scenery placement height and rotation.
+- Docs: Expanded readme with gameplay tips and an updated key list.
+
+0.96 (2026-07-18)
+------------------------------------------------------------------------
+- Feature: The player info window is keyboard/screen-reader navigable.
+- Improved: Announce multiplayer chat and connection events.
+
+0.95.1 (2026-07-13)
+------------------------------------------------------------------------
+- Feature: The multiplayer menus are keyboard/screen-reader navigable.
+- Build: Deploy the accessibility sounds to bin/data.
+
+0.95 (2026-07-10)
+------------------------------------------------------------------------
+- Feature: Configurable tile-feature reading order.
+- Feature: Configurable main-menu sound volume with a slider.
+- Feature: Ctrl+E jumps between a ride's entrance and exit.
+- Feature: Two-stage placement for pre-built coasters (position, inspect, then build).
+- Improved: Sliders speak only the value while adjusting.
+- Improved: Elevation tone reflects raised ride entrances and exits.
+- Improved: Read ground litter and vandalized path additions.
+- Improved: Announce closing any top-level menu and returning to the right level.
+- Improved: Ctrl+P reports where a path stops short of the entrance.
+- Improved: Let a flat path bridge over a ride instead of failing.
+- Change: Decouple the accessibility cues from the game's sound slider.
+- Change: Unify the direction logic into one shared module.
+
+0.94.1 (2026-07-09)
+------------------------------------------------------------------------
+- Fix: Focus the game window after a self-update, and make the changelog prompt a yes/no menu.
+- Docs: Normalize key-name capitalization.
+
+0.94 (2026-07-09)
+------------------------------------------------------------------------
+- Feature: Ctrl+arrows jump to the nearest ride or stall in that direction.
+- Feature: Ctrl+= and Ctrl+- game-speed control, with slow-motion.
+- Improved: Read the whole brush area when the brush is larger than 1x1.
+- Docs: Document the Ctrl+arrow ride jump, Ctrl+P reachability, P pause, and speed keys.
+
+0.93 (2026-07-08)
+------------------------------------------------------------------------
+- Feature: Menu-music volume; Ctrl+P entrance-reachability check; P to pause.
+- Feature: Two-stage footprint placement for stalls and flat rides.
+- Improved: Read the ride-placement preview footprint as you arrow over it.
+- Improved: Offer to open the changelog after a self-update.
+
+0.92 (2026-07-08)
+------------------------------------------------------------------------
+- Change: Route all item-model windows through a shared list-navigation helper; migrate scenario select, server list, load/save, and track list to it.
+- Fix: Window key-routing; unify list navigation; split into modules; add a focus-colour option.
+- Docs: Overhaul the README usage guide and formatting.
+
+0.91.1 (2026-07-05)
+------------------------------------------------------------------------
+- Fix: The on-launch update check now queries the fork and matches the release tag, so shipped builds no longer nag falsely.
+- Docs: Overhaul the README with a full categorized command reference, limitations, and untested areas.
+
+0.91 (2026-07-03)
+------------------------------------------------------------------------
+- Custom sound overhaul, combo-box sliders, and lost-guest rescue polish.
+
+0.9 (2026-07-02)
+------------------------------------------------------------------------
+- Accessibility settings window, lost-guest rescue, and audit fixes.
+
+0.83 (2026-06-29)
+------------------------------------------------------------------------
+- Accessible ride construction, track break status, and finance and park controls.
+
+0.82 (2026-06-26)
+------------------------------------------------------------------------
+- Fix: Map cursor movement direction under camera rotation.
+
+0.81 (2026-06-26)
+------------------------------------------------------------------------
+- Ride descriptions, sloped paths, and more.
+
+0.8 (2026-06-25)
+------------------------------------------------------------------------
+- Initial accessibility release: NVDA speech and keyboard navigation for RollerCoaster Tycoon 2 / OpenRCT2.
+
+
 0.5.3 (in development)
 ------------------------------------------------------------------------
 - Feature: [#26308] Add all new track pieces to the inverted roller coaster.
