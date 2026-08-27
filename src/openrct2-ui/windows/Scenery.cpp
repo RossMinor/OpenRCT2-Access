@@ -11,6 +11,8 @@
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/accessibility/SceneryPlacement.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -225,7 +227,6 @@ namespace OpenRCT2::Ui::Windows
         int32_t _requiredWidth;
         int32_t _actualMinHeight;
         ScenerySelection _selectedScenery;
-        int32_t _accessObjectIndex = -1; // screen-reader cursor into the active tab's entries
         int16_t _hoverCounter;
         SceneryTabInfo _filteredSceneryTab;
 
@@ -1621,172 +1622,102 @@ namespace OpenRCT2::Ui::Windows
             return "Scenery group";
         }
 
-        void announceAccessObject()
-        {
-            if (_activeTabIndex >= _tabEntries.size())
-                return;
-            const auto& entries = _tabEntries[_activeTabIndex].Entries;
-            const int32_t count = static_cast<int32_t>(entries.size());
-            if (_accessObjectIndex < 0 || _accessObjectIndex >= count)
-                return;
-
-            const auto sel = entries[_accessObjectIndex];
-            auto [nameId, price] = GetNameAndPrice(sel);
-            std::string text = OpenRCT2::FormatStringID(nameId);
-            text += std::string(", ") + getSceneryTypeWord(sel.SceneryType);
-            Accessibility::ScreenReaderSpeakItem(text, _accessObjectIndex, count);
-        }
-
-        void changeAccessTab(int32_t delta)
-        {
-            const int32_t n = static_cast<int32_t>(_tabEntries.size());
-            if (n == 0)
-                return;
-            const int32_t tab = (static_cast<int32_t>(_activeTabIndex) + delta + n) % n;
-            onMouseDown(static_cast<WidgetIndex>(WIDX_SCENERY_TAB_1 + tab)); // switches and refreshes
-            _accessObjectIndex = -1;
-
-            const auto& entries = _tabEntries[tab].Entries;
-            std::string text = getAccessTabName(tab) + ", "
-                + std::to_string(entries.size()) + (entries.size() == 1 ? " item" : " items");
-            Accessibility::ScreenReaderSpeakItem(text, tab, n);
-        }
-
-        void moveAccessObject(int32_t delta)
-        {
-            if (_activeTabIndex >= _tabEntries.size())
-                return;
-            const auto& entries = _tabEntries[_activeTabIndex].Entries;
-            const int32_t count = static_cast<int32_t>(entries.size());
-            if (count == 0)
-            {
-                Accessibility::ScreenReaderSpeak("No scenery in this group");
-                return;
-            }
-            if (_accessObjectIndex < 0)
-                _accessObjectIndex = (delta > 0) ? 0 : count - 1;
-            else
-                _accessObjectIndex = (_accessObjectIndex + delta + count) % count;
-
-            _selectedScenery = entries[_accessObjectIndex];
-            invalidate();
-            announceAccessObject();
-        }
-
-        void activateAccessObject()
-        {
-            if (_activeTabIndex >= _tabEntries.size())
-                return;
-            const auto& entries = _tabEntries[_activeTabIndex].Entries;
-            const int32_t count = static_cast<int32_t>(entries.size());
-            if (_accessObjectIndex < 0 || _accessObjectIndex >= count)
-                return;
-
-            const auto sel = entries[_accessObjectIndex];
-            const std::string name = OpenRCT2::FormatStringID(GetNameAndPrice(sel).first);
-            // The map cursor drives placement, so close this window (its mouse tool would compete).
-            close();
-            Accessibility::BeginAccessibleSceneryPlacement(sel, name);
-        }
-
-        bool onAccessibilityTypeahead(uint32_t key) override
-        {
-            if (_activeTabIndex >= _tabEntries.size())
-                return true;
-            const auto& entries = _tabEntries[_activeTabIndex].Entries;
-            const int32_t count = static_cast<int32_t>(entries.size());
-            if (count == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t start = (_accessObjectIndex < 0) ? 0 : _accessObjectIndex;
-            for (int32_t i = 1; i <= count; i++)
-            {
-                const int32_t idx = (start + i) % count;
-                const std::string name = OpenRCT2::FormatStringID(GetNameAndPrice(entries[idx]).first);
-                char first = name.empty() ? '\0' : name[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessObjectIndex = idx;
-                    _selectedScenery = entries[idx];
-                    invalidate();
-                    announceAccessObject();
-                    return true;
-                }
-            }
-            return true;
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Screen-shaped focus rectangle for the scenery item's icon in the grid (host tag for the
+        // visual focus box). Boxes the whole list when the item is not in the current filtered view.
+        std::optional<Accessibility::Graph::GraphRect> accessSceneryRect(ScenerySelection sel)
         {
             const auto& lw = widgets[WIDX_SCENERY_LIST];
             if (lw.type == WidgetType::empty)
                 return std::nullopt;
-            const int32_t viewTop = windowPos.y + lw.top;
-            const int32_t viewBottom = windowPos.y + lw.bottom;
             const auto boxWholeList = [&]() {
-                return ScreenRect{ windowPos + ScreenCoordsXY{ lw.left, lw.top },
-                                   windowPos + ScreenCoordsXY{ lw.right, lw.bottom } };
+                return Accessibility::Graph::GraphRect{ windowPos.x + lw.left, windowPos.y + lw.top, lw.width() + 1,
+                                                        lw.height() + 1 };
             };
-
-            const auto selected = GetSelectedScenery(_activeTabIndex);
-            if (selected.IsUndefined())
-                return boxWholeList();
-
-            // Locate the focused item's grid cell within the current tab's filtered entries.
             int32_t idx = -1;
             for (size_t i = 0; i < _filteredSceneryTab.Entries.size(); i++)
-                if (_filteredSceneryTab.Entries[i] == selected)
+                if (_filteredSceneryTab.Entries[i] == sel)
                 {
                     idx = static_cast<int32_t>(i);
                     break;
                 }
             if (idx < 0)
                 return boxWholeList();
-
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
             const int32_t numColumns = std::max(1, GetNumColumns());
-            const int32_t col = idx % numColumns;
-            const int32_t row = idx / numColumns;
-            const int32_t cellLeft = windowPos.x + lw.left + col * kSceneryButtonWidth;
-            const int32_t cellTop = viewTop + row * kSceneryButtonHeight - scrolls[0].contentOffsetY;
-            int32_t top = std::max(cellTop, viewTop);
-            int32_t bottom = std::min(cellTop + kSceneryButtonHeight, viewBottom);
+            const int32_t cellLeft = windowPos.x + lw.left + (idx % numColumns) * kSceneryButtonWidth;
+            const int32_t cellTop = viewTop + (idx / numColumns) * kSceneryButtonHeight - scrolls[0].contentOffsetY;
+            const int32_t top = std::max(cellTop, viewTop);
+            const int32_t bottom = std::min(cellTop + kSceneryButtonHeight, viewBottom);
             if (bottom <= top)
                 return boxWholeList();
-            return ScreenRect{ { cellLeft, top }, { cellLeft + kSceneryButtonWidth, bottom } };
+            return Accessibility::Graph::GraphRect{ cellLeft, top, kSceneryButtonWidth, bottom - top };
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+    public:
+        // ---- graph accessibility recipe ----
+
+        // Declare the active scenery group's items as a grouped list (the group name + count is the
+        // context, read on a Tab switch). Enter closes this window and begins keyboard placement of
+        // the focused item, matching the former handler.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            switch (action)
+            using namespace Accessibility::Graph;
+            if (_activeTabIndex >= _tabEntries.size())
+                return;
+
+            const auto& entries = _tabEntries[_activeTabIndex].Entries;
+            const int32_t count = static_cast<int32_t>(entries.size());
+            b.PushContext(
+                getAccessTabName(_activeTabIndex) + ", " + std::to_string(count) + (count == 1 ? " item" : " items"));
+
+            if (count == 0)
             {
-                case AccessibilityAction::moveLeft:
-                    changeAccessTab(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    changeAccessTab(1);
-                    return true;
-                case AccessibilityAction::moveUp:
-                    moveAccessObject(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    moveAccessObject(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    activateAccessObject();
-                    return true;
-                case AccessibilityAction::announce:
-                    announceAccessObject();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    return false;
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("No scenery in this group"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("sc:none"), std::move(vt));
+                b.PopContext();
+                return;
             }
+
+            for (int32_t i = 0; i < count; i++)
+            {
+                const ScenerySelection sel = entries[i];
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, sel]() {
+                    return OpenRCT2::FormatStringID(GetNameAndPrice(sel).first) + std::string(", ")
+                        + getSceneryTypeWord(sel.SceneryType);
+                });
+                vt.searchText = [this, sel]() { return OpenRCT2::FormatStringID(GetNameAndPrice(sel).first); };
+                vt.onActivate = [this, sel]() {
+                    const std::string name = OpenRCT2::FormatStringID(GetNameAndPrice(sel).first);
+                    // The map cursor drives placement, so close this window (its mouse tool competes).
+                    close();
+                    Accessibility::BeginAccessibleSceneryPlacement(sel, name);
+                };
+                vt.focusRect = [this, sel]() { return accessSceneryRect(sel); };
+                b.AddItem(
+                    ControlId::Structural(
+                        "sc:" + std::to_string(static_cast<int32_t>(sel.SceneryType)) + ":"
+                        + std::to_string(static_cast<int32_t>(sel.EntryIndex))),
+                    std::move(vt));
+            }
+            b.PopContext();
         }
 
+        // Tab/Shift+Tab: cycle the scenery-group tabs via the window's own tab switch; the graph
+        // announces the new group's header + first item.
+        void AccessChangePage(int32_t delta)
+        {
+            const int32_t n = static_cast<int32_t>(_tabEntries.size());
+            if (n == 0)
+                return;
+            const int32_t tab = (static_cast<int32_t>(_activeTabIndex) + delta + n) % n;
+            onMouseDown(static_cast<WidgetIndex>(WIDX_SCENERY_TAB_1 + tab)); // switches and refreshes
+        }
+
+    private:
 #pragma endregion
 
         void DrawTabs(RenderTarget& rt, const ScreenCoordsXY& offset)
@@ -3783,5 +3714,21 @@ namespace OpenRCT2::Ui::Windows
             ToolSet(*toolWindow, WIDX_SCENERY_BACKGROUND, Tool::arrow);
             gInputFlags.set(InputFlag::allowRightMouseRemoval);
         }
+    }
+
+    // Register the scenery window with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterSceneryGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::scenery;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<SceneryWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<SceneryWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

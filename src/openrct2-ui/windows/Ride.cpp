@@ -13,9 +13,10 @@
 #include <limits>
 #include <memory>
 #include <openrct2-ui/UiStringIds.h>
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Viewport.h>
@@ -826,8 +827,6 @@ namespace OpenRCT2::Ui::Windows
 
         void onUpdate() override
         {
-            axTickPendingAnnounce(); // deferred re-announce of a control whose value applies a tick late
-
             switch (page)
             {
                 case WINDOW_RIDE_PAGE_MAIN:
@@ -1067,22 +1066,12 @@ namespace OpenRCT2::Ui::Windows
         };
         struct AxItem
         {
-            std::string text;       // fully composed spoken text (label, kind, value)
-            std::string value;      // just the current value ("Bright red", "$1.10", "checked"), for change announcements
+            std::string text;       // fully composed spoken text (label, kind, value) - used for data rows
+            std::string label;      // just the "label, kind" prefix (no value), for control rows
+            std::string value;      // just the current value ("Bright red", "$1.10", "checked")
             AxKind kind = AxKind::data;
             WidgetIndex widget = 0; // dropdown chevron / spinner value / checkbox / button
         };
-
-        int32_t _accessIndex = 0; // 0 = tab selector; 1..n = page items
-        bool _accessDropdownOpen = false;
-        WidgetIndex _accessDropdownChevron = 0;
-
-        // Controls that change through a game action apply a tick later (UI-issued actions are queued),
-        // so reading the value immediately gives the old one. Instead we remember the pre-change text
-        // and re-announce the focused item from onUpdate once it actually changes (or after a timeout).
-        bool _axAnnouncePending = false;
-        std::string _axPrevValue;
-        int32_t _axPendingFrames = 0;
 
         static const char* axPageName(int32_t p)
         {
@@ -1219,13 +1208,14 @@ namespace OpenRCT2::Ui::Windows
 
             const auto data = [&](std::string t) {
                 if (!t.empty())
-                    items.push_back({ std::move(t), {}, AxKind::data, 0 });
+                    items.push_back({ t, {}, {}, AxKind::data, 0 });
             };
             const auto control = [&](std::string label, AxKind kind, WidgetIndex w, std::string value) {
-                std::string t = std::move(label) + ", " + axKindWord(kind);
+                std::string prefix = std::move(label) + ", " + axKindWord(kind);
+                std::string t = prefix;
                 if (!value.empty())
                     t += ", " + value;
-                items.push_back({ std::move(t), std::move(value), kind, w });
+                items.push_back({ std::move(t), std::move(prefix), std::move(value), kind, w });
             };
 
             switch (page)
@@ -1442,38 +1432,9 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        void axAnnounceTab()
-        {
-            int32_t total = 0, pos = 0;
-            for (int32_t p = 0; p < WINDOW_RIDE_PAGE_COUNT; p++)
-            {
-                if (widgets[WIDX_TAB_1 + p].type == WidgetType::empty)
-                    continue;
-                if (p == page)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(std::string(axPageName(page)) + " tab", pos, total);
-        }
-
-        void axAnnounceFocus()
-        {
-            if (_accessDropdownOpen)
-                return;
-            onPrepareDraw(); // refresh per-page widget text/positions before reading them
-            if (_accessIndex <= 0)
-            {
-                axAnnounceTab();
-                return;
-            }
-            const auto items = buildAxItems();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                return;
-            Accessibility::ScreenReaderSpeakItem(items[ci].text, ci, static_cast<int32_t>(items.size()));
-        }
-
-        void axChangeTab(int32_t delta)
+        // Tab/Shift+Tab: cycle the visible ride pages via the window's own page switch (skipping tabs
+        // hidden for this ride); the graph announces the new page's landing.
+        void AccessChangePage(int32_t delta)
         {
             int32_t newPage = page;
             for (int32_t i = 0; i < WINDOW_RIDE_PAGE_COUNT; i++)
@@ -1483,128 +1444,12 @@ namespace OpenRCT2::Ui::Windows
                     break;
             }
             setPage(newPage);
-            _accessIndex = 0;
-            axAnnounceTab();
-        }
-
-        void axMove(int32_t delta)
-        {
-            const int32_t total = static_cast<int32_t>(buildAxItems().size()) + 1; // +1 for the tab selector
-            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
-            axAnnounceFocus();
         }
 
         void axCloseDropdown()
         {
             if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
                 windowMgr->CloseByClass(WindowClass::dropdown);
-            _accessDropdownOpen = false;
-        }
-
-        void axMoveDropdown(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-            int32_t idx = std::max(0, gDropdown.highlightedIndex);
-            for (int32_t steps = 0; steps <= n; steps++)
-            {
-                idx = (idx + delta + n) % n;
-                if (!gDropdown.items[idx].isSeparator())
-                    break;
-                if (delta == 0)
-                    delta = 1; // first focus: step forward off a separator
-            }
-            if (gDropdown.items[idx].isSeparator())
-                return;
-            gDropdown.highlightedIndex = idx;
-
-            const auto& item = gDropdown.items[idx];
-            // Most items carry display text; colour swatches are image items whose name is in the
-            // tooltip, and the current colour is marked by gDropdown.defaultIndex (not isChecked).
-            std::string text = item.text;
-            if (text.empty() && item.tooltip != kStringIdNone && item.tooltip != kStringIdEmpty)
-                text = OpenRCT2::FormatStringID(item.tooltip);
-            const bool selected = item.isChecked()
-                || (item.type == Dropdown::ItemType::colour && idx == gDropdown.defaultIndex);
-            if (selected)
-                text += ", selected";
-            if (item.isDisabled())
-                text += ", unavailable";
-            int32_t total = 0, pos = 0;
-            for (int32_t j = 0; j < gDropdown.numItems; j++)
-            {
-                if (gDropdown.items[j].isSeparator())
-                    continue;
-                if (j == idx)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(text, pos, total);
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
-        }
-
-        void axOpenDropdown(WidgetIndex chevron)
-        {
-            onMouseDown(chevron); // populates and shows gDropdown
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
-                return;
-            _accessDropdownOpen = true;
-            _accessDropdownChevron = chevron;
-            axMoveDropdown(0); // announce the current item
-        }
-
-        void axCommitDropdown()
-        {
-            const int32_t idx = gDropdown.highlightedIndex;
-            const WidgetIndex chevron = _accessDropdownChevron;
-            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
-                && !gDropdown.items[idx].isDisabled();
-            axCloseDropdown();
-            if (valid)
-                onDropdown(chevron, idx);
-            axAnnounceFocus();
-        }
-
-        // Just the value of the currently focused item right now (fresh read), or empty.
-        std::string axFocusedValue()
-        {
-            if (_accessIndex <= 0)
-                return {};
-            const auto items = buildAxItems();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                return {};
-            return items[ci].value;
-        }
-
-        // Arm a deferred announcement: remember the current (pre-change) value; onUpdate re-announces just
-        // the new value once it changes (the queued game action has applied) or after a short timeout.
-        void axPendAnnounce(std::string prevValue)
-        {
-            _axPrevValue = std::move(prevValue);
-            _axAnnouncePending = true;
-            _axPendingFrames = 0;
-        }
-
-        // Drives the deferred announcement each frame. Call from onUpdate. Speaks only the value the control
-        // jumped to (not the full label/position), so adjusting a slider/checkbox is terse.
-        void axTickPendingAnnounce()
-        {
-            if (!_axAnnouncePending)
-                return;
-            onPrepareDraw(); // refresh widget captions/state from the (now updated) ride
-            const std::string cur = axFocusedValue();
-            if (cur != _axPrevValue || ++_axPendingFrames >= 8)
-            {
-                _axAnnouncePending = false;
-                if (!cur.empty())
-                    Accessibility::ScreenReaderSpeak(cur);
-                else
-                    axAnnounceFocus(); // no value to read (e.g. a button) — fall back to the full item
-            }
         }
 
         // Cycles a combo box's value in place (no visible dropdown), like a slider: opens the dropdown to
@@ -1649,153 +1494,69 @@ namespace OpenRCT2::Ui::Windows
                 onDropdown(chevron, idx);
         }
 
-        void axAdjust(int32_t delta)
+        // ---- graph accessibility recipe ----
+
+        // Declare the current page's rows fresh from live ride state. buildAxItems() composes each
+        // row; a control's value is a LIVE part so the engine re-announces just the new value once
+        // the queued game action applies a tick later (the former deferred-announce mechanism).
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            if (_accessIndex <= 0)
-            {
-                axChangeTab(delta);
-                return;
-            }
+            using namespace Accessibility::Graph;
+            onPrepareDraw();
+
+            b.PushContext(axPageName(page));
             const auto items = buildAxItems();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                return;
-            const auto& it = items[ci];
-            switch (it.kind)
+            for (int32_t i = 0; i < static_cast<int32_t>(items.size()); i++)
             {
-                case AxKind::dropdown:
-                    // Combo boxes behave like sliders: Left/Right cycle the value in place, no open/close.
-                    axCycleDropdown(it.widget, delta);
-                    axPendAnnounce(it.value);
-                    break;
-                case AxKind::spinner:
-                    onMouseDown(static_cast<WidgetIndex>(delta > 0 ? (it.widget + 1) : (it.widget + 2))); // up : down
-                    axPendAnnounce(it.value);
-                    break;
-                default:
-                    axAnnounceFocus(); // checkboxes/buttons/data: re-read only
-                    break;
-            }
-        }
-
-        void axActivate()
-        {
-            if (_accessIndex <= 0)
-                return; // tab selector uses Left/Right
-            const auto items = buildAxItems();
-            const int32_t ci = _accessIndex - 1;
-            if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                return;
-            const auto& it = items[ci];
-            switch (it.kind)
-            {
-                case AxKind::checkbox:
-                    // The toggle applies a tick later, so announce the new state via the deferred path
-                    // rather than reading the (still stale) widget immediately.
-                    onMouseUp(it.widget);
-                    axPendAnnounce(it.value);
-                    break;
-                case AxKind::dropdown:
-                    // Combo boxes are sliders now: Enter just re-reads the current value (Left/Right change it).
-                    axAnnounceFocus();
-                    break;
-                case AxKind::button:
-                    onMouseUp(it.widget); // locate works immediately; demolish/refurbish open a prompt
-                    break;
-                default:
-                    break; // sliders use Left/Right
-            }
-        }
-
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
-        {
-            // First-letter navigation is a menu feature; this is a data/settings window, so letters do
-            // nothing here (but are swallowed so they don't leak to the toolbar behind the window).
-            return true;
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            WidgetIndex w;
-            if (_accessIndex <= 0)
-            {
-                w = WIDX_TAB_1 + page; // the focused tab
-            }
-            else
-            {
-                const auto items = buildAxItems();
-                const int32_t ci = _accessIndex - 1;
-                if (ci < 0 || ci >= static_cast<int32_t>(items.size()))
-                    return std::nullopt;
-                // Control items map to their widget; data read-outs box the page content area.
-                w = (items[ci].kind == AxKind::data) ? WIDX_PAGE_BACKGROUND : items[ci].widget;
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            if (_accessDropdownOpen)
-            {
-                switch (action)
+                const auto it = items[i];
+                NodeVtable vt;
+                if (it.kind == AxKind::data)
                 {
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveLeft:
-                        axMoveDropdown(-1);
-                        return true;
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::moveRight:
-                        axMoveDropdown(1);
-                        return true;
-                    case AccessibilityAction::activate:
-                        axCommitDropdown();
-                        return true;
-                    case AccessibilityAction::cancel:
-                        axCloseDropdown();
-                        axAnnounceFocus();
-                        return true;
-                    default:
-                        return false;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(it.text));
                 }
+                else
+                {
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(it.label));
+                    // Fresh value, re-read live so a delayed game-action result is announced when it lands.
+                    vt.announcements.emplace_back(
+                        [this, i]() {
+                            onPrepareDraw();
+                            const auto cur = buildAxItems();
+                            return (i < static_cast<int32_t>(cur.size())) ? cur[i].value : std::string();
+                        },
+                        true, AnnouncementKinds::kValue);
+                }
+                vt.focusRect = [this, it]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const WidgetIndex w = (it.kind == AxKind::data) ? WIDX_PAGE_BACKGROUND : it.widget;
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                            wd.width() + 1, wd.height() + 1 };
+                };
+                switch (it.kind)
+                {
+                    case AxKind::dropdown:
+                        // Combo boxes behave like sliders: Left/Right cycle the value in place.
+                        vt.onAdjust = [this, w = it.widget](int32_t sign, bool) { axCycleDropdown(w, sign); };
+                        break;
+                    case AxKind::spinner:
+                        vt.onAdjust = [this, w = it.widget](int32_t sign, bool) {
+                            onMouseDown(static_cast<WidgetIndex>(sign > 0 ? (w + 1) : (w + 2))); // up : down
+                        };
+                        break;
+                    case AxKind::checkbox:
+                        vt.onActivate = [this, w = it.widget]() { onMouseUp(w); };
+                        break;
+                    case AxKind::button:
+                        vt.onActivate = [this, w = it.widget]() { onMouseUp(w); };
+                        break;
+                    default:
+                        break; // data rows are read-only
+                }
+                b.AddItem(ControlId::Structural("ride:" + std::to_string(page) + ":" + std::to_string(i)), std::move(vt));
             }
-
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                    axMove(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                    axMove(1);
-                    return true;
-                case AccessibilityAction::moveLeft:
-                    axAdjust(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    axAdjust(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    axActivate();
-                    return true;
-                case AccessibilityAction::nextTab:
-                    axChangeTab(1);
-                    return true;
-                case AccessibilityAction::prevTab:
-                    axChangeTab(-1);
-                    return true;
-                case AccessibilityAction::announce:
-                    axAnnounceFocus();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
-            }
+            b.PopContext();
         }
 #pragma endregion
 
@@ -8091,5 +7852,21 @@ namespace OpenRCT2::Ui::Windows
         {
             CancelScenerySelection();
         }
+    }
+
+    // Register the ride window with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterRideGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::ride;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<RideWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<RideWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

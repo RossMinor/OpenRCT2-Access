@@ -279,6 +279,8 @@ namespace OpenRCT2::Ui::Windows
     void RegisterNewRideGraphScreen();
     void RegisterNewsGraphScreen();
     void RegisterResearchGraphScreen();
+    void RegisterRideGraphScreen();
+    void RegisterSceneryGraphScreen();
 
     // SavePrompt
     WindowBase* SavePromptOpen();
