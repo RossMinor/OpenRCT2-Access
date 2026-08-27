@@ -969,7 +969,8 @@ namespace OpenRCT2::Ui::Windows
                            "raise or lower the water.";
                 case WIDX_PATH:
                     return "Paths. From the map cursor, press Space to build a path, D to remove it, "
-                           "P to change the path type, and Q to toggle a queue line.";
+                           "and L to change its slope. Press F4 to open the path menu, where you can "
+                           "choose the path type, queue, and railings.";
                 case WIDX_CLEAR_SCENERY:
                     return "Clear scenery. From the map cursor, press X to clear scenery, and B to "
                            "change the brush size.";
