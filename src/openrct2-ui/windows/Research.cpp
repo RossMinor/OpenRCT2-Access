@@ -10,6 +10,8 @@
 #include <iterator>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -123,10 +125,6 @@ namespace OpenRCT2::Ui::Windows
     class ResearchWindow final : public Window
     {
     public:
-        // Accessibility: focused row in the Funding page's item list (funding level + the seven
-        // priority checkboxes). -1 means nothing focused, so the first Down arrow lands on row 0.
-        int32_t _accessFundingIndex = -1;
-
         void onOpen() override
         {
             setPage(WINDOW_RESEARCH_PAGE_DEVELOPMENT);
@@ -266,124 +264,91 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        void accessMoveFunding(int32_t delta)
+        // Enter on a Funding row. category -1 cycles the funding level (None -> Minimum -> Normal ->
+        // Maximum -> None); 0..6 toggle the priority checkbox. Both apply immediately in single
+        // player; the node's stateText re-reads the result.
+        void accessToggleFunding(int32_t category)
         {
-            const auto items = buildFundingItems();
-            if (items.empty())
-                return;
-            const int32_t n = static_cast<int32_t>(items.size());
-            _accessFundingIndex = (_accessFundingIndex + delta + n) % n;
-            Accessibility::ScreenReaderSpeakItem(items[_accessFundingIndex].label, _accessFundingIndex, n);
-        }
-
-        void accessActivateFunding()
-        {
-            const auto items = buildFundingItems();
-            if (_accessFundingIndex < 0 || _accessFundingIndex >= static_cast<int32_t>(items.size()))
-                return;
-            const auto& it = items[_accessFundingIndex];
             const auto& gameState = getGameState();
-
-            if (it.category < 0)
+            if (category < 0)
             {
-                // Cycle the funding level (None -> Minimum -> Normal -> Maximum -> None).
                 const int32_t newLevel = (gameState.researchFundingLevel + 1) & 3;
                 auto action = GameActions::ParkSetResearchFundingAction(gameState.researchPriorities, newLevel);
                 GameActions::Execute(&action, getGameState());
-
-                // The action applies immediately in single player; re-read the funding row so the
-                // new level is heard.
-                const auto updated = buildFundingItems();
-                if (_accessFundingIndex >= 0 && _accessFundingIndex < static_cast<int32_t>(updated.size()))
-                    Accessibility::ScreenReaderSpeak(updated[_accessFundingIndex].label);
+                return;
             }
-            else if (!it.enabled)
-            {
-                Accessibility::ScreenReaderSpeak("That category is fully researched and cannot be changed");
-            }
-            else
-            {
-                const uint8_t newPriorities = gameState.researchPriorities ^ static_cast<uint8_t>(1u << it.category);
-                auto action = GameActions::ParkSetResearchFundingAction(newPriorities, gameState.researchFundingLevel);
-                GameActions::Execute(&action, getGameState());
-
-                // Announce just the resulting checkbox state, matching the other settings windows.
-                const bool nowChecked = (getGameState().researchPriorities & (1u << it.category)) != 0;
-                Accessibility::ScreenReaderSpeak(nowChecked ? "checked" : "unchecked");
-            }
+            const int32_t mask = 1 << category;
+            if ((gameState.researchUncompletedCategories & mask) == 0)
+                return; // fully researched, cannot be changed
+            const uint8_t newPriorities = gameState.researchPriorities ^ static_cast<uint8_t>(mask);
+            auto action = GameActions::ParkSetResearchFundingAction(newPriorities, gameState.researchFundingLevel);
+            GameActions::Execute(&action, getGameState());
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Short spoken feedback for a Funding row after Enter: the funding level, or the checkbox
+        // state, matching the other settings windows.
+        std::string accessFundingState(int32_t category)
         {
-            WidgetIndex w = WIDX_TAB_1 + page;
-            // On the Funding page, highlight the focused row's widget so a sighted helper can follow.
-            if (page == WINDOW_RESEARCH_PAGE_FUNDING && _accessFundingIndex >= 0)
+            const auto& gameState = getGameState();
+            if (category < 0)
+                return OpenRCT2::FormatStringID(kResearchFundingLevelNames[gameState.researchFundingLevel & 3]);
+            const int32_t mask = 1 << category;
+            if ((gameState.researchUncompletedCategories & mask) == 0)
+                return "fully researched";
+            return (gameState.researchPriorities & mask) ? "checked" : "unchecked";
+        }
+
+        // ---- graph accessibility recipe ----
+
+        // Development page is a single info node (the research overview); the Funding page groups its
+        // funding-level and priority rows under the page header.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            onPrepareDraw();
+
+            if (page == WINDOW_RESEARCH_PAGE_FUNDING)
             {
-                const auto items = buildFundingItems();
-                if (_accessFundingIndex < static_cast<int32_t>(items.size()))
+                b.PushContext(getAccessibilityPageSummary());
+                for (const auto& it : buildFundingItems())
                 {
-                    const int32_t cat = items[_accessFundingIndex].category;
-                    w = (cat < 0) ? WIDX_RESEARCH_FUNDING : static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + cat);
+                    const int32_t cat = it.category;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(it.label));
+                    vt.onActivate = [this, cat]() { accessToggleFunding(cat); };
+                    vt.stateText = [this, cat]() { return accessFundingState(cat); };
+                    vt.focusRect = [this, cat]() -> std::optional<Accessibility::Graph::GraphRect> {
+                        const WidgetIndex w = (cat < 0) ? WIDX_RESEARCH_FUNDING
+                                                        : static_cast<WidgetIndex>(WIDX_TRANSPORT_RIDES + cat);
+                        if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                            return std::nullopt;
+                        const auto& wd = widgets[w];
+                        return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                                wd.width() + 1, wd.height() + 1 };
+                    };
+                    b.AddItem(ControlId::Structural("res:fund:" + std::to_string(cat)), std::move(vt));
                 }
+                b.PopContext();
+                return;
             }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+
+            NodeVtable vt;
+            vt.announcements.emplace_back([this]() { return getAccessibilityPageSummary(); });
+            vt.focusRect = [this]() -> std::optional<Accessibility::Graph::GraphRect> {
+                const WidgetIndex w = static_cast<WidgetIndex>(WIDX_TAB_1 + page);
+                if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                    return std::nullopt;
+                const auto& wd = widgets[w];
+                return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                        wd.height() + 1 };
+            };
+            b.AddItem(ControlId::Structural("res:dev"), std::move(vt));
         }
 
-        void changeAccessibilityTab(int32_t delta)
+        // Tab/Shift+Tab: cycle the two pages (Development / Funding); the graph announces the landing.
+        void AccessChangePage(int32_t delta)
         {
-            _accessFundingIndex = -1; // restart the Funding row read-out from the top
-            int32_t newPage = (page + delta + WINDOW_RESEARCH_PAGE_COUNT) % WINDOW_RESEARCH_PAGE_COUNT;
-            setPage(newPage);
-            Accessibility::ScreenReaderSpeakItem(getAccessibilityPageSummary(), page, WINDOW_RESEARCH_PAGE_COUNT);
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveLeft:
-                    changeAccessibilityTab(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    changeAccessibilityTab(1);
-                    return true;
-                case AccessibilityAction::moveUp:
-                    if (page == WINDOW_RESEARCH_PAGE_FUNDING)
-                        accessMoveFunding(-1);
-                    else
-                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                    return true;
-                case AccessibilityAction::moveDown:
-                    if (page == WINDOW_RESEARCH_PAGE_FUNDING)
-                        accessMoveFunding(1);
-                    else
-                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                    return true;
-                case AccessibilityAction::activate:
-                    if (page == WINDOW_RESEARCH_PAGE_FUNDING)
-                        accessActivateFunding();
-                    return true;
-                case AccessibilityAction::announce:
-                    if (page == WINDOW_RESEARCH_PAGE_FUNDING && _accessFundingIndex >= 0)
-                    {
-                        const auto items = buildFundingItems();
-                        if (_accessFundingIndex < static_cast<int32_t>(items.size()))
-                            Accessibility::ScreenReaderSpeak(items[_accessFundingIndex].label);
-                    }
-                    else
-                        Accessibility::ScreenReaderSpeak(getAccessibilityPageSummary());
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-                default:
-                    return false;
-            }
+            setPage((page + delta + WINDOW_RESEARCH_PAGE_COUNT) % WINDOW_RESEARCH_PAGE_COUNT);
         }
 
     private:
@@ -536,6 +501,22 @@ namespace OpenRCT2::Ui::Windows
             WindowClass::research, kWindowSizeDevelopment, WindowFlag::higherContrastOnPress);
         window->setPage(WINDOW_RESEARCH_PAGE_DEVELOPMENT);
         return window;
+    }
+
+    // Register the research window with the graph accessibility navigator (called once at startup via
+    // EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterResearchGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::research;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ResearchWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<ResearchWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 
     static WidgetIndex GetWidgetIndexOffset(WidgetIndex baseWidgetIndex, WidgetIndex currentPageWidgetIndex)

@@ -11,6 +11,8 @@
 #include <iterator>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
@@ -117,11 +119,6 @@ namespace OpenRCT2::Ui::Windows
     private:
         int32_t _pressedNewsItemIndex{}, _pressedButtonIndex{}, _suspendUpdateTicks{};
         WidgetIndex _baseCheckboxIndex;
-
-        // Accessible-navigation cursors: position within the archived message list, and
-        // within the notification-options checkbox list.
-        int32_t _accessNewsCursor = -1;
-        int32_t _accessOptionCursor = -1;
 
         static int32_t CalculateNewsItemHeight()
         {
@@ -300,17 +297,13 @@ namespace OpenRCT2::Ui::Windows
 
 #pragma region Accessibility
 
-        // Spoken summary for the currently-selected message (News tab).
-        void announceNewsItem()
+        // Full spoken line for the archived message at index i (date, text, and the Enter hint).
+        std::string newsItemText(int32_t i)
         {
             const auto& archived = getGameState().newsItems.getArchived();
-            if (_accessNewsCursor < 0 || _accessNewsCursor >= static_cast<int32_t>(archived.size()))
-            {
-                Accessibility::ScreenReaderSpeak("No messages");
-                return;
-            }
-
-            const auto& item = archived[_accessNewsCursor];
+            if (i < 0 || i >= static_cast<int32_t>(archived.size()))
+                return {};
+            const auto& item = archived[i];
             std::string text = OpenRCT2::FormatStringID(
                 STR_NEWS_DATE_FORMAT, DateDayNames[item.day - 1], DateGameMonthNames[DateGetMonth(item.monthYear)]);
             text += ", " + item.text;
@@ -318,143 +311,111 @@ namespace OpenRCT2::Ui::Windows
                 text += ". Press Enter to view location";
             else if (item.typeHasSubject())
                 text += ". Press Enter for details";
-            Accessibility::ScreenReaderSpeakItem(text, _accessNewsCursor, static_cast<int32_t>(archived.size()));
+            return text;
         }
 
-        // Spoken summary for the currently-selected notification option (Options tab).
-        void announceOptionItem()
+        void activateNewsItem(int32_t i)
         {
-            const auto count = static_cast<int32_t>(std::size(kNewsItemOptionDefinitions));
-            if (_accessOptionCursor < 0 || _accessOptionCursor >= count)
+            const auto& archived = getGameState().newsItems.getArchived();
+            if (i < 0 || i >= static_cast<int32_t>(archived.size()))
                 return;
-
-            const auto& def = kNewsItemOptionDefinitions[_accessOptionCursor];
-            std::string text = OpenRCT2::FormatStringID(def.caption);
-            text += GetNotificationValueRef(def) ? ", checked" : ", unchecked";
-            Accessibility::ScreenReaderSpeakItem(text, _accessOptionCursor, count);
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            const WidgetIndex w = WIDX_TAB_NEWS + page; // newsTab/optionsTab map to the two tab widgets
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
+            const auto& item = archived[i];
+            if (item.typeHasLocation())
             {
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveRight:
+                auto loc = News::GetSubjectLocation(item.type, item.assoc);
+                auto* mainWindow = WindowGetMain();
+                if (loc.has_value() && mainWindow != nullptr)
                 {
-                    const auto newPage = (page == newsTab) ? optionsTab : newsTab;
-                    setPage(newPage);
-                    if (newPage == newsTab)
-                    {
-                        const auto count = getGameState().newsItems.getArchived().size();
-                        _accessNewsCursor = -1;
-                        Accessibility::ScreenReaderSpeak(
-                            "Recent messages, "
-                            + (count == 0 ? std::string("no messages")
-                                          : std::to_string(count) + (count == 1 ? " message" : " messages")));
-                    }
-                    else
-                    {
-                        // Land on the first option so its state is read immediately.
-                        _accessOptionCursor = 0;
-                        const auto& def = kNewsItemOptionDefinitions[0];
-                        std::string text = "Notification settings, " + OpenRCT2::FormatStringID(def.caption);
-                        text += GetNotificationValueRef(def) ? ", checked" : ", unchecked";
-                        Accessibility::ScreenReaderSpeak(text);
-                    }
-                    return true;
+                    WindowScrollToLocation(*mainWindow, loc.value());
+                    Accessibility::ScreenReaderSpeak("Showing location");
                 }
-
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveDown:
-                {
-                    if (page == newsTab)
-                    {
-                        const auto size = static_cast<int32_t>(getGameState().newsItems.getArchived().size());
-                        if (size == 0)
-                        {
-                            Accessibility::ScreenReaderSpeak("No messages");
-                            return true;
-                        }
-                        // List reads oldest-at-top to newest-at-bottom; start at the newest.
-                        if (_accessNewsCursor < 0)
-                            _accessNewsCursor = size - 1;
-                        else if (action == AccessibilityAction::moveUp)
-                            _accessNewsCursor = std::max(0, _accessNewsCursor - 1);
-                        else
-                            _accessNewsCursor = std::min(size - 1, _accessNewsCursor + 1);
-                        announceNewsItem();
-                    }
-                    else
-                    {
-                        const auto count = static_cast<int32_t>(std::size(kNewsItemOptionDefinitions));
-                        if (_accessOptionCursor < 0)
-                            _accessOptionCursor = (action == AccessibilityAction::moveDown) ? 0 : count - 1;
-                        else if (action == AccessibilityAction::moveDown)
-                            _accessOptionCursor = (_accessOptionCursor + 1) % count;
-                        else
-                            _accessOptionCursor = (_accessOptionCursor - 1 + count) % count;
-                        announceOptionItem();
-                    }
-                    return true;
-                }
-
-                case AccessibilityAction::activate:
-                {
-                    if (page == newsTab)
-                    {
-                        const auto& archived = getGameState().newsItems.getArchived();
-                        if (_accessNewsCursor < 0 || _accessNewsCursor >= static_cast<int32_t>(archived.size()))
-                            return true;
-                        const auto& item = archived[_accessNewsCursor];
-                        if (item.typeHasLocation())
-                        {
-                            auto loc = News::GetSubjectLocation(item.type, item.assoc);
-                            auto* mainWindow = WindowGetMain();
-                            if (loc.has_value() && mainWindow != nullptr)
-                            {
-                                WindowScrollToLocation(*mainWindow, loc.value());
-                                Accessibility::ScreenReaderSpeak("Showing location");
-                            }
-                        }
-                        else if (item.typeHasSubject())
-                        {
-                            News::OpenSubject(item.type, item.assoc);
-                            Accessibility::ScreenReaderSpeak("Opening details");
-                        }
-                    }
-                    else
-                    {
-                        const auto count = static_cast<int32_t>(std::size(kNewsItemOptionDefinitions));
-                        if (_accessOptionCursor < 0 || _accessOptionCursor >= count)
-                            return true;
-                        const auto& def = kNewsItemOptionDefinitions[_accessOptionCursor];
-                        bool& configValue = GetNotificationValueRef(def);
-                        configValue = !configValue;
-                        Config::Save();
-                        invalidate();
-                        announceOptionItem();
-                    }
-                    return true;
-                }
-
-                case AccessibilityAction::cancel:
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    return true;
-
-                default:
-                    return false;
             }
+            else if (item.typeHasSubject())
+            {
+                News::OpenSubject(item.type, item.assoc);
+                Accessibility::ScreenReaderSpeak("Opening details");
+            }
+        }
+
+        // ---- graph accessibility recipe ----
+
+        // Declare the current tab's rows fresh from live state: the archived messages (newest is the
+        // landing) or the notification-option checkboxes.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            if (page == newsTab)
+            {
+                const auto& archived = getGameState().newsItems.getArchived();
+                const int32_t count = static_cast<int32_t>(archived.size());
+                b.PushContext(
+                    "Recent messages, "
+                    + (count == 0 ? std::string("no messages")
+                                  : std::to_string(count) + (count == 1 ? " message" : " messages")));
+                if (count == 0)
+                {
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static("No messages"));
+                    vt.excludeFromSearch = true;
+                    b.AddItem(ControlId::Structural("news:none"), std::move(vt));
+                    b.PopContext();
+                    return;
+                }
+                // Declared oldest-first (matching the visible list); the newest is the landing point.
+                for (int32_t i = 0; i < count; i++)
+                {
+                    NodeVtable vt;
+                    vt.announcements.emplace_back([this, i]() { return newsItemText(i); });
+                    vt.onActivate = [this, i]() { activateNewsItem(i); };
+                    vt.focusRect = [this]() -> std::optional<Accessibility::Graph::GraphRect> {
+                        const auto& wd = widgets[WIDX_SCROLL];
+                        if (wd.type == WidgetType::empty)
+                            return std::nullopt;
+                        return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top,
+                                                                wd.width() + 1, wd.height() + 1 };
+                    };
+                    b.AddItem(ControlId::Structural("news:" + std::to_string(i)), std::move(vt));
+                }
+                b.SetStart(ControlId::Structural("news:" + std::to_string(count - 1)));
+                b.PopContext();
+                return;
+            }
+
+            // Options tab: the notification-type checkboxes.
+            b.PushContext("Notification settings");
+            const int32_t count = static_cast<int32_t>(std::size(kNewsItemOptionDefinitions));
+            for (int32_t i = 0; i < count; i++)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(
+                    [i]() { return OpenRCT2::FormatStringID(kNewsItemOptionDefinitions[i].caption); });
+                vt.announcements.emplace_back(NodeAnnouncement::Static("checkbox", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(
+                    [this, i]() {
+                        return GetNotificationValueRef(kNewsItemOptionDefinitions[i]) ? "checked" : "unchecked";
+                    },
+                    false, AnnouncementKinds::kValue);
+                vt.onActivate = [this, i]() {
+                    bool& configValue = GetNotificationValueRef(kNewsItemOptionDefinitions[i]);
+                    configValue = !configValue;
+                    Config::Save();
+                    invalidate();
+                };
+                vt.stateText = [this, i]() {
+                    return GetNotificationValueRef(kNewsItemOptionDefinitions[i]) ? std::string("checked")
+                                                                                 : std::string("unchecked");
+                };
+                b.AddItem(ControlId::Structural("opt:" + std::to_string(i)), std::move(vt));
+            }
+            b.PopContext();
+        }
+
+        // Tab/Shift+Tab: flip between the two tabs (Recent messages / Notification settings); the
+        // graph announces the new tab's header and landing.
+        void AccessChangePage(int32_t /*delta*/)
+        {
+            setPage((page == newsTab) ? optionsTab : newsTab);
         }
 
 #pragma endregion
@@ -782,5 +743,21 @@ namespace OpenRCT2::Ui::Windows
     {
         auto* windowMgr = GetWindowManager();
         return windowMgr->FocusOrCreate<NewsWindow>(WindowClass::recentNews, kWindowSize, {});
+    }
+
+    // Register the recent-messages window with the graph accessibility navigator (called once at
+    // startup via EnsureGraphScreensRegistered). From here on the graph owns this window class; the
+    // legacy accessibility dispatcher stands down for it.
+    void RegisterNewsGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::recentNews;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<NewsWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<NewsWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows
