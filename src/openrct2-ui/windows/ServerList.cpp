@@ -11,9 +11,10 @@
 
     #include <cassert>
     #include <chrono>
-    #include <openrct2-ui/accessibility/ListNavigation.h>
     #include <openrct2-ui/accessibility/MapNavigation.h>
     #include <openrct2-ui/accessibility/ScreenReader.h>
+    #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+    #include <openrct2-ui/accessibility/graph/GraphScreens.h>
     #include <openrct2-ui/interface/Dropdown.h>
     #include <openrct2-ui/interface/Widget.h>
     #include <openrct2-ui/windows/Windows.h>
@@ -93,9 +94,6 @@ namespace OpenRCT2::Ui::Windows
 
         bool _showNetworkVersionTooltip = false;
         std::string _version;
-
-        // Keyboard-navigation cursor over the combined list of servers then action buttons.
-        int32_t _accessIndex = -1;
 
     public:
     #pragma region Window Override Events
@@ -456,116 +454,64 @@ namespace OpenRCT2::Ui::Windows
             return text;
         }
 
-        std::string getAccessEntryText(int32_t idx)
+        // Screen-shaped focus rectangle for entry `idx` (a server row, or one of the three action
+        // buttons that follow). Boxes the whole list when a server row is scrolled out of view.
+        std::optional<Accessibility::Graph::GraphRect> accessServerRect(int32_t idx)
         {
             const int32_t count = getServerCount();
-            if (idx < count)
-                return getServerText(idx);
-            static constexpr const char* kButtons[] = { "Fetch servers", "Add server", "Start server" };
-            return kButtons[idx - count];
-        }
-
-        void ensureServerVisible()
-        {
-            if (_accessIndex < 0 || _accessIndex >= getServerCount())
-                return;
-            auto& scroll = scrolls[0];
-            const int32_t top = _accessIndex * kItemHeight;
-            const int32_t bottom = top + kItemHeight;
-            const int32_t viewHeight = widgets[WIDX_LIST].height() - 1;
-            if (top < scroll.contentOffsetY)
-                scroll.contentOffsetY = top;
-            else if (bottom > scroll.contentOffsetY + viewHeight)
-                scroll.contentOffsetY = bottom - viewHeight;
-            widgetScrollUpdateThumbs(*this, WIDX_LIST);
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            const int32_t count = getServerCount();
-            // The three action buttons follow the servers: box the button widget directly.
-            if (_accessIndex >= count && _accessIndex < getAccessTotal())
+            if (idx >= count && idx < getAccessTotal())
             {
-                const WidgetIndex bw = WIDX_FETCH_SERVERS + (_accessIndex - count);
-                const auto& wd = widgets[bw];
-                return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                                   windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+                const auto& wd = widgets[WIDX_FETCH_SERVERS + (idx - count)];
+                return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                        wd.height() + 1 };
             }
-
             const auto& lw = widgets[WIDX_LIST];
+            const auto boxList = [&]() {
+                return Accessibility::Graph::GraphRect{ windowPos.x + lw.left, windowPos.y + lw.top, lw.width() + 1,
+                                                        lw.height() + 1 };
+            };
+            if (idx < 0 || idx >= count)
+                return boxList();
             const int32_t viewTop = windowPos.y + lw.top;
             const int32_t viewBottom = windowPos.y + lw.bottom;
-            const int32_t left = windowPos.x + lw.left;
-            const int32_t right = windowPos.x + lw.right;
-            if (_accessIndex < 0 || _accessIndex >= count)
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-
-            const int32_t rowTop = viewTop + _accessIndex * kItemHeight - scrolls[0].contentOffsetY;
-            int32_t top = std::max(rowTop, viewTop);
-            int32_t bottom = std::min(rowTop + kItemHeight, viewBottom);
+            const int32_t rowTop = viewTop + idx * kItemHeight - scrolls[0].contentOffsetY;
+            const int32_t top = std::max(rowTop, viewTop);
+            const int32_t bottom = std::min(rowTop + kItemHeight, viewBottom);
             if (bottom <= top)
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-            return ScreenRect{ { left, top }, { right, bottom } };
+                return boxList();
+            return Accessibility::Graph::GraphRect{ windowPos.x + lw.left, top, lw.width() + 1, bottom - top };
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // ---- graph accessibility recipe ----
+
+        // The window is a flat list: the fetched servers followed by the Fetch / Add / Start action
+        // buttons. Enter joins the focused server or presses the button.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            const int32_t total = getAccessTotal();
+            using namespace Accessibility::Graph;
             const int32_t count = getServerCount();
-
-            switch (action)
+            for (int32_t i = 0; i < count; i++)
             {
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveRight:
-                {
-                    const bool forward = (action == AccessibilityAction::moveDown
-                                          || action == AccessibilityAction::moveRight);
-                    // The list has no hidden rows (servers followed by action buttons).
-                    const int32_t idx = Accessibility::ListNav::wrap(_accessIndex, forward ? 1 : -1, total);
-                    if (idx < 0)
-                        return true; // nothing to navigate
-                    _accessIndex = idx;
-                    selectedListItem = (_accessIndex < count) ? _accessIndex : -1;
-                    Accessibility::ScreenReaderSpeakItem(getAccessEntryText(_accessIndex), _accessIndex, total);
-                    ensureServerVisible();
-                    invalidate();
-                    return true;
-                }
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, i]() { return getServerText(i); });
+                vt.onActivate = [this, i]() {
+                    selectedListItem = i;
+                    onMouseUp(WIDX_LIST); // join the server (or show a version error)
+                };
+                vt.focusRect = [this, i]() { return accessServerRect(i); };
+                b.AddItem(ControlId::Structural("srv:" + std::to_string(i)), std::move(vt));
+            }
 
-                case AccessibilityAction::activate:
-                {
-                    if (_accessIndex < 0 || _accessIndex >= total)
-                        return true;
-                    if (_accessIndex < count)
-                    {
-                        selectedListItem = _accessIndex;
-                        onMouseUp(WIDX_LIST); // join the server (or show a version error)
-                    }
-                    else
-                    {
-                        static constexpr WidgetIndex kBtn[] = { WIDX_FETCH_SERVERS, WIDX_ADD_SERVER, WIDX_START_SERVER };
-                        onMouseUp(kBtn[_accessIndex - count]);
-                    }
-                    return true;
-                }
-
-                case AccessibilityAction::cancel:
-                {
-                    auto* windowMgr = GetWindowManager();
-                    close();
-                    Accessibility::ReannounceToolbarItemIfMenuMode();
-                    if (windowMgr != nullptr)
-                    {
-                        if (auto* titleMenu = windowMgr->FindByClass(WindowClass::titleMenu); titleMenu != nullptr)
-                            titleMenu->onAccessibilityAction(AccessibilityAction::announce);
-                    }
-                    return true;
-                }
-
-                default:
-                    return false;
+            static constexpr const char* kButtons[] = { "Fetch servers", "Add server", "Start server" };
+            static constexpr WidgetIndex kBtn[] = { WIDX_FETCH_SERVERS, WIDX_ADD_SERVER, WIDX_START_SERVER };
+            for (int32_t j = 0; j < 3; j++)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(kButtons[j]));
+                vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+                vt.onActivate = [this, w = kBtn[j]]() { onMouseUp(w); };
+                vt.focusRect = [this, idx = count + j]() { return accessServerRect(idx); };
+                b.AddItem(ControlId::Structural("btn:" + std::to_string(j)), std::move(vt));
             }
         }
 
@@ -692,6 +638,26 @@ namespace OpenRCT2::Ui::Windows
             { WindowFlag::higherContrastOnPress, WindowFlag::resizable, WindowFlag::centreScreen });
 
         return window;
+    }
+
+    // Register the server-list window with the graph accessibility navigator (called once at startup
+    // via EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterServerListGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::serverList;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ServerListWindow&>(w).BuildAccessGraph(b); };
+        // Opened from the title menu; re-announce its focused item before the navigator closes us.
+        screen.onEscape = [](WindowBase&) {
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr != nullptr)
+                if (auto* tm = windowMgr->FindByClass(WindowClass::titleMenu); tm != nullptr)
+                    tm->onAccessibilityAction(AccessibilityAction::announce);
+            return false; // let the navigator close this window
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 
     void JoinServer(std::string address)

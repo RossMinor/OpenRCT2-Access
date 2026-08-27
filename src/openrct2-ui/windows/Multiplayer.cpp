@@ -9,8 +9,9 @@
 
 #include <algorithm>
 #include <cassert>
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -159,12 +160,10 @@ namespace OpenRCT2::Ui::Windows
     private:
         std::optional<ScreenSize> _windowInformationSize;
         uint8_t _selectedGroup{ 0 };
-        // Accessible keyboard focus. Item 0 is the tab selector; items 1..N are the current page's
-        // controls or list rows (so _accessIndex - 1 indexes into the page).
-        int32_t _accessIndex = 0;
-        // Combo-box navigation state, while a group dropdown is open (mirrors the Cheats window).
+        // Combo-box navigation state, while a group dropdown is open (graph recipe).
         bool _accessDropdownOpen = false;
         WidgetIndex _accessDropdownChevron = 0;
+        int32_t _accessDropdownOwner = -1; // page-row index that owns the open dropdown
         // The Groups page presents its top controls (default-group, add, remove, rename, selected-group)
         // as items 0..4 within the page, then the permission rows follow.
         static constexpr int32_t kGroupControlCount = 5;
@@ -921,76 +920,144 @@ namespace OpenRCT2::Ui::Windows
         // control, Enter activates it. Group selectors open as real combo boxes, like every other
         // dropdown in the mod.
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // ---- graph accessibility recipe ----
+
+        // Declare the current page's rows (or, while a group combo box's dropdown is open, that
+        // list's items) fresh from live state. itemText() composes each row; interactive rows get a
+        // behaviour, and rows carrying a value get a stateText that reads the result of Enter back.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            // While a group combo box is open, the arrow keys walk it and Enter commits.
+            using namespace Accessibility::Graph;
+
+            auto* windowMgr = GetWindowManager();
+            if (_accessDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessDropdownOpen = false;
+
             if (_accessDropdownOpen)
             {
-                switch (action)
+                b.PushContext("Group", "menu");
+                for (int32_t k = 0; k < gDropdown.numItems; k++)
                 {
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveLeft:
-                        accessMoveDropdown(-1);
-                        return true;
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::moveRight:
-                        accessMoveDropdown(1);
-                        return true;
-                    case AccessibilityAction::activate:
-                        accessCommitDropdown();
-                        return true;
-                    case AccessibilityAction::cancel:
-                        accessCloseDropdown();
-                        announceAccessFocus();
-                        return true;
-                    default:
-                        return true;
+                    if (gDropdown.items[k].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[k].text));
+                    if (gDropdown.items[k].isChecked())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                    vt.onActivate = [this, k]() { accessCommitDropdown(k); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(k)), std::move(vt));
                 }
+                b.PopContext();
+                return;
             }
 
-            switch (action)
+            onPrepareDraw();
+            b.PushContext(accessPageName(page));
+            const int32_t count = accessItemCount();
+            for (int32_t i = 0; i < count; i++)
             {
-                case AccessibilityAction::moveUp:    accessMove(-1); return true;
-                case AccessibilityAction::moveDown:  accessMove(1); return true;
-                case AccessibilityAction::moveLeft:  accessAdjust(-1); return true;
-                case AccessibilityAction::moveRight: accessAdjust(1); return true;
-                case AccessibilityAction::activate:  accessActivate(); return true;
-                case AccessibilityAction::nextTab:   accessChangeTab(1); return true;
-                case AccessibilityAction::prevTab:   accessChangeTab(-1); return true;
-                case AccessibilityAction::announce:  announceAccessFocus(); return true;
-                case AccessibilityAction::cancel:    close(); return true;
-                default:                             return true;
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, i]() { return itemText(i); });
+                vt.focusRect = [this, i]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    if (page == WINDOW_MULTIPLAYER_PAGE_INFORMATION)
+                        return std::nullopt; // read-only text, no widget to box
+                    const WidgetIndex wi = accessItemWidget(i);
+                    if (wi == WIDX_BACKGROUND || wi >= widgets.size() || widgets[wi].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[wi];
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                            wd.height() + 1 };
+                };
+                installItemBehavior(vt, i);
+                b.AddItem(ControlId::Structural("mp:" + std::to_string(page) + ":" + std::to_string(i)), std::move(vt));
             }
+            b.PopContext();
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Tab/Shift+Tab: cycle the four pages (Information / Players / Groups / Options).
+        void AccessChangePage(int32_t delta)
         {
-            if (_accessDropdownOpen)
-                return std::nullopt;
-            WidgetIndex wi;
-            if (_accessIndex <= 0)
-            {
-                wi = WIDX_TAB1 + page;
-            }
-            else
-            {
-                if (page == WINDOW_MULTIPLAYER_PAGE_INFORMATION)
-                    return std::nullopt; // read-only text, no widget to box
-                wi = accessItemWidget(_accessIndex - 1);
-            }
-            if (wi >= widgets.size() || widgets[wi].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[wi];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+            setPage((page + delta + 4) % 4);
         }
 
-        bool onAccessibilityTypeahead(uint32_t /*key*/) override
+        // Escape: close an open group dropdown first, returning focus to its combo box; otherwise let
+        // the navigator close the window.
+        bool AccessEscape()
         {
-            return true; // swallow letters so they don't leak to the game behind the window
+            if (!_accessDropdownOpen)
+                return false;
+            const int32_t owner = _accessDropdownOwner;
+            accessCloseDropdown();
+            accessSuggestFocus(owner);
+            return true;
         }
 
     private:
+        void installItemBehavior(Accessibility::Graph::NodeVtable& vt, int32_t i)
+        {
+            switch (page)
+            {
+                case WINDOW_MULTIPLAYER_PAGE_PLAYERS:
+                    vt.onActivate = [this, i]() {
+                        const int32_t player = IsServerPlayerInvisible() ? i + 1 : i;
+                        if (player < 0 || player >= Network::GetNumPlayers())
+                            return;
+                        selectedListItem = i;
+                        Accessibility::ScreenReaderSpeak("Opening " + std::string(Network::GetPlayerName(player)));
+                        PlayerOpen(Network::GetPlayerID(player));
+                    };
+                    break;
+                case WINDOW_MULTIPLAYER_PAGE_OPTIONS:
+                    vt.onActivate = [this, i]() {
+                        const auto opts = optionCheckboxes();
+                        if (i >= 0 && i < static_cast<int32_t>(opts.size()))
+                            onMouseUp(opts[i]);
+                    };
+                    vt.stateText = [this, i]() {
+                        onPrepareDraw();
+                        return valueText(i);
+                    };
+                    break;
+                case WINDOW_MULTIPLAYER_PAGE_GROUPS:
+                    if (i == 0 || i == 4)
+                    {
+                        const WidgetIndex chevron = (i == 0) ? WIDX_DEFAULT_GROUP_DROPDOWN : WIDX_SELECTED_GROUP_DROPDOWN;
+                        vt.onActivate = [this, i, chevron]() { accessOpenDropdown(i, chevron); };
+                    }
+                    else if (i == 1)
+                        vt.onActivate = [this]() {
+                            onMouseUp(WIDX_ADD_GROUP);
+                            Accessibility::ScreenReaderSpeak("Group added");
+                        };
+                    else if (i == 2)
+                        vt.onActivate = [this]() {
+                            onMouseUp(WIDX_REMOVE_GROUP);
+                            Accessibility::ScreenReaderSpeak("Group removed");
+                        };
+                    else if (i == 3)
+                        vt.onActivate = [this]() {
+                            onMouseUp(WIDX_RENAME_GROUP);
+                            Accessibility::ScreenReaderSpeak("Type a new group name, then press Enter.");
+                        };
+                    else
+                    {
+                        // Permission checkbox: toggle for the selected group; the host applies it now.
+                        vt.onActivate = [this, i]() {
+                            const int32_t actionIndex = i - kGroupControlCount;
+                            auto action = GameActions::NetworkModifyGroupAction(
+                                GameActions::ModifyGroupType::setPermissions, _selectedGroup, "", actionIndex,
+                                GameActions::PermissionState::toggle);
+                            GameActions::Execute(&action, getGameState());
+                            invalidate();
+                        };
+                        vt.stateText = [this, i]() { return valueText(i); };
+                    }
+                    break;
+                default:
+                    break; // INFORMATION: read-only
+            }
+        }
+
         static const char* accessPageName(int32_t p)
         {
             static const char* kNames[] = { "Information", "Players", "Groups", "Options" };
@@ -1014,56 +1081,13 @@ namespace OpenRCT2::Ui::Windows
             return 0;
         }
 
-        // Speaks the tab selector, or "label, kind, value" for the focused item, plus its position.
-        void announceAccessFocus()
+        // Ask the graph to land on a page row at its next render (used to return focus to the combo
+        // box that owned a dropdown once the dropdown closes).
+        void accessSuggestFocus(int32_t item)
         {
-            if (_accessDropdownOpen)
-                return;
-            if (_accessIndex <= 0)
-            {
-                Accessibility::ScreenReaderSpeakItem(std::string(accessPageName(page)) + " tab", page, 4);
-                return;
-            }
-            const int32_t i = _accessIndex - 1;
-            const int32_t count = accessItemCount();
-            if (i < 0 || i >= count)
-                return;
-            syncListSelection();
-            Accessibility::ScreenReaderSpeakItem(itemText(i), i, count);
-        }
-
-        // The value only, no label - spoken while adjusting a control (matching the slider convention).
-        void announceAccessValue()
-        {
-            if (_accessIndex <= 0)
-                return;
-            Accessibility::ScreenReaderSpeak(valueText(_accessIndex - 1));
-        }
-
-        void accessChangeTab(int32_t delta)
-        {
-            const int32_t p = (page + delta + 4) % 4;
-            setPage(p);
-            _accessIndex = 0;
-            announceAccessFocus();
-        }
-
-        void accessMove(int32_t delta)
-        {
-            const int32_t total = accessItemCount() + 1; // +1 for the tab selector at index 0
-            _accessIndex = Accessibility::ListNav::wrap(_accessIndex, delta, total);
-            invalidate();
-            announceAccessFocus();
-        }
-
-        // Keep the visible list highlight in step with the keyboard focus on the two scroll pages.
-        void syncListSelection()
-        {
-            const int32_t i = _accessIndex - 1;
-            if (page == WINDOW_MULTIPLAYER_PAGE_PLAYERS)
-                selectedListItem = i;
-            else if (page == WINDOW_MULTIPLAYER_PAGE_GROUPS)
-                selectedListItem = (i >= kGroupControlCount) ? (i - kGroupControlCount) : -1;
+            Accessibility::Graph::GraphStateForClass(WindowClass::multiplayer).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(
+                    "mp:" + std::to_string(page) + ":" + std::to_string(item));
         }
 
         std::vector<std::string> infoLines() const
@@ -1231,25 +1255,6 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        void accessAdjust(int32_t delta)
-        {
-            // On the tab selector, Left/Right switches page.
-            if (_accessIndex <= 0)
-            {
-                accessChangeTab(delta);
-                return;
-            }
-            const int32_t i = _accessIndex - 1;
-            // Left/Right on a group combo box opens it, like the dropdowns in the other windows.
-            if (page == WINDOW_MULTIPLAYER_PAGE_GROUPS && (i == 0 || i == 4))
-            {
-                accessOpenDropdown(i == 0 ? WIDX_DEFAULT_GROUP_DROPDOWN : WIDX_SELECTED_GROUP_DROPDOWN);
-                return;
-            }
-            // Everything else re-reads (checkboxes and permissions toggle with Enter; lists are read-only).
-            announceAccessFocus();
-        }
-
         // ---- Group combo-box navigation, mirroring the shared dropdown pattern -------------------
         void accessCloseDropdown()
         {
@@ -1258,23 +1263,7 @@ namespace OpenRCT2::Ui::Windows
             _accessDropdownOpen = false;
         }
 
-        void accessMoveDropdown(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-            int32_t idx = std::max(0, gDropdown.highlightedIndex);
-            idx = (idx + delta + n) % n;
-            gDropdown.highlightedIndex = idx;
-            std::string text = gDropdown.items[idx].text;
-            if (gDropdown.items[idx].isChecked())
-                text += ", selected";
-            Accessibility::ScreenReaderSpeakItem(text, idx, n);
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
-        }
-
-        void accessOpenDropdown(WidgetIndex chevronWidx)
+        void accessOpenDropdown(int32_t ownerItem, WidgetIndex chevronWidx)
         {
             onMouseDown(chevronWidx); // populates and shows gDropdown
             auto* windowMgr = GetWindowManager();
@@ -1282,86 +1271,20 @@ namespace OpenRCT2::Ui::Windows
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevronWidx;
-            accessMoveDropdown(0); // read the current selection
+            _accessDropdownOwner = ownerItem;
+            // The graph rebuild now declares the dropdown's items; its differ announces the landing.
         }
 
-        void accessCommitDropdown()
+        void accessCommitDropdown(int32_t idx)
         {
-            const int32_t idx = gDropdown.highlightedIndex;
             const WidgetIndex chevron = _accessDropdownChevron;
-            const bool valid = idx >= 0 && idx < gDropdown.numItems;
+            const int32_t owner = _accessDropdownOwner;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator();
             accessCloseDropdown();
             if (valid)
                 onDropdown(chevron, idx);
-            announceAccessFocus();
+            accessSuggestFocus(owner);
         }
-
-        void accessActivate()
-        {
-            if (_accessIndex <= 0)
-                return; // the tab selector switches page via Left/Right or Tab
-            const int32_t i = _accessIndex - 1;
-            if (i < 0 || i >= accessItemCount())
-                return;
-
-            switch (page)
-            {
-                case WINDOW_MULTIPLAYER_PAGE_PLAYERS:
-                {
-                    const int32_t player = IsServerPlayerInvisible() ? i + 1 : i;
-                    if (player < 0 || player >= Network::GetNumPlayers())
-                        return;
-                    selectedListItem = i;
-                    Accessibility::ScreenReaderSpeak("Opening " + std::string(Network::GetPlayerName(player)));
-                    PlayerOpen(Network::GetPlayerID(player));
-                    break;
-                }
-                case WINDOW_MULTIPLAYER_PAGE_GROUPS:
-                    switch (i)
-                    {
-                        case 0:
-                            accessOpenDropdown(WIDX_DEFAULT_GROUP_DROPDOWN);
-                            break;
-                        case 1:
-                            onMouseUp(WIDX_ADD_GROUP);
-                            Accessibility::ScreenReaderSpeak("Group added");
-                            break;
-                        case 2:
-                            onMouseUp(WIDX_REMOVE_GROUP);
-                            Accessibility::ScreenReaderSpeak("Group removed");
-                            break;
-                        case 3:
-                            onMouseUp(WIDX_RENAME_GROUP);
-                            Accessibility::ScreenReaderSpeak("Type a new group name, then press Enter.");
-                            break;
-                        case 4:
-                            accessOpenDropdown(WIDX_SELECTED_GROUP_DROPDOWN);
-                            break;
-                        default:
-                        {
-                            // Toggle the focused permission for the selected group.
-                            const int32_t actionIndex = i - kGroupControlCount;
-                            auto action = GameActions::NetworkModifyGroupAction(
-                                GameActions::ModifyGroupType::setPermissions, _selectedGroup, "", actionIndex,
-                                GameActions::PermissionState::toggle);
-                            GameActions::Execute(&action, getGameState());
-                            invalidate();
-                            announceAccessValue();
-                            break;
-                        }
-                    }
-                    break;
-                case WINDOW_MULTIPLAYER_PAGE_OPTIONS:
-                {
-                    const auto opts = optionCheckboxes();
-                    onMouseUp(opts[i]);
-                    onPrepareDraw(); // refresh checkbox pressed state before reading it back
-                    announceAccessValue();
-                    break;
-                }
-            }
-        }
-
     };
 
     WindowBase* MultiplayerOpen()
@@ -1377,5 +1300,22 @@ namespace OpenRCT2::Ui::Windows
         }
 
         return window;
+    }
+
+    // Register the multiplayer window with the graph accessibility navigator (called once at startup
+    // via EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterMultiplayerGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::multiplayer;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<MultiplayerWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<MultiplayerWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        screen.onEscape = [](WindowBase& w) { return static_cast<MultiplayerWindow&>(w).AccessEscape(); };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

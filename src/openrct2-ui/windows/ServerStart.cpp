@@ -11,8 +11,9 @@
 
     #include "../interface/Theme.h"
 
-    #include <openrct2-ui/accessibility/ListNavigation.h>
     #include <openrct2-ui/accessibility/ScreenReader.h>
+    #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+    #include <openrct2-ui/accessibility/graph/GraphScreens.h>
     #include <openrct2-ui/interface/Widget.h>
     #include <openrct2-ui/windows/Windows.h>
     #include <openrct2/Context.h>
@@ -256,44 +257,52 @@ namespace OpenRCT2::Ui::Windows
         // single up/down list of fields, each spoken as "label, value, position of total". Left/right
         // adjusts the value where that makes sense (max-players spinner, advertise checkbox); Enter
         // edits a text field or presses a button.
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveUp:
-                {
-                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
-                    _accessField = Accessibility::ListNav::wrap(_accessField, delta, kAxFieldCount);
-                    announceField();
-                    invalidate();
-                    return true;
-                }
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveRight:
-                    adjustField(action == AccessibilityAction::moveRight);
-                    return true;
-                case AccessibilityAction::activate:
-                    activateField();
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                case AccessibilityAction::announce:
-                    announceField();
-                    return true;
-                default:
-                    return false;
-            }
-        }
+        // ---- graph accessibility recipe ----
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // The window is a flat form; present its controls as a single up/down list. Text fields open
+        // the shared modal editor on Enter, the max-players spinner steps with Left/Right, the
+        // advertise checkbox toggles on Enter, and the two buttons activate on Enter. Each field's
+        // value is a live part so an edit or toggle is re-announced once it lands.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            if (_accessField < 0 || _accessField >= kAxFieldCount)
-                return std::nullopt;
-            const auto& wdg = widgets[widgetForField(static_cast<AxField>(_accessField))];
-            return ScreenRect{ { windowPos.x + wdg.left, windowPos.y + wdg.top },
-                               { windowPos.x + wdg.right, windowPos.y + wdg.bottom } };
+            using namespace Accessibility::Graph;
+            for (int32_t i = 0; i < kAxFieldCount; i++)
+            {
+                const auto f = static_cast<AxField>(i);
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(std::string(labelText(f))));
+                if (f == AxField::startServer || f == AxField::loadServer)
+                {
+                    vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+                    vt.onActivate = [this, f]() { onMouseUp(widgetForField(f)); };
+                }
+                else
+                {
+                    vt.announcements.emplace_back([this, f]() { return valueText(f); }, true, AnnouncementKinds::kValue);
+                    switch (f)
+                    {
+                        case AxField::maxPlayers:
+                            vt.onAdjust = [this](int32_t sign, bool) {
+                                onMouseUp(sign > 0 ? WIDX_MAXPLAYERS_INCREASE : WIDX_MAXPLAYERS_DECREASE);
+                            };
+                            break;
+                        case AxField::advertise:
+                            vt.onActivate = [this]() { onMouseUp(WIDX_ADVERTISE_CHECKBOX); };
+                            break;
+                        default: // text fields
+                            vt.onActivate = [this, f]() { openTextEditor(f); };
+                            break;
+                    }
+                }
+                vt.focusRect = [this, f]() -> std::optional<Accessibility::Graph::GraphRect> {
+                    const auto& wd = widgets[widgetForField(f)];
+                    if (wd.type == WidgetType::empty)
+                        return std::nullopt;
+                    return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                            wd.height() + 1 };
+                };
+                b.AddItem(ControlId::Structural("ss:" + std::to_string(i)), std::move(vt));
+            }
         }
 
     private:
@@ -311,7 +320,6 @@ namespace OpenRCT2::Ui::Windows
             loadServer,
         };
         static constexpr int32_t kAxFieldCount = 9;
-        int32_t _accessField = -1;
 
         static WidgetIndex widgetForField(AxField f)
         {
@@ -367,43 +375,6 @@ namespace OpenRCT2::Ui::Windows
             return {};
         }
 
-        // Label plus value - spoken when moving onto a field.
-        std::string fieldText(AxField f) const
-        {
-            if (f == AxField::startServer || f == AxField::loadServer)
-                return std::string(labelText(f)) + ", button";
-            return Accessibility::JoinSpeech({ labelText(f), valueText(f) });
-        }
-
-        void announceField()
-        {
-            if (_accessField < 0 || _accessField >= kAxFieldCount)
-                return;
-            Accessibility::ScreenReaderSpeakItem(
-                fieldText(static_cast<AxField>(_accessField)), _accessField, kAxFieldCount);
-        }
-
-        // Left/right on the two adjustable fields; a no-op elsewhere.
-        void adjustField(bool increase)
-        {
-            if (_accessField < 0 || _accessField >= kAxFieldCount)
-                return;
-            const auto f = static_cast<AxField>(_accessField);
-            switch (f)
-            {
-                case AxField::maxPlayers:
-                    onMouseUp(increase ? WIDX_MAXPLAYERS_INCREASE : WIDX_MAXPLAYERS_DECREASE);
-                    Accessibility::ScreenReaderSpeak(valueText(f));
-                    break;
-                case AxField::advertise:
-                    onMouseUp(WIDX_ADVERTISE_CHECKBOX);
-                    Accessibility::ScreenReaderSpeak(valueText(f));
-                    break;
-                default:
-                    break;
-            }
-        }
-
         // Opens the shared modal text-input window (the same one banners, signs and the group-rename
         // use). This is the accessible path: the modal is screen-reader aware and, crucially, the
         // InputManager routes keys to it directly, so the confirming Enter is consumed by the modal
@@ -432,34 +403,6 @@ namespace OpenRCT2::Ui::Windows
                     WindowTextInputRawOpen(this, WIDX_PASSWORD_INPUT, STR_PASSWORD, kStringIdEmpty, {}, _password, 32);
                     break;
                 default:
-                    break;
-            }
-        }
-
-        void activateField()
-        {
-            if (_accessField < 0 || _accessField >= kAxFieldCount)
-                return;
-            const auto f = static_cast<AxField>(_accessField);
-            switch (f)
-            {
-                case AxField::port:
-                case AxField::name:
-                case AxField::description:
-                case AxField::greeting:
-                case AxField::password:
-                    openTextEditor(f);
-                    break;
-                case AxField::advertise:
-                    onMouseUp(WIDX_ADVERTISE_CHECKBOX);
-                    Accessibility::ScreenReaderSpeak(valueText(f));
-                    break;
-                case AxField::maxPlayers:
-                    announceField();
-                    break;
-                case AxField::startServer:
-                case AxField::loadServer:
-                    onMouseUp(widgetForField(f));
                     break;
             }
         }
@@ -493,6 +436,18 @@ namespace OpenRCT2::Ui::Windows
     {
         auto* windowMgr = GetWindowManager();
         return windowMgr->FocusOrCreate<ServerStartWindow>(WindowClass::serverStart, kWindowSize, WindowFlag::centreScreen);
+    }
+
+    // Register the start-server window with the graph accessibility navigator (called once at startup
+    // via EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterServerStartGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::serverStart;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ServerStartWindow&>(w).BuildAccessGraph(b); };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows
 
