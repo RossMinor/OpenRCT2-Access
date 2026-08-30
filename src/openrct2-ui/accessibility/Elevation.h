@@ -23,12 +23,17 @@ namespace OpenRCT2::Ui::Accessibility
     // spoken figure is converted, in ElevationNumber, to the number the ride construction window
     // shows so the player hears the same value the game understands.
 
-    // World Z of the highest level a player stands on at this tile: the ground (above), or a footpath
-    // or ride entrance/exit/park entrance resting above it (bridges, paths in the air, raised station
-    // accesses). Use this for the elevation indicator so raised paths and entrances register instead
-    // of reading the ground beneath them. It deliberately does not climb onto overhead track or
-    // scenery - those are announced as their own tile features, not as "the level you are at".
-    // Returns -1 if the tile has no surface.
+    // World Z of the level a player stands on at this tile: the ground's base height, or a footpath
+    // or ride entrance/exit/park entrance resting above it (bridges, paths in the air, raised
+    // station accesses). Use this for the elevation indicator so raised paths and entrances register
+    // instead of reading the ground beneath them. It deliberately does not climb onto overhead track
+    // or scenery - those are announced as their own tile features, not as "the level you are at".
+    // Slope tops and water surfaces are also deliberately excluded: the tile's level is its base
+    // (the number the coordinate readout speaks and building acts at, and what the game's own
+    // height-marker labels show - they read the submerged land on water tiles). Water presence is
+    // announced as a tile feature and by the water-level commands; only construction treats water
+    // and slope tops as a floor, and that stays in the engine's MapGetHighestZ, which ride placement
+    // keeps using. Returns -1 if the tile has no surface.
     int32_t AccessibleTopZ(const CoordsXY& tile);
 
     // Converts a world Z to the elevation number the engine uses for construction height

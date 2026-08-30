@@ -14,13 +14,26 @@
 #include <openrct2/world/Map.h>
 #include <openrct2/world/MapLimits.h>
 #include <openrct2/world/tile_element/EntranceElement.h>
+#include <openrct2/world/tile_element/SurfaceElement.h>
 #include <openrct2/world/tile_element/TileElement.h>
 
 namespace OpenRCT2::Ui::Accessibility
 {
     int32_t AccessibleTopZ(const CoordsXY& tile)
     {
-        int32_t top = MapGetHighestZ(tile);
+        auto* surface = MapGetSurfaceElementAt(tile);
+        if (surface == nullptr)
+            return -1;
+
+        // Land only, and the BASE of the tile - not MapGetHighestZ. That engine helper rounds sloped
+        // land up to the slope's top and treats water as a floor; both are construction rules (where
+        // a track piece may sit), not descriptions of the tile's level. The tile's level here is its
+        // base height: the number the coordinate readout speaks and building acts at, and the number
+        // the game's own height-marker labels show for the tile (they interpolate the tile centre,
+        // which floors to the base for standard slopes; on water tiles they read the submerged land).
+        // A slope's top belongs to the higher neighbouring tile; water is announced as a tile
+        // feature and by the water-level commands. Ride placement keeps the engine's MapGetHighestZ.
+        int32_t top = surface->getBaseZ();
         for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
         {
             if (!el->isGhost())

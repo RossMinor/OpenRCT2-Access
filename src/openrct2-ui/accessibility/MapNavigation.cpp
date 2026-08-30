@@ -573,10 +573,10 @@ namespace OpenRCT2::Ui::Accessibility
     }
 
     // The elevation number for the level a player is at on this tile, in the engine's construction
-    // units. Delegates to the shared elevation module (AccessibleTopZ), which uses the engine's own
-    // water- and slope-aware ground height and also accounts for footpaths (including bridges/raised
-    // paths) and ride entrances/exits resting above the ground - so the tone and readout reflect the
-    // real level, not just the bare land beneath.
+    // units. Delegates to the shared elevation module (AccessibleTopZ): the land's base height
+    // (slope tops and water excluded, like the game's height markers) plus footpaths (including
+    // bridges/raised paths) and ride entrances/exits resting above the ground - so the tone always
+    // agrees with the coordinate readout and the level building acts at.
     static int32_t EffectiveElevationAt(const TileCoordsXY& tile)
     {
         return ElevationNumber(AccessibleTopZ(tile.ToCoordsXY()));
@@ -1580,6 +1580,12 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
 
+        // Matching the sighted game, a path on a water tile goes on the submerged land (the vanilla
+        // path tool clicks straight through water to the bed and the engine allows it). A sighted
+        // player watches it disappear under the surface, so say so.
+        if (buildSurface != nullptr && buildSurface->GetWaterHeight() > baseZ)
+            what += ", underwater";
+
         const CoordsXYZ loc{ world.x, world.y, baseZ };
         auto action = GameActions::FootpathPlaceAction(
             loc, slope, type, gFootpathSelection.railings, actionDir, flags);
@@ -1898,6 +1904,7 @@ namespace OpenRCT2::Ui::Accessibility
         GetTerraformBounds(ax, ay, bx, by);
 
         int32_t built = 0;
+        int32_t builtUnderwater = 0;
         // Tiles that already hold a path or are otherwise occupied fail to build; each failure would
         // sound the error window, stacking into a painful blast across an area, so silence it for the
         // sweep (the tile counts below already report how many actually paved).
@@ -1916,16 +1923,27 @@ namespace OpenRCT2::Ui::Accessibility
                 auto action = GameActions::FootpathPlaceAction(
                     loc, placement.slope, type, gFootpathSelection.railings, kInvalidDirection, flags);
                 if (GameActions::Execute(&action, getGameState()).error == GameActions::Status::ok)
+                {
                     built++;
+                    // On-terrain placement goes on the submerged land of water tiles, like the
+                    // sighted path tool; count those so the summary can say where the paving sank.
+                    auto* surface = MapGetSurfaceElementAt(tile);
+                    if (surface != nullptr && surface->GetWaterHeight() > placement.baseZ)
+                        builtUnderwater++;
+                }
             }
         }
         Windows::gDisableErrorWindowSound = prevErrorSound;
 
         _lastTileDescription.clear();
         if (built > 0)
-            ScreenReaderSpeak(
-                (gFootpathSelection.isQueueSelected ? "Marked area queued, " : "Marked area paved, ")
-                + std::to_string(built) + (built == 1 ? " tile" : " tiles"));
+        {
+            std::string spoken = (gFootpathSelection.isQueueSelected ? "Marked area queued, " : "Marked area paved, ")
+                + std::to_string(built) + (built == 1 ? " tile" : " tiles");
+            if (builtUnderwater > 0)
+                spoken += ", " + std::to_string(builtUnderwater) + " underwater";
+            ScreenReaderSpeak(spoken);
+        }
         else
             ScreenReaderSpeak("Could not build any paths in the marked area");
     }
@@ -2182,9 +2200,10 @@ namespace OpenRCT2::Ui::Accessibility
             const int32_t waterHeight = surface->GetWaterHeight();
             if (waterHeight > 0)
             {
-                // Report the water surface on the same engine scale as everything else (the movement
-                // tone reads a water tile at exactly this level via AccessibleTopZ), so the number a
-                // player hears while adjusting water matches what they hear standing on it.
+                // Report the water surface on the same engine scale as everything else. This is the
+                // one place the water level itself is the number that matters; the ambient elevation
+                // cues (movement tone, coordinate readout) read the land like the game's own height
+                // markers do, so water only speaks its level here, where the player is changing it.
                 const int32_t level = ElevationNumber(waterHeight);
                 PlayElevationTone(level);
                 ScreenReaderSpeak(prefix + "Water level " + std::to_string(level));
