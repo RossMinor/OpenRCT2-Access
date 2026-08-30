@@ -68,6 +68,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - M: Report your cash amount.
 - []: Moves back or forward through game announcements.
 - Enter: While hovering over a ride or stall, it will open that ride/stall's information page.
+- Shift + C: Opens the Construct a New Ride window.
 - Shift + F: Open the Finances window.
 - Shift + R: Opens the Rides window.
 - Shift + P: Open the Park Information Window.

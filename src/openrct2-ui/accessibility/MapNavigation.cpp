@@ -2907,6 +2907,9 @@ namespace OpenRCT2::Ui::Accessibility
         {
             switch (key)
             {
+                case SDLK_c:
+                    OpenGameWindow(WindowClass::constructRide, "Construct a new ride");
+                    return true;
                 case SDLK_f:
                     OpenGameWindow(WindowClass::finances, "Finances");
                     return true;
