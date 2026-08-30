@@ -288,6 +288,7 @@ namespace OpenRCT2::Ui::Windows
     void RegisterAccessibilityOptionsGraphScreen();
     void RegisterShortcutKeysGraphScreen();
     void RegisterFootpathGraphScreen();
+    void RegisterTrackListGraphScreen();
 
     // SavePrompt
     WindowBase* SavePromptOpen();

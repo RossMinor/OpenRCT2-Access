@@ -96,6 +96,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterAccessibilityOptionsGraphScreen();
         Windows::RegisterShortcutKeysGraphScreen();
         Windows::RegisterFootpathGraphScreen();
+        Windows::RegisterTrackListGraphScreen();
 
         // Modal confirmation prompts share one generic button-driven recipe. demolishRidePrompt is
         // used by both the demolish and refurbish prompts (different C++ classes, same window class).

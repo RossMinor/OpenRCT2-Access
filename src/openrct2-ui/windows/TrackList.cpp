@@ -8,9 +8,10 @@
  *****************************************************************************/
 
 #include <openrct2-ui/accessibility/RideVisualDescriptions.h>
-#include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/TrackDesignDescription.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/ride/Construction.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -35,6 +36,8 @@
 #include <openrct2/ride/TrackDesignRepository.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/windows/Intent.h>
+#include <map>
+#include <optional>
 #include <vector>
 
 using namespace OpenRCT2::Drawing;
@@ -94,11 +97,15 @@ namespace OpenRCT2::Ui::Windows
         bool _reloadTrackDesigns;
         u8string _windowTitle;
 
-        // Accessibility "extended statistics" sub-list, opened with the I key. While active, the
-        // arrow keys step through these stat lines instead of moving between designs.
-        bool _statsMode = false;
-        std::vector<std::string> _statsItems;
-        int32_t _statsIndex = 0;
+        // Accessibility: reading a design's details means importing the design file from disk, and
+        // the graph navigator rebuilds and re-composes the focused line on every operation and once
+        // per idle tick - so import each design once and keep whatever we derived from it.
+        struct AccessDesignInfo
+        {
+            std::string detail;             // dimensions, ratings, description, visual summary
+            std::vector<std::string> stats; // the detailed statistics, one readable line each
+        };
+        std::map<uint16_t, AccessDesignInfo> _accessInfo;
 
         void filterList()
         {
@@ -210,6 +217,7 @@ namespace OpenRCT2::Ui::Windows
                 }
             }
             _trackDesigns = repo->GetItemsForObjectEntry(item.Type, entryName);
+            _accessInfo.clear(); // the cache is keyed by _trackDesigns index
 
             filterList();
         }
@@ -256,8 +264,7 @@ namespace OpenRCT2::Ui::Windows
             _loadedTrackDesign = nullptr;
             _loadedTrackDesignIndex = kTrackDesignIndexUnloaded;
 
-            // Read out the first row so a screen-reader user knows the design list has opened.
-            announceFocusedDesign();
+            // The graph navigator announces the screen and its landing row when it attaches.
         }
 
         void reopenTrackManager()
@@ -352,34 +359,86 @@ namespace OpenRCT2::Ui::Windows
             return count;
         }
 
-        // Speaks the focused row: the "build custom design" entry, or a design's name followed
-        // by its excitement, intensity and nausea ratings, plus its position in the list.
-        void announceFocusedDesign()
+        // Returns the _trackDesigns index behind a list row, or -1 for the "build custom design"
+        // row or an out-of-range row.
+        int32_t accessTrackIndexForRow(int32_t row) const
         {
-            const int32_t count = accessibleItemCount();
-            if (count <= 0 || selectedListItem < 0 || selectedListItem >= count)
-            {
-                Accessibility::ScreenReaderSpeak("No designs available");
-                return;
-            }
-
+            if (row < 0 || row >= accessibleItemCount())
+                return -1;
             const bool customFirst = (gLegacyScene != LegacyScene::trackDesignsManager);
-            if (customFirst && selectedListItem == 0)
+            if (customFirst && row == 0)
+                return -1;
+            const int32_t listIndex = customFirst ? row - 1 : row;
+            if (listIndex < 0 || static_cast<size_t>(listIndex) >= _filteredTrackIds.size())
+                return -1;
+            return _filteredTrackIds[listIndex];
+        }
+
+        // Import a design once and keep everything derived from the file.
+        const AccessDesignInfo& accessDesignInfo(uint16_t trackIndex)
+        {
+            auto it = _accessInfo.find(trackIndex);
+            if (it != _accessInfo.end())
+                return it->second;
+
+            AccessDesignInfo info;
+            auto design = TrackDesignImport(_trackDesigns[trackIndex].path.c_str());
+            if (design == nullptr)
+                return _accessInfo.emplace(trackIndex, std::move(info)).first->second;
+
+            // Read order matches the visual info panel: dimensions, then the three headline
+            // ratings, then the ride type's description and a data-derived visual summary.
+            const auto& stats = design->statistics;
+            const auto& rtd = GetRideTypeDescriptor(design->trackAndVehicle.rtdIndex);
+            auto appendStat = [&info](StringId id, Formatter& ft) {
+                info.detail += ". " + FormatStringIDLegacy(id, ft.Data());
+            };
+
+            if (!stats.spaceRequired.IsNull())
             {
-                Accessibility::ScreenReaderSpeakItem("Build custom design", selectedListItem, count);
-                return;
+                Formatter ft;
+                ft.Add<uint16_t>(stats.spaceRequired.x);
+                ft.Add<uint16_t>(stats.spaceRequired.y);
+                appendStat(STR_TRACK_LIST_SPACE_REQUIRED, ft);
+            }
+            {
+                Formatter ft;
+                ft.Add<fixed32_2dp>(stats.ratings.excitement);
+                appendStat(STR_TRACK_LIST_EXCITEMENT_RATING, ft);
+            }
+            {
+                Formatter ft;
+                ft.Add<fixed32_2dp>(stats.ratings.intensity);
+                appendStat(STR_TRACK_LIST_INTENSITY_RATING, ft);
+            }
+            {
+                Formatter ft;
+                ft.Add<fixed32_2dp>(stats.ratings.nausea);
+                appendStat(STR_TRACK_LIST_NAUSEA_RATING, ft);
             }
 
-            const int32_t listIndex = customFirst ? selectedListItem - 1 : selectedListItem;
-            if (listIndex < 0 || static_cast<size_t>(listIndex) >= _filteredTrackIds.size())
-                return;
-            const uint16_t trackIndex = _filteredTrackIds[listIndex];
+            const StringId descId = rtd.Naming.Description;
+            if (descId != kStringIdNone && descId != kStringIdEmpty)
+                info.detail += ". " + OpenRCT2::FormatStringID(descId);
 
-            // Read order: name, cost, dimensions, ratings, in-game description, visual description.
+            const std::string visual = Accessibility::DescribeTrackDesign(*design);
+            if (!visual.empty())
+                info.detail += ". " + visual;
+
+            // Everything beyond the headline ratings hangs off the design as an expandable group,
+            // so the default read-out stays manageable.
+            info.stats = buildExtendedStats(*design);
+
+            return _accessInfo.emplace(trackIndex, std::move(info)).first->second;
+        }
+
+        // The spoken line for one design row: name, cost when it is known, then the cached details.
+        std::string accessDesignLine(uint16_t trackIndex)
+        {
             std::string text = _trackDesigns[trackIndex].name;
 
             // Cost is not stored in a design file - it is only computed once the design is loaded
-            // for preview - so include it only when the focused design is the loaded one.
+            // for preview - so include it only when this design is the loaded one.
             if (_loadedTrackDesign != nullptr && _loadedTrackDesignIndex == trackIndex
                 && _loadedTrackDesign->gameStateData.cost != 0)
             {
@@ -388,87 +447,15 @@ namespace OpenRCT2::Ui::Windows
                 text += ". " + FormatStringIDLegacy(STR_TRACK_LIST_COST_AROUND, ft.Data());
             }
 
-            // Pull the rest straight from the design file so the player can compare designs. Read
-            // out every statistic the visual info panel shows, in the same order.
-            auto design = TrackDesignImport(_trackDesigns[trackIndex].path.c_str());
-            if (design != nullptr)
-            {
-                const auto& stats = design->statistics;
-                const ride_type_t rideType = design->trackAndVehicle.rtdIndex;
-                const auto& rtd = GetRideTypeDescriptor(rideType);
-
-                // Append ". " followed by one formatted stat line.
-                auto appendStat = [&text](StringId id, Formatter& ft) {
-                    text += ". " + FormatStringIDLegacy(id, ft.Data());
-                };
-
-                // Dimensions.
-                if (!stats.spaceRequired.IsNull())
-                {
-                    Formatter ft;
-                    ft.Add<uint16_t>(stats.spaceRequired.x);
-                    ft.Add<uint16_t>(stats.spaceRequired.y);
-                    appendStat(STR_TRACK_LIST_SPACE_REQUIRED, ft);
-                }
-
-                // Ratings.
-                {
-                    Formatter ft;
-                    ft.Add<fixed32_2dp>(stats.ratings.excitement);
-                    appendStat(STR_TRACK_LIST_EXCITEMENT_RATING, ft);
-                }
-                {
-                    Formatter ft;
-                    ft.Add<fixed32_2dp>(stats.ratings.intensity);
-                    appendStat(STR_TRACK_LIST_INTENSITY_RATING, ft);
-                }
-                {
-                    Formatter ft;
-                    ft.Add<fixed32_2dp>(stats.ratings.nausea);
-                    appendStat(STR_TRACK_LIST_NAUSEA_RATING, ft);
-                }
-
-                // The detailed statistics (speed, length, G-forces, drops, etc.) are reached
-                // separately by pressing I, so the default read-out stays manageable.
-
-                // In-game description (the ride type's), then a specific, data-derived visual
-                // description of this individual design's layout and colours.
-                const StringId descId = rtd.Naming.Description;
-                if (descId != kStringIdNone && descId != kStringIdEmpty)
-                    text += ". " + OpenRCT2::FormatStringID(descId);
-
-                const std::string visual = Accessibility::DescribeTrackDesign(*design);
-                if (!visual.empty())
-                    text += ". " + visual;
-            }
-
-            Accessibility::ScreenReaderSpeakItem(text, selectedListItem, count);
+            return text + accessDesignInfo(trackIndex).detail;
         }
 
-        // Returns the _trackDesigns index of the focused row, or -1 for the "build custom design"
-        // row or an invalid selection.
-        int32_t focusedDesignIndex() const
-        {
-            const int32_t count = accessibleItemCount();
-            if (count <= 0 || selectedListItem < 0 || selectedListItem >= count)
-                return -1;
-            const bool customFirst = (gLegacyScene != LegacyScene::trackDesignsManager);
-            if (customFirst && selectedListItem == 0)
-                return -1;
-            const int32_t listIndex = customFirst ? selectedListItem - 1 : selectedListItem;
-            if (listIndex < 0 || static_cast<size_t>(listIndex) >= _filteredTrackIds.size())
-                return -1;
-            return _filteredTrackIds[listIndex];
-        }
-
-        // Builds the detailed statistics (everything beyond the three headline ratings) for the
-        // focused design, one readable line each, for the I-key list. Empty for non-tracked rides.
-        std::vector<std::string> buildExtendedStats(uint16_t trackIndex)
+        // Builds the detailed statistics (everything beyond the three headline ratings), one
+        // readable line each. Empty for rides without track (a maze has nothing to add).
+        std::vector<std::string> buildExtendedStats(const TrackDesign& designRef)
         {
             std::vector<std::string> items;
-            auto design = TrackDesignImport(_trackDesigns[trackIndex].path.c_str());
-            if (design == nullptr)
-                return items;
+            const TrackDesign* design = &designRef;
 
             const auto& stats = design->statistics;
             const auto& rtd = GetRideTypeDescriptor(design->trackAndVehicle.rtdIndex);
@@ -553,143 +540,141 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        void exitStatsMode()
+        // ---- graph accessibility recipe ----
+
+        // Keep the window's own highlight (and the preview it lazily loads) in step with the
+        // graph's focused row. Focus itself now lives in the graph rather than in selectedListItem,
+        // which is what fixes the old drift: onScrollMouseOver rewrites selectedListItem from
+        // wherever the mouse happens to be resting, so a keyboard cursor stored there wandered off
+        // on its own between key presses.
+        void accessSyncSelection(int32_t row)
         {
-            _statsMode = false;
-            _statsItems.clear();
-            announceFocusedDesign();
+            if (row >= 0 && row < accessibleItemCount())
+                selectedListItem = row;
         }
 
-        // I opens (or closes) the extended-statistics list for the focused design.
-        bool onAccessibilityTypeahead(uint32_t key) override
-        {
-            if (key != 'i')
-                return false;
-
-            if (_statsMode)
-            {
-                exitStatsMode();
-                return true;
-            }
-
-            const int32_t trackIndex = focusedDesignIndex();
-            if (trackIndex < 0)
-            {
-                Accessibility::ScreenReaderSpeak("No statistics for this item");
-                return true;
-            }
-
-            _statsItems = buildExtendedStats(static_cast<uint16_t>(trackIndex));
-            if (_statsItems.empty())
-            {
-                Accessibility::ScreenReaderSpeak("No additional statistics for this ride");
-                return true;
-            }
-
-            _statsMode = true;
-            _statsIndex = 0;
-            Accessibility::ScreenReaderSpeakItem(
-                "Extended statistics. " + _statsItems[0], 0, static_cast<int32_t>(_statsItems.size()));
-            return true;
-        }
-
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        std::optional<Accessibility::Graph::GraphRect> accessRowRect(int32_t row)
         {
             const auto& lw = widgets[WIDX_TRACK_LIST];
             const int32_t viewTop = windowPos.y + lw.top;
             const int32_t viewBottom = windowPos.y + lw.bottom;
             const int32_t left = windowPos.x + lw.left;
-            const int32_t right = windowPos.x + lw.right;
-
-            if (selectedListItem < 0 || selectedListItem >= accessibleItemCount())
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-
-            const int32_t rowTop = viewTop + selectedListItem * kScrollableRowHeight - scrolls[0].contentOffsetY;
-            int32_t top = std::max(rowTop, viewTop);
-            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            const int32_t widthPx = lw.width() + 1;
+            const auto wholeList = [&]() {
+                return Accessibility::Graph::GraphRect{ left, viewTop, widthPx, lw.height() + 1 };
+            };
+            if (row < 0 || row >= accessibleItemCount())
+                return wholeList();
+            const int32_t rowTop = viewTop + row * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            const int32_t top = std::max(rowTop, viewTop);
+            const int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
             if (bottom <= top)
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-            return ScreenRect{ { left, top }, { right, bottom } };
+                return wholeList();
+            return Accessibility::Graph::GraphRect{ left, top, widthPx, bottom - top };
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // Build (or place) the design on a row. selectFromList() reads _loadedTrackDesign, which is
+        // otherwise only filled in by onDraw for whichever row was drawn last - so load the focused
+        // design here first, or keyboard selection drops into the "design failed to load" error.
+        void accessActivateRow(int32_t row)
         {
-            // While the extended-statistics list is open, the arrow keys step through it, Escape
-            // closes it, and other actions are swallowed so they don't disturb the design list.
-            if (_statsMode)
+            if (_selectedItemIsBeingUpdated || row < 0 || row >= accessibleItemCount())
+                return;
+
+            selectedListItem = row;
+            const int32_t trackIndex = accessTrackIndexForRow(row);
+            if (trackIndex >= 0 && _loadedTrackDesignIndex != static_cast<uint16_t>(trackIndex))
             {
-                const int32_t statCount = static_cast<int32_t>(_statsItems.size());
-                switch (action)
-                {
-                    case AccessibilityAction::moveUp:
-                    case AccessibilityAction::moveLeft:
-                    case AccessibilityAction::moveDown:
-                    case AccessibilityAction::moveRight:
-                    {
-                        if (statCount <= 0)
-                            return true;
-                        const bool forward = (action == AccessibilityAction::moveDown
-                                              || action == AccessibilityAction::moveRight);
-                        if (forward)
-                            _statsIndex = (_statsIndex + 1) % statCount;
-                        else
-                            _statsIndex = (_statsIndex - 1 + statCount) % statCount;
-                        Accessibility::ScreenReaderSpeakItem(_statsItems[_statsIndex], _statsIndex, statCount);
-                        return true;
-                    }
-                    case AccessibilityAction::cancel:
-                        exitStatsMode();
-                        return true;
-                    case AccessibilityAction::announce:
-                        if (statCount > 0)
-                            Accessibility::ScreenReaderSpeakItem(_statsItems[_statsIndex], _statsIndex, statCount);
-                        return true;
-                    default:
-                        return true;
-                }
+                if (loadDesignPreview(_trackDesigns[trackIndex].path))
+                    _loadedTrackDesignIndex = static_cast<uint16_t>(trackIndex);
+                else
+                    _loadedTrackDesignIndex = kTrackDesignIndexUnloaded;
             }
+            invalidate();
+            selectFromList(row);
+        }
+
+        // Declare the design list: the leading "Build custom design" row outside the track manager,
+        // then one node per design. A design is an expandable group - Right opens its detailed
+        // statistics as child rows, Left closes them again (this replaces the old I-key sub-mode).
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
 
             const int32_t count = accessibleItemCount();
-            switch (action)
+            const bool customFirst = (gLegacyScene != LegacyScene::trackDesignsManager);
+            const int32_t designs = static_cast<int32_t>(_filteredTrackIds.size());
+
+            std::string header = _windowTitle.empty() ? std::string("Select design") : _windowTitle;
+            header += (designs == 0) ? ", no designs"
+                                     : ", " + std::to_string(designs) + (designs == 1 ? " design" : " designs");
+            b.PushContext(header);
+
+            if (count <= 0)
             {
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveRight:
-                {
-                    const bool forward = (action == AccessibilityAction::moveDown
-                                          || action == AccessibilityAction::moveRight);
-                    // The design list has no hidden rows (designs plus "Build custom design").
-                    const int32_t idx = Accessibility::ListNav::wrap(selectedListItem, forward ? 1 : -1, count);
-                    if (idx < 0)
-                    {
-                        Accessibility::ScreenReaderSpeak("No designs available");
-                        return true;
-                    }
-                    selectedListItem = idx;
-                    invalidate();
-                    announceFocusedDesign();
-                    return true;
-                }
-
-                case AccessibilityAction::activate:
-                    if (!_selectedItemIsBeingUpdated && selectedListItem >= 0 && selectedListItem < count)
-                        selectFromList(selectedListItem);
-                    return true;
-
-                case AccessibilityAction::cancel:
-                    close();
-                    if (gLegacyScene != LegacyScene::trackDesignsManager)
-                        ContextOpenWindow(WindowClass::constructRide);
-                    return true;
-
-                case AccessibilityAction::announce:
-                    announceFocusedDesign();
-                    return true;
-
-                default:
-                    return false;
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("No designs available"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("tl:none"), std::move(vt));
+                b.PopContext();
+                return;
             }
+
+            int32_t row = 0;
+            if (customFirst)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("Build custom design"));
+                vt.onActivate = [this]() { accessActivateRow(0); };
+                vt.focusRect = [this]() {
+                    accessSyncSelection(0);
+                    return accessRowRect(0);
+                };
+                b.AddItem(ControlId::Structural("tl:custom"), std::move(vt));
+                row = 1;
+            }
+
+            for (; row < count; row++)
+            {
+                const int32_t trackIndex = accessTrackIndexForRow(row);
+                if (trackIndex < 0)
+                    continue;
+                const auto ti = static_cast<uint16_t>(trackIndex);
+
+                // Keyed by design file, not by row, so focus stays on the same design when the
+                // filter text changes the list under it.
+                const auto& path = _trackDesigns[ti].path;
+                const auto id = ControlId::Structural("tl:" + path);
+
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, ti]() { return accessDesignLine(ti); });
+                vt.searchText = [this, ti]() { return _trackDesigns[ti].name; };
+                vt.onActivate = [this, row]() { accessActivateRow(row); };
+                vt.focusRect = [this, row]() {
+                    accessSyncSelection(row);
+                    return accessRowRect(row);
+                };
+
+                b.BeginGroup(id, std::move(vt));
+                if (b.IsExpanded(id))
+                {
+                    const auto& stats = accessDesignInfo(ti).stats;
+                    for (size_t i = 0; i < stats.size(); i++)
+                    {
+                        NodeVtable sv;
+                        sv.announcements.emplace_back(NodeAnnouncement::Static(stats[i]));
+                        sv.excludeFromSearch = true;
+                        sv.focusRect = [this, row]() {
+                            accessSyncSelection(row);
+                            return accessRowRect(row);
+                        };
+                        b.AddItem(ControlId::Structural("tl:stat:" + path + ":" + std::to_string(i)), std::move(sv));
+                    }
+                }
+                b.EndGroup();
+            }
+
+            b.PopContext();
         }
 
 #pragma endregion
@@ -721,6 +706,12 @@ namespace OpenRCT2::Ui::Windows
 
         void onScrollMouseOver(const int32_t scrollIndex, const ScreenCoordsXY& screenCoords) override
         {
+            // The graph navigator owns selectedListItem while it drives this window; letting an
+            // idle mouse pointer rewrite it every frame is what made keyboard movement wander and
+            // put the read-out out of step with what Enter would actually build.
+            if (Accessibility::Graph::GraphOwnsWindowClass(WindowClass::trackDesignList))
+                return;
+
             if (!_selectedItemIsBeingUpdated)
             {
                 int32_t i = getListItemFromPosition(screenCoords);
@@ -1154,5 +1145,24 @@ namespace OpenRCT2::Ui::Windows
         {
             trackListWindow->setIsBeingUpdated(beingUpdated);
         }
+    }
+
+    // Register the track-design list with the graph accessibility navigator (called once at startup
+    // via EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
+    // accessibility dispatcher stands down for it.
+    void RegisterTrackListGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::trackDesignList;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<TrackListWindow&>(w).BuildAccessGraph(b); };
+        // Escape goes back to the ride catalog this list was opened from (legacy parity). In the
+        // track manager the window reopens the manager itself from onClose.
+        screen.onEscape = [](WindowBase&) {
+            if (gLegacyScene != LegacyScene::trackDesignsManager)
+                ContextOpenWindow(WindowClass::constructRide);
+            return false; // let the navigator close this window
+        };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows
