@@ -16,6 +16,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 struct StringWithArgs;
 struct Ride;
@@ -397,6 +399,9 @@ namespace OpenRCT2::Ui::Windows
     // If a design preview is frozen and covers this tile, the design's name (so the tile reader can
     // announce the ride as though it were already there). Nullopt otherwise.
     std::optional<std::string> WindowTrackPlacePreviewLabel(const TileCoordsXY& tile);
+    // Where a frozen preview's entrances and exits will be built, each with the word to speak, so
+    // the cursor can jump between them before the ride exists. Empty unless a preview is frozen.
+    std::vector<std::pair<CoordsXY, std::string>> WindowTrackPlaceEntranceExitTiles();
 
     // TrackDesignManage
     WindowBase* TrackManageOpen(struct TrackDesignFileRef* tdFileRef);

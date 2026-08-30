@@ -2428,27 +2428,49 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_initialised)
             InitialiseCursor();
 
-        const RideId rideId = RideContainingCursor();
-        auto ride = rideId.IsNull() ? nullptr : GetRide(rideId);
-        if (ride == nullptr)
-        {
-            ScreenReaderSpeak("Not on a ride");
-            return;
-        }
-
         struct Target
         {
             TileCoordsXY tile;
-            const char* label;
+            std::string label;
         };
         std::vector<Target> targets;
-        for (const auto& station : ride->getStations())
+
+        // A pre-built design frozen for inspection has no ride in the game state yet, so read the
+        // entrance and exit tiles the design will place instead. This is the point at which the
+        // player most needs them: the ride is positioned but not yet built, so finding an entrance
+        // sitting somewhere unreachable is still free to fix with Backspace.
+        auto pending = Windows::WindowTrackPlaceEntranceExitTiles();
+        if (!pending.empty())
         {
-            if (!station.Entrance.IsNull())
-                targets.push_back({ TileCoordsXY{ station.Entrance.x, station.Entrance.y }, "Ride entrance" });
-            if (!station.Exit.IsNull())
-                targets.push_back({ TileCoordsXY{ station.Exit.x, station.Exit.y }, "Ride exit" });
+            for (const auto& [tile, label] : pending)
+                targets.push_back({ TileCoordsXY{ tile }, label });
         }
+        else if (Windows::WindowTrackPlaceIsActive())
+        {
+            // The design is still following the cursor, so its entrance and exit have no fixed
+            // ground to sit on yet.
+            ScreenReaderSpeak("Press Enter to position the ride first, then Control plus E finds its entrance and exit");
+            return;
+        }
+        else
+        {
+            const RideId rideId = RideContainingCursor();
+            auto ride = rideId.IsNull() ? nullptr : GetRide(rideId);
+            if (ride == nullptr)
+            {
+                ScreenReaderSpeak("Not on a ride");
+                return;
+            }
+
+            for (const auto& station : ride->getStations())
+            {
+                if (!station.Entrance.IsNull())
+                    targets.push_back({ TileCoordsXY{ station.Entrance.x, station.Entrance.y }, "Ride entrance" });
+                if (!station.Exit.IsNull())
+                    targets.push_back({ TileCoordsXY{ station.Exit.x, station.Exit.y }, "Ride exit" });
+            }
+        }
+
         if (targets.empty())
         {
             ScreenReaderSpeak("This ride has no entrance or exit");
@@ -2471,8 +2493,24 @@ namespace OpenRCT2::Ui::Accessibility
         _cursor = target.tile;
         _menuMode = false;
         CentreViewportOnCursor();
+
+        // Same bookkeeping every deliberate jump does (see the marker and waypoint jumps): sound the
+        // elevation tone so the landing is audible, and re-seat the focus elevation on the ground so
+        // C reports where the cursor now is rather than the height it left behind.
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            const int32_t elevation = EffectiveElevationAt(_cursor);
+            if (elevation != _lastElevation)
+            {
+                PlayElevationTone(elevation);
+                _lastElevation = elevation;
+            }
+            _scanHeight = surface->baseHeight;
+            _scanLocked = false;
+        }
+
         _lastTileDescription = GetTileDescription(_cursor);
-        ScreenReaderSpeak(std::string(target.label) + ", " + SpokenTileCoordsText(_cursor));
+        ScreenReaderSpeak(target.label + ", " + SpokenTileCoordsText(_cursor));
     }
 
     // Jumps the cursor to the nearest ride or stall in the pressed screen direction (Ctrl+arrow). Only
@@ -3533,11 +3571,12 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         // Ctrl+E jumps the cursor between the entrance and exit of the ride the cursor is within, so a
-        // player can find them on a pre-built coaster without hunting tile by tile. Skipped in mouse/
-        // menu/status mode and during any placement (where Ctrl and the cursor mean other things).
+        // player can find them on a pre-built coaster without hunting tile by tile. It also works over
+        // a frozen track-design preview, where the tiles come from the design rather than a built ride
+        // - the cursor roams freely there, so nothing drags the design along. Skipped in mouse/menu/
+        // status mode and during the other placements (where Ctrl and the cursor mean other things).
         if (key == SDLK_e && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)) && !_mouseMode
-            && !_menuMode && !_statusMode && !Windows::WindowTrackPlaceIsActive() && !IsAccessibleRidePlacementActive()
-            && !IsAccessibleSceneryPlacementActive())
+            && !_menuMode && !_statusMode && !IsAccessibleRidePlacementActive() && !IsAccessibleSceneryPlacementActive())
         {
             JumpRideEntranceExit();
             _lastHandledKey = key;

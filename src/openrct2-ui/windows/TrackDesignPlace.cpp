@@ -567,24 +567,27 @@ namespace OpenRCT2::Ui::Windows
             return tiles;
         }
 
-        // World-coordinate tiles where the design's entrances and exits will be built. A path or
-        // other blocker on one of these fails placement just as one on the track does, but they sit
-        // beyond the track footprint, so they must be checked separately. Mirrors how
-        // TrackDesignPlaceEntrances derives each entrance/exit tile from the placement origin.
-        std::vector<CoordsXY> entranceTiles(const CoordsXY& origin)
+        // World-coordinate tile of each entrance and exit the design will build, paired with whether
+        // it is the exit. A path or other blocker on one of these fails placement just as one on the
+        // track does, but they sit beyond the track footprint, so they must be checked separately.
+        //
+        // Follows TrackDesignPlaceEntrances exactly: the entrance goes at
+        // rotatedEntranceMapPos + origin, which is what RideEntranceExitPlaceAction is given. The
+        // CoordsDirectionDelta step onward from there is the STATION's track tile, which the engine
+        // only uses to find the track element and read its station index - stepping to it here would
+        // report a tile inside the design's own footprint instead of the entrance.
+        std::vector<std::pair<CoordsXY, bool>> entranceExitTiles(const CoordsXY& origin)
         {
-            std::vector<CoordsXY> tiles;
+            std::vector<std::pair<CoordsXY, bool>> tiles;
             if (_trackDesign == nullptr)
                 return tiles;
 
             const uint8_t baseRotation = _currentTrackPieceDirection & 3;
             for (const auto& entrance : _trackDesign->entranceElements)
             {
-                const CoordsXY stationPos = entrance.location.ToCoordsXY().Rotate(baseRotation) + origin;
-                const uint8_t rotation = (baseRotation + entrance.location.direction) & 3;
-                const CoordsXY tile = stationPos + CoordsDirectionDelta[rotation];
+                const CoordsXY tile = entrance.location.ToCoordsXY().Rotate(baseRotation) + origin;
                 if (MapIsLocationValid(tile))
-                    tiles.push_back(tile);
+                    tiles.emplace_back(tile, entrance.isExit);
             }
             return tiles;
         }
@@ -596,7 +599,7 @@ namespace OpenRCT2::Ui::Windows
         std::vector<CoordsXY> validatedTiles(const CoordsXY& origin)
         {
             auto tiles = footprintTiles(origin);
-            for (const auto& tile : entranceTiles(origin))
+            for (const auto& [tile, isExit] : entranceExitTiles(origin))
             {
                 const TileCoordsXY tc{ tile };
                 const bool alreadyListed = std::any_of(tiles.begin(), tiles.end(), [&](const CoordsXY& t) {
@@ -917,6 +920,22 @@ namespace OpenRCT2::Ui::Windows
                 return;
             _accPreviewing = false;
             Accessibility::ScreenReaderSpeak("Picked back up. Move the cursor and press Enter to position it again.");
+        }
+
+        // The world tiles where a frozen preview's entrances and exits will be built, each with the
+        // word to speak, so the map cursor can jump between them before the ride is built (the ride
+        // does not exist yet, so there are no stations to read them off). Only while the preview is
+        // frozen: while the design still follows the cursor, moving to an entrance tile would drag
+        // the whole ride along with it.
+        std::vector<std::pair<CoordsXY, std::string>> previewEntranceExitTiles()
+        {
+            std::vector<std::pair<CoordsXY, std::string>> out;
+            if (!_accPreviewing)
+                return out;
+
+            for (const auto& [tile, isExit] : entranceExitTiles(_accPreviewOrigin))
+                out.emplace_back(tile, isExit ? "Ride exit" : "Ride entrance");
+            return out;
         }
 
         // If a preview is frozen and covers the given tile, returns the design's name so the tile
@@ -1488,5 +1507,12 @@ namespace OpenRCT2::Ui::Windows
         if (auto* w = GetTrackPlaceWindow(); w != nullptr)
             return w->previewLabelForTile(tile);
         return std::nullopt;
+    }
+
+    std::vector<std::pair<CoordsXY, std::string>> WindowTrackPlaceEntranceExitTiles()
+    {
+        if (auto* w = GetTrackPlaceWindow(); w != nullptr)
+            return w->previewEntranceExitTiles();
+        return {};
     }
 } // namespace OpenRCT2::Ui::Windows
