@@ -273,8 +273,10 @@ namespace OpenRCT2::Ui::Windows
 
         // A flat list of eight settings: the accessibility-cue volume slider, the step/tile/order/
         // focus-colour mode cyclers, the menu music and sound volumes, and the support button. Each
-        // control's value is a live part, so Left/Right (and Enter, on the cyclers) re-announces just
-        // the new value.
+        // control carries its value both as a live part (so a change made elsewhere - dragging the
+        // slider with the mouse - is still read out) and as stateText, which is what Left/Right and
+        // Enter speak: the navigator rebaselines the live watch straight after an adjust, so a
+        // control without stateText would change silently.
         void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
             using namespace Accessibility::Graph;
@@ -285,7 +287,11 @@ namespace OpenRCT2::Ui::Windows
                 NodeVtable vt;
                 vt.announcements.emplace_back(NodeAnnouncement::Static(labelText(i)));
                 if (i != 7)
+                {
                     vt.announcements.emplace_back([this, i]() { return valueText(i); }, true, AnnouncementKinds::kValue);
+                    // Synchronous feedback after Left/Right or Enter: just the new value.
+                    vt.stateText = [this, i]() { return valueText(i); };
+                }
                 vt.focusRect = [this, i]() -> std::optional<Accessibility::Graph::GraphRect> {
                     const auto& wd = widgets[axWidget(i)];
                     if (wd.type == WidgetType::empty)
