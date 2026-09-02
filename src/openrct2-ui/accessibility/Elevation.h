@@ -50,12 +50,12 @@ namespace OpenRCT2::Ui::Accessibility
     // The spoken elevation for a height in half steps. The whole-step figure matches the game's own
     // height markers exactly - the same land/path step scale, offset by kMapBaseZ - so the number
     // the player hears is the number a sighted player reads off the screen. A height sitting between
-    // two steps speaks the difference rather than hiding it:
+    // two steps speaks the difference rather than hiding it, as a decimal:
     //
-    //   28 -> "0"        29 -> "0 and a half"        36 -> "4"       37 -> "4 and a half"
-    //   15 -> "minus half"                           12 -> "minus 1"
+    //   28 -> "0"        29 -> "0.5"        36 -> "4"       37 -> "4.5"
+    //   13 -> "minus 0.5"                   12 -> "minus 1"
     //
-    // "and a half" is therefore also a warning: nothing the player can legitimately build sits
-    // between two steps, so hearing it means the height is off the grid.
+    // A ".5" is therefore also a warning: nothing the player can legitimately build sits between
+    // two steps, so hearing one means the height is off the grid.
     std::string ElevationText(int32_t halfSteps);
 } // namespace OpenRCT2::Ui::Accessibility

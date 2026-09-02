@@ -20,6 +20,7 @@
 #include <openrct2/audio/AudioSource.h>
 #include <openrct2/config/Config.h>
 #include <openrct2/core/MemoryStream.h>
+#include <openrct2/platform/Platform.h>
 #include <vector>
 
 namespace OpenRCT2::Ui::Accessibility
@@ -128,5 +129,34 @@ namespace OpenRCT2::Ui::Accessibility
         // cue-volume percentage scales the tone here so the mod's slider controls it.
         const int32_t volume = Audio::kMixerVolumeMax * pct / 100;
         Audio::CreateAudioChannel(source, Audio::MixerGroup::Accessibility, false, volume, 0.5f, 1.0, true);
+    }
+
+    // Tones still waiting to sound, in reverse order so the next one is always the back element.
+    static std::vector<int32_t> _pendingTones;
+    static uint32_t _nextToneTime = 0;
+    // Comfortably longer than the tone itself (0.12s), so consecutive notes are heard as two pitches
+    // rather than running together.
+    static constexpr uint32_t kToneGapMs = 160;
+
+    void PlayElevationTones(const std::vector<int32_t>& halfSteps)
+    {
+        _pendingTones.clear();
+        if (halfSteps.empty())
+            return;
+
+        PlayElevationTone(halfSteps.front());
+        _pendingTones.assign(halfSteps.begin() + 1, halfSteps.end());
+        std::reverse(_pendingTones.begin(), _pendingTones.end());
+        _nextToneTime = Platform::GetTicks() + kToneGapMs;
+    }
+
+    void TickElevationTones()
+    {
+        if (_pendingTones.empty() || Platform::GetTicks() < _nextToneTime)
+            return;
+
+        PlayElevationTone(_pendingTones.back());
+        _pendingTones.pop_back();
+        _nextToneTime = Platform::GetTicks() + kToneGapMs;
     }
 } // namespace OpenRCT2::Ui::Accessibility

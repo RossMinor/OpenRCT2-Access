@@ -93,7 +93,17 @@ At any point, you can press F1 to hear what commands you currently have at your 
 
 Elevations are spoken as the same numbers the game itself uses on its height markers, so they match what a sighted player sees on screen. Sea level (the default water level) is elevation 0, and land below it reads as a minus number.
 
-You will occasionally hear an elevation like "4 and a half". That means the thing you are on sits **between** two normal steps. Ride track and sloped paths legitimately do this, so hearing it during a Z scan (shift + Home or End) is normal. Hearing it on a **flat path or queue you built** is a warning: a path half a step off the grid can never connect to its neighbours, no matter how far it runs, and control + P will report the network as broken. Delete that stretch and rebuild it from a whole-numbered elevation.
+When the cursor is on a tile where something stands above the ground - an elevated path or bridge, a raised ride entrance or exit, track passing overhead, or a sloped path - the tile readout ends with that thing's elevation. Bare ground never reports a height, since the ground is the baseline everything else is measured against.
+
+If several things overlap at different heights, every height is read: "elevation 2 and 4" for an elevated queue with coaster track flying over it. They are listed in whichever direction your **Tile reading order** setting uses, so the heights follow the same order as the features.
+
+The elevation tone follows the same levels, one note each, in the same order - but a note only sounds for a level that has actually changed since the last tile. Walking along under a coaster on level ground beeps once for the track and then goes quiet; the ground note returns only when the ground itself changes height.
+
+Note that pressing C reports where **you** are - the ground, or the height you have raised your working elevation to - not the height of something passing overhead. Those come from the tile readout.
+
+How often the heights are spoken is set by **Elevation reading** in the mod settings (control + F1): every tile, on change (the default, which stays quiet while you walk a bridge at one height), or off.
+
+You will occasionally hear an elevation like "4.5". That means the thing you are on sits **between** two normal steps. Ride track and sloped paths legitimately do this, so hearing it during a Z scan (shift + Home or End) is normal. Hearing it on a **flat path or queue you built** is a warning: a path half a step off the grid can never connect to its neighbours, no matter how far it runs, and control + P will report the network as broken. Delete that stretch and rebuild it from a whole-numbered elevation.
 - Control page up or down: Raise or lower the water tile you are currently on.
 - X: Clear the scenery on the tile and elivation you are currently on. Examples are trees, bushes, fences, and other objects.
 - B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.

@@ -174,6 +174,11 @@ namespace OpenRCT2::Config
         // Order a tile's stacked features are read: 0 = lowest feature first (default), 1 = highest
         // feature first. Set via Ctrl+F1.
         uint8_t accessibilityTileReadingOrder;
+        // When a tile's readout names the elevation of whatever sits above the ground there (an
+        // elevated path, a ride overhead, a raised entrance): 0 = every tile, 1 = only when that
+        // elevation changes (default), 2 = off. Bare ground never reports an elevation in any mode.
+        // Set via Ctrl+F1.
+        uint8_t accessibilityElevationReadMode;
         // Colour of the visible keyboard-focus indicator (a Drawing::Colour enum value). Chosen from a
         // curated high-contrast list in the mod settings window (Ctrl+F1).
         uint8_t accessibilityFocusColour;

@@ -220,8 +220,10 @@ namespace OpenRCT2::Ui::Accessibility
     // when the cursor moves onto a tile at a different elevation, so scanning flat ground stays
     // silent. The sine sample is synthesised once and cached; pitch is set per play via the
     // mixer's playback rate.
-    static int32_t _lastElevation = -1; // surface->baseHeight/2 of the previous tile; -1 = none yet
-    static int32_t _lastStepCat = -1;   // step-cue category of the previous tile (for "on transition" mode)
+    // Every level the previous tile sounded a tone for, so a level the cursor has been running
+    // alongside stays silent until it actually changes.
+    static std::vector<int32_t> _lastElevationLevels;
+    static int32_t _lastStepCat = -1; // step-cue category of the previous tile (for "on transition" mode)
 
     // The cursor's focus elevation, as a tile-element baseHeight. Shift+Home/End snap it to the
     // element below/above on the tile (see ScanZLevel), and path/scenery deletion acts at this level.
@@ -572,15 +574,100 @@ namespace OpenRCT2::Ui::Accessibility
         return parts;
     }
 
-    // The elevation number for the level a player is at on this tile, in the engine's construction
-    // units. Delegates to the shared elevation module (AccessibleTopZ): the land's base height
-    // (slope tops and water excluded, like the game's height markers) plus footpaths (including
-    // bridges/raised paths) and ride entrances/exits resting above the ground - so the tone always
-    // agrees with the coordinate readout and the level building acts at.
-    static int32_t EffectiveElevationAt(const TileCoordsXY& tile)
+    // Every distinct elevation a tile's readout should name, in half steps. Bare ground never
+    // qualifies - its height is the baseline everything else is measured against, and saying it on
+    // every tile would be noise. What does qualify is anything standing off that baseline: an
+    // elevated path or bridge, a raised ride entrance or exit, track passing overhead - and a
+    // sloped path, which spans two levels by nature and so has no single "ground" to be level with.
+    //
+    // A tile can hold several of these at once (a path with a coaster flying over it), and each is
+    // worth hearing, so they are all collected. Ordered by the tile reading-order setting, the same
+    // way the feature list itself is, so heights and features are recited in the same direction.
+    static std::vector<int32_t> TileReadoutElevations(const TileCoordsXY& tile)
     {
-        return ElevationHalfSteps(AccessibleTopZ(tile.ToCoordsXY()));
+        std::vector<int32_t> heights;
+        auto* surface = MapGetSurfaceElementAt(tile);
+        if (surface == nullptr)
+            return heights;
+
+        const int32_t ground = surface->baseHeight;
+        for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
+        {
+            if (!el->isGhost() && el->getType() != TileElementType::Surface)
+            {
+                auto* path = el->asPath();
+                const bool sloped = path != nullptr && path->IsSloped();
+                if (el->baseHeight > ground || sloped)
+                {
+                    // Several elements often share one level (a bench on a bridge deck); that is one
+                    // height to the ear, not two.
+                    const int32_t h = el->baseHeight;
+                    if (std::find(heights.begin(), heights.end(), h) == heights.end())
+                        heights.push_back(h);
+                }
+            }
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+
+        // Tile elements are stored bottom-to-top, which is already the default reading order.
+        std::sort(heights.begin(), heights.end());
+        if (Config::Get().sound.accessibilityTileReadingOrder == kTileReadingOrderHighestFirst)
+            std::reverse(heights.begin(), heights.end());
+        return heights;
     }
+
+    // Every level a tile should sound a tone for: the GROUND the cursor sits on, plus anything
+    // standing above it at a different height. The ground is the base note - the terrain cue the
+    // tone has always been - and each thing overhead gets its own, so a path with track above it
+    // sounds as two pitches. Ordered the same way the readout is, so notes and words arrive in the
+    // same direction.
+    static std::vector<int32_t> ToneLevelsAt(const TileCoordsXY& tile)
+    {
+        auto levels = TileReadoutElevations(tile);
+        auto* surface = MapGetSurfaceElementAt(tile);
+        if (surface == nullptr)
+            return levels;
+
+        const int32_t ground = surface->baseHeight;
+        if (std::find(levels.begin(), levels.end(), ground) == levels.end())
+        {
+            if (Config::Get().sound.accessibilityTileReadingOrder == kTileReadingOrderHighestFirst)
+                levels.push_back(ground);
+            else
+                levels.insert(levels.begin(), ground);
+        }
+        return levels;
+    }
+
+    // Sound a tile's levels, but only the ones that are NEW since the last tile. Each level is judged
+    // on its own: a level the cursor has been running alongside - the ground beneath a bridge, or
+    // track overhead - has not changed just because something else on the tile did, so it stays
+    // silent. Walking under a coaster on level ground therefore beeps for the track alone, and
+    // crossing flat open ground stays silent as it always has. Every cursor move and deliberate jump
+    // goes through here so they all agree on what counts as a change.
+    static void SoundElevationOnChange(const TileCoordsXY& tile)
+    {
+        auto levels = ToneLevelsAt(tile);
+
+        std::vector<int32_t> fresh;
+        for (int32_t level : levels)
+            if (std::find(_lastElevationLevels.begin(), _lastElevationLevels.end(), level) == _lastElevationLevels.end())
+                fresh.push_back(level);
+
+        if (!fresh.empty())
+            PlayElevationTones(fresh);
+
+        // The baseline is what the tile actually holds, not just what sounded, so the next tile is
+        // compared against the whole picture.
+        _lastElevationLevels = std::move(levels);
+    }
+
+    // The elevations last appended to a tile readout, so "on change" can stay quiet while the cursor
+    // runs along a bridge at one height. Cleared whenever a tile reports none, so stepping off a
+    // bridge and back on says the height again.
+    static std::vector<int32_t> _lastSpokenTileElevations;
 
     static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
     {
@@ -590,7 +677,10 @@ namespace OpenRCT2::Ui::Accessibility
         const bool owned = surface != nullptr && (surface->GetOwnership() & OWNERSHIP_OWNED) != 0;
 
         if (parts.empty())
+        {
+            _lastSpokenTileElevations.clear();
             return { owned ? "Empty" : "Outside park", true };
+        }
 
         // The composition helper owns the ", " joins and drops any empty fragment, so the seam is
         // decided in one place.
@@ -600,6 +690,30 @@ namespace OpenRCT2::Ui::Accessibility
         // The land beneath everything: note when the tile is outside the owned park area.
         if (!owned)
             sb.add("outside park");
+
+        // Then the height of everything standing above the ground here, per the elevation-reading
+        // setting: every tile, only when the set of heights changes, or never.
+        const auto elevations = TileReadoutElevations(tile);
+        const uint8_t mode = Config::Get().sound.accessibilityElevationReadMode;
+        if (!elevations.empty() && mode != 2)
+        {
+            if (mode == 0 || _lastSpokenTileElevations != elevations)
+            {
+                // "elevation 5, 2.5" - the word once, then the bare numbers separated by commas.
+                // Deliberately no "and" before the last: these are read constantly while moving, so
+                // every extra word is one the player hears hundreds of times an hour.
+                std::string text = "elevation ";
+                for (size_t i = 0; i < elevations.size(); i++)
+                {
+                    if (i > 0)
+                        text += ", ";
+                    text += ElevationText(elevations[i]);
+                }
+                sb.add(text);
+            }
+        }
+        _lastSpokenTileElevations = elevations;
+
         return { sb.str(), false };
     }
 
@@ -617,6 +731,11 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t minY = ay / kCoordsXYStep;
         const int32_t maxX = bx / kCoordsXYStep;
         const int32_t maxY = by / kCoordsXYStep;
+
+        // A brush read spans many tiles, so listing heights across them would be meaningless and none
+        // are appended. Clear the "on change" baseline so shrinking back to a 1x1 brush names the
+        // heights on the cursor's tile rather than comparing against whatever preceded the sweep.
+        _lastSpokenTileElevations.clear();
 
         SpeechBuilder sb;
         bool anyFeature = false;
@@ -654,7 +773,7 @@ namespace OpenRCT2::Ui::Accessibility
     {
         _initialised = true;
         _lastTileDescription.clear();
-        _lastElevation = -1;
+        _lastElevationLevels.clear();
 
         const auto mapSize = getGameState().mapSize;
 
@@ -704,7 +823,7 @@ namespace OpenRCT2::Ui::Accessibility
         // Keep the cursor's own bookkeeping coherent so it behaves normally once following ends.
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            _lastElevation = EffectiveElevationAt(_cursor);
+            _lastElevationLevels = ToneLevelsAt(_cursor);
             _scanHeight = surface->baseHeight;
             _scanLocked = false;
         }
@@ -885,17 +1004,14 @@ namespace OpenRCT2::Ui::Accessibility
             Windows::WindowTrackPlaceUpdateGhost(CoordsXY{ tdWorld.x, tdWorld.y });
         }
 
-        // Elevation tone: beep only when the new tile's height differs from the last one, so
-        // moving across flat ground stays silent. Pitch rises with elevation. A ride entrance/exit
-        // reads at its own elevated height (see EffectiveElevationAt), not the ground beneath it.
+        // Elevation tone: beep only when the new tile's set of heights differs from the last one, so
+        // moving across flat ground stays silent. Pitch rises with elevation. The cursor's own level
+        // always sounds first or last per the reading order; where something else stands at a
+        // different height on the same tile - track flying over a path - that height gets its own
+        // note, so the ear hears the same layering the readout describes.
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            const int32_t elevation = EffectiveElevationAt(_cursor);
-            if (elevation != _lastElevation)
-            {
-                PlayElevationTone(elevation);
-                _lastElevation = elevation;
-            }
+            SoundElevationOnChange(_cursor);
             // The focus elevation tracks the ground as the cursor moves, unless a scan has locked it
             // onto a raised level - then it stays put so the player can navigate at that elevation.
             if (!_scanLocked)
@@ -1058,21 +1174,13 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t x = SpokenCoordX(_cursor);
         const int32_t y = SpokenCoordY(_cursor);
         std::string text = "X " + std::to_string(x) + ", Y " + std::to_string(y);
+        // The cursor's own level: the ground it sits on, or whatever height the focus has been
+        // deliberately lifted to. Deliberately NOT the highest walkable surface on the tile - a
+        // bridge or elevated queue passing overhead is not where the cursor is, and reporting it
+        // here told the player they were standing on something they were underneath. The heights of
+        // things above are named by the tile readout instead, which can list them all.
         if (MapGetSurfaceElementAt(_cursor) != nullptr)
-        {
-            // The level the cursor is actually standing on - the ground, or the path or entrance
-            // resting above it - which is exactly what the elevation tone reports. Reading the
-            // working elevation here instead used to hide an elevated path's height completely: the
-            // tone climbed onto the path while the spoken number stayed on the dirt underneath it,
-            // so the two cues disagreed about where the player was.
-            const int32_t here = EffectiveElevationAt(_cursor);
-            text += ", elevation " + ElevationText(here);
-
-            // Once the focus has been deliberately lifted off the ground it is the level building
-            // acts at, so name it too - but only while it differs from where the cursor stands.
-            if (_scanLocked && _scanHeight != here)
-                text += ", building at " + ElevationText(_scanHeight);
-        }
+            text += ", elevation " + ElevationText(_scanHeight);
         ScreenReaderSpeak(text);
     }
 
@@ -1746,14 +1854,9 @@ namespace OpenRCT2::Ui::Accessibility
 
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            const int32_t elevation = EffectiveElevationAt(_cursor);
-            // Match normal movement: only sound the elevation tone when the height actually changes,
+            // Match normal movement: only sound the elevation tone when the levels actually change,
             // so jumping to a marker/waypoint at the same height as the current tile stays silent.
-            if (elevation != _lastElevation)
-            {
-                PlayElevationTone(elevation);
-                _lastElevation = elevation;
-            }
+            SoundElevationOnChange(_cursor);
             _scanHeight = surface->baseHeight;
             _scanLocked = false; // a deliberate jump lands the focus back on the ground
         }
@@ -1794,14 +1897,9 @@ namespace OpenRCT2::Ui::Accessibility
 
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            const int32_t elevation = EffectiveElevationAt(_cursor);
-            // Match normal movement: only sound the elevation tone when the height actually changes,
+            // Match normal movement: only sound the elevation tone when the levels actually change,
             // so jumping to a marker/waypoint at the same height as the current tile stays silent.
-            if (elevation != _lastElevation)
-            {
-                PlayElevationTone(elevation);
-                _lastElevation = elevation;
-            }
+            SoundElevationOnChange(_cursor);
             _scanHeight = surface->baseHeight;
             _scanLocked = false; // a deliberate jump lands the focus back on the ground
         }
@@ -2117,7 +2215,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         // bestHeight is a baseHeight, which is already the mod's half-step unit. A Z scan is the one
         // place that deliberately lands on odd heights - track and sloped paths sit between steps -
-        // so this is exactly where "and a half" earns its keep.
+        // so this is exactly where the ".5" earns its keep.
         PlayElevationTone(bestHeight);
         ScreenReaderSpeak(DescribeScanElement(best) + " " + ElevationText(bestHeight));
     }
@@ -2148,12 +2246,16 @@ namespace OpenRCT2::Ui::Accessibility
             std::string spoken;
             if (auto* surface = MapGetSurfaceElementAt(sample); surface != nullptr)
             {
-                const int32_t elevation = EffectiveElevationAt(sample);
+                // The land's own new height - this command raised or lowered the terrain, so a path
+                // bridging overhead is not what just changed and must not be what is reported.
+                const int32_t elevation = surface->baseHeight;
                 PlayElevationTone(elevation);
                 spoken = "elevation " + ElevationText(elevation);
                 if (!marked)
                 {
-                    _lastElevation = elevation;
+                    // Terraforming changed the tile under the cursor, so the level set it last
+                    // sounded no longer describes it; let the next move sound it afresh.
+                    _lastElevationLevels.clear();
                     _scanHeight = surface->baseHeight; // keep the Z-axis probe at the new ground level
                     _scanLocked = false;
                 }
@@ -2516,12 +2618,7 @@ namespace OpenRCT2::Ui::Accessibility
         // C reports where the cursor now is rather than the height it left behind.
         if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
         {
-            const int32_t elevation = EffectiveElevationAt(_cursor);
-            if (elevation != _lastElevation)
-            {
-                PlayElevationTone(elevation);
-                _lastElevation = elevation;
-            }
+            SoundElevationOnChange(_cursor);
             _scanHeight = surface->baseHeight;
             _scanLocked = false;
         }
@@ -2696,7 +2793,7 @@ namespace OpenRCT2::Ui::Accessibility
     // Why a path network stops at this tile, when the reason is a height mismatch: there IS a path
     // on the next tile, but at a level the engine will not link to. Half-step mismatches are the
     // nastiest kind - a path lifted off the step grid looks continuous and, before the elevation
-    // readout could say "and a half", sounded continuous too. Returns an empty string when the
+    // readout could say ".5", sounded continuous too. Returns an empty string when the
     // neighbouring tiles simply have no path (an ordinary missing-tile gap, which needs no
     // explanation) so the caller can just append it.
     static std::string DescribePathGapReason(const TileCoordsXY& tile)

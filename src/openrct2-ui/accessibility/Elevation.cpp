@@ -71,16 +71,15 @@ namespace OpenRCT2::Ui::Accessibility
         // label the same number. Two half steps to a step.
         const int32_t relative = halfSteps - kMapBaseZ * 2;
         const int32_t magnitude = std::abs(relative);
-        const int32_t whole = magnitude / 2;
-        const bool half = (magnitude % 2) != 0;
 
+        // A half step is spoken as ".5" rather than "and a half": these numbers are often recited
+        // several at a time, and a decimal keeps each one to a single short token.
         std::string text;
         if (relative < 0)
             text += "minus ";
-        if (whole != 0 || !half)
-            text += std::to_string(whole);
-        if (half)
-            text += (whole != 0) ? " and a half" : "half";
+        text += std::to_string(magnitude / 2);
+        if ((magnitude % 2) != 0)
+            text += ".5";
         return text;
     }
 } // namespace OpenRCT2::Ui::Accessibility
