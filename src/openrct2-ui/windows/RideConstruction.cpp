@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <limits>
+#include <openrct2-ui/accessibility/Elevation.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/ProvisionalElements.h>
@@ -1310,7 +1311,7 @@ namespace OpenRCT2::Ui::Windows
         {
             const TileCoordsXY tile{ CoordsXY{ _currentTrackBegin.x, _currentTrackBegin.y } };
             std::string s = Accessibility::SpokenTileCoordsText(tile);
-            s += ", height " + std::to_string(_currentTrackBegin.z / (kCoordsZStep * 2));
+            s += ", height " + Accessibility::ElevationText(Accessibility::ElevationHalfSteps(_currentTrackBegin.z));
             s += ", pointing " + std::string(axDirectionName(_currentTrackPieceDirection));
             s += ". Next piece: " + axComposedPiece();
             return s;

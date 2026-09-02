@@ -59,8 +59,28 @@ namespace OpenRCT2::Ui::Accessibility
         return top;
     }
 
-    int32_t ElevationNumber(int32_t worldZ)
+    int32_t ElevationHalfSteps(int32_t worldZ)
     {
-        return worldZ / (kCoordsZStep * 2);
+        return worldZ / kCoordsZStep;
+    }
+
+    std::string ElevationText(int32_t halfSteps)
+    {
+        // kMapBaseZ is the offset the game applies to every height marker it draws (land, path and
+        // track alike), so subtracting it here is what makes the spoken number and the on-screen
+        // label the same number. Two half steps to a step.
+        const int32_t relative = halfSteps - kMapBaseZ * 2;
+        const int32_t magnitude = std::abs(relative);
+        const int32_t whole = magnitude / 2;
+        const bool half = (magnitude % 2) != 0;
+
+        std::string text;
+        if (relative < 0)
+            text += "minus ";
+        if (whole != 0 || !half)
+            text += std::to_string(whole);
+        if (half)
+            text += (whole != 0) ? " and a half" : "half";
+        return text;
     }
 } // namespace OpenRCT2::Ui::Accessibility

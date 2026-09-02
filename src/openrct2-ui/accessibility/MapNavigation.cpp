@@ -579,7 +579,7 @@ namespace OpenRCT2::Ui::Accessibility
     // agrees with the coordinate readout and the level building acts at.
     static int32_t EffectiveElevationAt(const TileCoordsXY& tile)
     {
-        return ElevationNumber(AccessibleTopZ(tile.ToCoordsXY()));
+        return ElevationHalfSteps(AccessibleTopZ(tile.ToCoordsXY()));
     }
 
     static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
@@ -1058,10 +1058,21 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t x = SpokenCoordX(_cursor);
         const int32_t y = SpokenCoordY(_cursor);
         std::string text = "X " + std::to_string(x) + ", Y " + std::to_string(y);
-        // Report the cursor's focus elevation - the single elevation set by the scan / comma-period
-        // keys - so it confirms where the cursor currently sits (e.g. after snapping up to an object).
         if (MapGetSurfaceElementAt(_cursor) != nullptr)
-            text += ", elevation " + std::to_string(_scanHeight / 2);
+        {
+            // The level the cursor is actually standing on - the ground, or the path or entrance
+            // resting above it - which is exactly what the elevation tone reports. Reading the
+            // working elevation here instead used to hide an elevated path's height completely: the
+            // tone climbed onto the path while the spoken number stayed on the dirt underneath it,
+            // so the two cues disagreed about where the player was.
+            const int32_t here = EffectiveElevationAt(_cursor);
+            text += ", elevation " + ElevationText(here);
+
+            // Once the focus has been deliberately lifted off the ground it is the level building
+            // acts at, so name it too - but only while it differs from where the cursor stands.
+            if (_scanLocked && _scanHeight != here)
+                text += ", building at " + ElevationText(_scanHeight);
+        }
         ScreenReaderSpeak(text);
     }
 
@@ -1407,10 +1418,10 @@ namespace OpenRCT2::Ui::Accessibility
         {
             ScreenReaderSpeak(
                 std::string(delta > 0 ? "Maximum elevation, elevation " : "Ground level, elevation ")
-                + std::to_string(_scanHeight / 2));
+                + ElevationText(_scanHeight));
             return;
         }
-        ScreenReaderSpeak("Elevation " + std::to_string(_scanHeight / 2));
+        ScreenReaderSpeak("Elevation " + ElevationText(_scanHeight));
     }
 
     // Defined later in the file; declared here so the path commands can act on a marked area.
@@ -1557,9 +1568,13 @@ namespace OpenRCT2::Ui::Accessibility
             if (GameActions::Query(&groundProbe, getGameState()).error == GameActions::Status::noClearance
                 && !GetRideAtTile(_cursor).IsNull())
             {
-                const int32_t groundZ = baseZ;
-                const int32_t maxZ = groundZ + 40 * kCoordsZStep; // generous: clears even tall coasters
-                for (int32_t z = groundZ + kCoordsZStep; z <= maxZ; z += kCoordsZStep)
+                // Climb in kPathHeightStep, the engine's own path step, from a step-aligned base.
+                // Probing in kCoordsZStep (half a step) would take the first height that merely
+                // clears the ride, which is off the path grid half the time - and a path half a step
+                // off can never connect to its neighbours, however far it runs.
+                const int32_t groundZ = Numerics::floor2(baseZ, kPathHeightStep);
+                const int32_t maxZ = groundZ + 20 * kPathHeightStep; // generous: clears even tall coasters
+                for (int32_t z = groundZ + kPathHeightStep; z <= maxZ; z += kPathHeightStep)
                 {
                     auto lifted = GameActions::FootpathPlaceAction(
                         CoordsXYZ{ world.x, world.y, z }, FootpathSlope{ FootpathSlopeType::flat, 0 }, type,
@@ -1603,7 +1618,7 @@ namespace OpenRCT2::Ui::Accessibility
                 const int32_t stepBase = kPathHeightStep / kCoordsZStep; // base-height units per path step
                 _scanHeight += (_slopeMode == SlopeMode::up) ? stepBase : -stepBase;
                 _scanLocked = buildSurface == nullptr || _scanHeight > buildSurface->baseHeight;
-                what += ", elevation " + std::to_string(_scanHeight / 2);
+                what += ", elevation " + ElevationText(_scanHeight);
             }
 
             ScreenReaderSpeak(what);
@@ -2100,9 +2115,11 @@ namespace OpenRCT2::Ui::Accessibility
         auto* surf = MapGetSurfaceElementAt(_cursor);
         _scanLocked = surf != nullptr && bestHeight > surf->baseHeight;
 
-        const int32_t elevation = ElevationNumber(bestHeight * kCoordsZStep); // bestHeight is a baseHeight (Z / kCoordsZStep)
-        PlayElevationTone(elevation);
-        ScreenReaderSpeak(DescribeScanElement(best) + " " + std::to_string(elevation));
+        // bestHeight is a baseHeight, which is already the mod's half-step unit. A Z scan is the one
+        // place that deliberately lands on odd heights - track and sloped paths sit between steps -
+        // so this is exactly where "and a half" earns its keep.
+        PlayElevationTone(bestHeight);
+        ScreenReaderSpeak(DescribeScanElement(best) + " " + ElevationText(bestHeight));
     }
 
     static void ChangeLandHeight(bool raise)
@@ -2133,7 +2150,7 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 const int32_t elevation = EffectiveElevationAt(sample);
                 PlayElevationTone(elevation);
-                spoken = "elevation " + std::to_string(elevation);
+                spoken = "elevation " + ElevationText(elevation);
                 if (!marked)
                 {
                     _lastElevation = elevation;
@@ -2204,9 +2221,9 @@ namespace OpenRCT2::Ui::Accessibility
                 // one place the water level itself is the number that matters; the ambient elevation
                 // cues (movement tone, coordinate readout) read the land like the game's own height
                 // markers do, so water only speaks its level here, where the player is changing it.
-                const int32_t level = ElevationNumber(waterHeight);
+                const int32_t level = ElevationHalfSteps(waterHeight);
                 PlayElevationTone(level);
-                ScreenReaderSpeak(prefix + "Water level " + std::to_string(level));
+                ScreenReaderSpeak(prefix + "Water level " + ElevationText(level));
             }
             else
             {
@@ -2652,13 +2669,80 @@ namespace OpenRCT2::Ui::Accessibility
         if (OpenRCT2::findTrackGap(*ride, origin, &gap))
         {
             const TileCoordsXY tile{ CoordsXY{ gap.x, gap.y } };
-            const int32_t height = gap.element != nullptr ? ElevationNumber(gap.element->getBaseZ()) : 0;
-            ScreenReaderSpeak("Track break at " + SpokenTileCoordsText(tile) + ", height " + std::to_string(height));
+            const std::string height = gap.element != nullptr ? ElevationText(ElevationHalfSteps(gap.element->getBaseZ()))
+                                                              : std::string("unknown");
+            ScreenReaderSpeak("Track break at " + SpokenTileCoordsText(tile) + ", height " + height);
         }
         else
         {
             ScreenReaderSpeak("Track is a complete circuit, no breaks");
         }
+    }
+
+    // A height difference spoken as a number of path/land steps: "half a step", "1 step",
+    // "1 step and a half". Input is a magnitude in half steps.
+    static std::string StepsText(int32_t halfSteps)
+    {
+        const int32_t whole = halfSteps / 2;
+        const bool half = (halfSteps % 2) != 0;
+        std::string text;
+        if (whole > 0)
+            text = std::to_string(whole) + (whole == 1 ? " step" : " steps");
+        if (half)
+            text += text.empty() ? "half a step" : " and a half";
+        return text;
+    }
+
+    // Why a path network stops at this tile, when the reason is a height mismatch: there IS a path
+    // on the next tile, but at a level the engine will not link to. Half-step mismatches are the
+    // nastiest kind - a path lifted off the step grid looks continuous and, before the elevation
+    // readout could say "and a half", sounded continuous too. Returns an empty string when the
+    // neighbouring tiles simply have no path (an ordinary missing-tile gap, which needs no
+    // explanation) so the caller can just append it.
+    static std::string DescribePathGapReason(const TileCoordsXY& tile)
+    {
+        int32_t bestDiff = 0;
+        TileCoordsXY bestTile{};
+        bool found = false;
+
+        for (auto* here : TileElementsView<PathElement>(tile.ToCoordsXY()))
+        {
+            if (here->isGhost())
+                continue;
+            for (Direction dir : kAllDirections)
+            {
+                const TileCoordsXY neighbour{ tile.x + TileDirectionDelta[dir].x, tile.y + TileDirectionDelta[dir].y };
+                for (auto* other : TileElementsView<PathElement>(neighbour.ToCoordsXY()))
+                {
+                    if (other->isGhost())
+                        continue;
+
+                    // Skip pairs that genuinely connect - a ramp meeting a landing sits two half
+                    // steps apart and is perfectly fine, so a raw height difference proves nothing.
+                    int32_t arrivalZ = here->baseHeight;
+                    if (here->IsSloped() && here->GetSlopeDirection() == dir)
+                        arrivalZ += 2;
+                    if ((here->GetEdges() & (1 << dir)) != 0 && FootpathIsZAndDirectionValid(*other, arrivalZ, dir))
+                        continue;
+
+                    const int32_t diff = other->baseHeight - here->baseHeight;
+                    if (diff == 0)
+                        continue; // same level but not linked: a missing edge, not a height problem
+                    if (!found || std::abs(diff) < std::abs(bestDiff))
+                    {
+                        bestDiff = diff;
+                        bestTile = neighbour;
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if (!found)
+            return {};
+
+        return ". The path at " + SpokenTileCoordsText(bestTile) + " sits " + StepsText(std::abs(bestDiff))
+            + (bestDiff > 0 ? " higher" : " lower") + ", so the two cannot join";
     }
 
     // Opens a game window by class via the game's own window-open path and announces its name, so a
@@ -3537,7 +3621,10 @@ namespace OpenRCT2::Ui::Accessibility
                     std::string msg = "No path back to the park entrance";
                     // Report where the path stops short of connecting, so the player can go fix the gap.
                     if (auto gap = FindPathDisconnectPoint(_cursor); gap.has_value())
+                    {
                         msg += ". Path stops nearest at " + SpokenTileCoordsText(*gap);
+                        msg += DescribePathGapReason(*gap);
+                    }
                     ScreenReaderSpeak(msg);
                     break;
                 }

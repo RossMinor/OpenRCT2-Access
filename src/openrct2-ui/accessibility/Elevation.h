@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 struct CoordsXY;
 
@@ -19,9 +20,14 @@ namespace OpenRCT2::Ui::Accessibility
     //
     // Every mod feature that deals with height must go through this file so the mod measures and
     // reports elevation the exact way the engine does, rather than its own land-only approximation.
-    // Heights here are world Z (units of kCoordsZStep = 8), the engine's native scale; only the final
-    // spoken figure is converted, in ElevationNumber, to the number the ride construction window
-    // shows so the player hears the same value the game understands.
+    // Heights here are world Z (units of kCoordsZStep = 8), the engine's native scale.
+    //
+    // THE MOD'S UNIT IS THE HALF STEP - one base height unit, which is the granularity the engine
+    // actually stores every tile element at. A land step, a path step and a track step are all two
+    // half steps. Measuring in whole steps (as the mod used to) silently rounds away anything
+    // sitting between two steps, and the game's own path height markers round it away too - so a
+    // footpath built half a step off the grid, which can never connect to its neighbours, looked
+    // and sounded identical to a correct one. Working in half steps is what lets the mod say so.
 
     // World Z of the level a player stands on at this tile: the ground's base height, or a footpath
     // or ride entrance/exit/park entrance resting above it (bridges, paths in the air, raised
@@ -36,8 +42,20 @@ namespace OpenRCT2::Ui::Accessibility
     // keeps using. Returns -1 if the tile has no surface.
     int32_t AccessibleTopZ(const CoordsXY& tile);
 
-    // Converts a world Z to the elevation number the engine uses for construction height
-    // (Z / (kCoordsZStep * 2)), so every spoken elevation matches the figure shown in the ride
-    // construction window.
-    int32_t ElevationNumber(int32_t worldZ);
+    // World Z to half steps (Z / kCoordsZStep) - the mod's internal elevation unit. This is what
+    // the elevation tone and every "has the height changed?" comparison run on, so a half-step
+    // difference registers instead of being rounded into its neighbour.
+    int32_t ElevationHalfSteps(int32_t worldZ);
+
+    // The spoken elevation for a height in half steps. The whole-step figure matches the game's own
+    // height markers exactly - the same land/path step scale, offset by kMapBaseZ - so the number
+    // the player hears is the number a sighted player reads off the screen. A height sitting between
+    // two steps speaks the difference rather than hiding it:
+    //
+    //   28 -> "0"        29 -> "0 and a half"        36 -> "4"       37 -> "4 and a half"
+    //   15 -> "minus half"                           12 -> "minus 1"
+    //
+    // "and a half" is therefore also a warning: nothing the player can legitimately build sits
+    // between two steps, so hearing it means the height is off the grid.
+    std::string ElevationText(int32_t halfSteps);
 } // namespace OpenRCT2::Ui::Accessibility

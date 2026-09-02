@@ -13,10 +13,11 @@
 
 namespace OpenRCT2::Ui::Accessibility
 {
-    // Plays the elevation beep at a pitch encoding the given elevation (a surface baseHeight/2).
+    // Plays the elevation beep at a pitch encoding the given elevation in HALF STEPS (see
+    // ElevationHalfSteps in Elevation.h - the engine's own base-height unit, two to a land step).
     // Higher elevation gives a higher pitch, clamped to a cap so tall terrain never gets piercing.
-    // The sine for each elevation step is synthesised at its exact target frequency on first use and
+    // The sine for each half step is synthesised at its exact target frequency on first use and
     // cached for the session, then played at rate 1.0 so the mixer never resamples it. No-op when no
     // audio device is available.
-    void PlayElevationTone(int32_t elevation);
+    void PlayElevationTone(int32_t halfSteps);
 } // namespace OpenRCT2::Ui::Accessibility

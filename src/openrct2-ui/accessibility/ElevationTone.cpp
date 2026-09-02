@@ -25,10 +25,13 @@
 namespace OpenRCT2::Ui::Accessibility
 {
     // Pitch range mapped across elevation. Capped at 1 kHz so the highest terrain never gets
-    // piercing; kElevToneRange is how many elevation steps span the full min..max sweep.
+    // piercing; kElevToneRange is how many elevation HALF STEPS span the full min..max sweep.
+    // Half steps and this range were doubled together, so the pitch of any given whole step is
+    // exactly what it always was - the sweep simply gained a note between each pair of steps, which
+    // is what makes an off-grid height audible as well as speakable.
     static constexpr double kElevToneMinFreq = 220.0;
     static constexpr double kElevToneMaxFreq = 1000.0;
-    static constexpr int32_t kElevToneRange = 50;
+    static constexpr int32_t kElevToneRange = 100;
 
     // One synthesised sine source per (clamped) elevation step, generated lazily and cached for
     // the session. Each is rendered at its exact target frequency and played at rate 1.0, which
@@ -96,7 +99,7 @@ namespace OpenRCT2::Ui::Accessibility
         return buf;
     }
 
-    void PlayElevationTone(int32_t elevation)
+    void PlayElevationTone(int32_t halfSteps)
     {
         if (!Audio::IsAvailable())
             return;
@@ -107,7 +110,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (pct <= 0)
             return;
 
-        const int32_t clamped = std::clamp(elevation, 0, kElevToneRange);
+        const int32_t clamped = std::clamp(halfSteps, 0, kElevToneRange);
         Audio::IAudioSource*& source = _elevationToneSources[clamped];
         if (source == nullptr)
         {
