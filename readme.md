@@ -85,15 +85,15 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - F4: Opens the path menu.
 - D: Deletes the path on the current tile and elivation.
 - L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path. The sloped path will build int he direction you are facing. So if you are facing north and have slope set to up, the path will gain elivation going north.
-- . or ,: Raise and lower the elivation you are working on. This is useful for building elivated paths.
-- shift + . or ,: Snaps the cursor to any objects above or below you, respectively.
+- Home or End: Raise and lower the elivation you are working on. This is useful for building elivated paths.
+- Shift + Home or End: Snaps the cursor to any objects above or below you, respectively.
 - Page up or down: Raises and lower the land tile you are currently on. **Note:** There is a sound that plays with terrain to indicate elevation. The higher pitch, the higher the elevation. The lower the pitch, the lower the elevation.
 
 ### About elevation numbers
 
 Elevations are spoken as the same numbers the game itself uses on its height markers, so they match what a sighted player sees on screen. Sea level (the default water level) is elevation 0, and land below it reads as a minus number.
 
-You will occasionally hear an elevation like "4 and a half". That means the thing you are on sits **between** two normal steps. Ride track and sloped paths legitimately do this, so hearing it during a Z scan (shift + . or ,) is normal. Hearing it on a **flat path or queue you built** is a warning: a path half a step off the grid can never connect to its neighbours, no matter how far it runs, and control + P will report the network as broken. Delete that stretch and rebuild it from a whole-numbered elevation.
+You will occasionally hear an elevation like "4 and a half". That means the thing you are on sits **between** two normal steps. Ride track and sloped paths legitimately do this, so hearing it during a Z scan (shift + Home or End) is normal. Hearing it on a **flat path or queue you built** is a warning: a path half a step off the grid can never connect to its neighbours, no matter how far it runs, and control + P will report the network as broken. Delete that stretch and rebuild it from a whole-numbered elevation.
 - Control page up or down: Raise or lower the water tile you are currently on.
 - X: Clear the scenery on the tile and elivation you are currently on. Examples are trees, bushes, fences, and other objects.
 - B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.

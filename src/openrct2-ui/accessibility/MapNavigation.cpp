@@ -206,7 +206,7 @@ namespace OpenRCT2::Ui::Accessibility
     };
     static SlopeMode _slopeMode = SlopeMode::flat;
 
-    // How far the focus elevation (_scanHeight) may be raised above the ground with the comma/period
+    // How far the focus elevation (_scanHeight) may be raised above the ground with the Home/End
     // keys, in elevation units - well past any sane bridge height.
     static constexpr int32_t kMaxFocusElevationAboveGround = 64;
 
@@ -223,7 +223,7 @@ namespace OpenRCT2::Ui::Accessibility
     static int32_t _lastElevation = -1; // surface->baseHeight/2 of the previous tile; -1 = none yet
     static int32_t _lastStepCat = -1;   // step-cue category of the previous tile (for "on transition" mode)
 
-    // The cursor's focus elevation, as a tile-element baseHeight. Shift+comma/period snap it to the
+    // The cursor's focus elevation, as a tile-element baseHeight. Shift+Home/End snap it to the
     // element below/above on the tile (see ScanZLevel), and path/scenery deletion acts at this level.
     // While it sits at the ground (not lifted onto a structure) it tracks the ground as the cursor
     // moves; once a scan lifts it above the ground it is "locked" and stays put across moves, so the
@@ -1400,7 +1400,7 @@ namespace OpenRCT2::Ui::Accessibility
     }
 
     // Raises (+1) or lowers (-1) the cursor's focus elevation by one elevation unit and announces it.
-    // This is the same single elevation the Shift+comma/period scan sets, the read-coordinates key
+    // This is the same single elevation the Shift+Home/End scan sets, the read-coordinates key
     // reports, and path building / deletion act at: at ground level it tracks the terrain; once lifted
     // it locks and persists as the cursor moves, so the player can build, delete, and navigate at a
     // chosen elevation (an elevated path spans water and gaps there). One unit is two baseHeight steps.
@@ -2073,8 +2073,8 @@ namespace OpenRCT2::Ui::Accessibility
         return "Object";
     }
 
-    // Read-only vertical (Z-axis) scan, bound to Shift+period (dir > 0, next element above) and
-    // Shift+comma (dir < 0, next element below). Snaps the probe to the nearest element above/below
+    // Read-only vertical (Z-axis) scan, bound to Shift+Home (dir > 0, next element above) and
+    // Shift+End (dir < 0, next element below). Snaps the probe to the nearest element above/below
     // the current scan height on the cursor's tile and reads it as "<name> <elevation>" (e.g.
     // "Tarmac path 6"), playing the elevation tone so the player can feel where it sits. The scan
     // height resets to the ground each time the cursor moves, so a scan starts from ground level.
@@ -2311,7 +2311,7 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
 
-        // Remove the path at the cursor's focus elevation (set by the Shift+comma/period scan). If the
+        // Remove the path at the cursor's focus elevation (set by the Shift+Home/End scan). If the
         // focus is locked onto a raised level, only a path exactly there qualifies; at the default
         // ground focus, fall back to the tile's path so plain deletion still works without scanning.
         PathElement* pathElement = nullptr;
@@ -3111,7 +3111,7 @@ namespace OpenRCT2::Ui::Accessibility
             && key != SDLK_t && key != SDLK_m && key != SDLK_SPACE && key != SDLK_d && key != SDLK_e
             && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET
             && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
-            && key != SDLK_k && key != SDLK_COMMA && key != SDLK_PERIOD && key != SDLK_PAGEUP
+            && key != SDLK_k && key != SDLK_HOME && key != SDLK_END && key != SDLK_PAGEUP
             && key != SDLK_PAGEDOWN)
             return false;
 
@@ -3169,16 +3169,16 @@ namespace OpenRCT2::Ui::Accessibility
             case SDLK_l:
                 CycleSlopeMode();
                 break;
-            case SDLK_COMMA:
-                // Comma lowers, period raises the cursor's focus elevation by one unit (the single
+            case SDLK_END:
+                // End lowers, Home raises the cursor's focus elevation by one step (the single
                 // elevation used for building, deletion and the coordinate readout). With Shift, snap
-                // the focus to the next element below (comma) or above (period) and read it.
+                // the focus to the next element below (End) or above (Home) and read it.
                 if (modifiers & KMOD_SHIFT)
                     ScanZLevel(-1);
                 else
                     ChangeFocusElevation(-1);
                 break;
-            case SDLK_PERIOD:
+            case SDLK_HOME:
                 if (modifiers & KMOD_SHIFT)
                     ScanZLevel(1);
                 else
@@ -3436,7 +3436,7 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(
             "Map cursor. Arrow keys move around the park. C reads the current tile and coordinates. "
             "T opens the status readout, M reads your cash. "
-            "Space builds a footpath, D removes one, L cycles the path slope, comma and period lower and "
+            "Space builds a footpath, D removes one, L cycles the path slope, End and Home lower and "
             "raise the build height for bridges. "
             "Page Up and Page Down raise and lower land, hold Control for water or Shift to zoom. "
             "X clears scenery, O buys land, B changes the brush size, K places markers. "
