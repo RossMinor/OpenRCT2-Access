@@ -348,6 +348,60 @@ namespace OpenRCT2::Ui::Accessibility
         return obj != nullptr ? std::string(obj->GetName()) : std::string();
     }
 
+    // The surface name of a footpath, rewritten FOR SPEECH ONLY - the game's own windows and
+    // tooltips keep showing the object's real name. Several of the stock paths are named after
+    // something a sighted player can see but a blind one cannot, and a few carry a shape suffix that
+    // says nothing about the surface. The original name is always kept recognisable so anything the
+    // player reads in a guide or forum post still matches what they hear.
+    std::string SpokenPathSurfaceName(std::string name)
+    {
+        if (name.empty())
+            return name;
+
+        // Drop a trailing shape descriptor - "Dirt Footpath (Rounded)", "Red Tarmac Footpath
+        // (Stairs)". These describe the kerb or step artwork, not the surface, so they only pad out
+        // a name the player hears on every tile.
+        if (!name.empty() && name.back() == ')')
+        {
+            const auto open = name.rfind('(');
+            if (open != std::string::npos && open > 0)
+            {
+                name.erase(open);
+                while (!name.empty() && name.back() == ' ')
+                    name.pop_back();
+            }
+        }
+
+        const auto equalsIgnoreCase = [](const std::string& a, const char* b) {
+            size_t i = 0;
+            for (; i < a.size() && b[i] != '\0'; i++)
+            {
+                if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+                    return false;
+            }
+            return i == a.size() && b[i] == '\0';
+        };
+
+        // Matched against the WHOLE name, so the colour-prefixed variants ("Red Tarmac Footpath")
+        // are left alone - only the plain, unprefixed ones are ambiguous to the ear.
+        if (equalsIgnoreCase(name, "Crazy Paving Footpath"))
+            return name + " (cobblestone)"; // keeps the searchable name, adds what it looks like
+        if (equalsIgnoreCase(name, "Tarmac Footpath"))
+            return "Blue " + name;
+        if (equalsIgnoreCase(name, "Ash Footpath"))
+            return "Black " + name;
+
+        return name;
+    }
+
+    // The footpath surface name to speak for a path element, from whichever object type it uses.
+    static std::string GetSpokenPathName(const PathElement& path)
+    {
+        return SpokenPathSurfaceName(
+            path.HasLegacyPathEntry() ? GetObjectName(ObjectType::paths, path.GetLegacyPathEntryIndex())
+                                      : GetObjectName(ObjectType::footpathSurface, path.GetSurfaceEntryIndex()));
+    }
+
     // Builds the spoken description of a sign-capable element (banner, wall, or large scenery). If
     // the element carries a banner with custom text, it is appended so the player hears what the
     // sign actually says, e.g. "Sign, reading Main Street". Falls back to just the base label.
@@ -487,11 +541,7 @@ namespace OpenRCT2::Ui::Accessibility
             }
             else if (auto* p = el->asPath(); p != nullptr)
             {
-                std::string name;
-                if (p->HasLegacyPathEntry())
-                    name = GetObjectName(ObjectType::paths, p->GetLegacyPathEntryIndex());
-                else
-                    name = GetObjectName(ObjectType::footpathSurface, p->GetSurfaceEntryIndex());
+                std::string name = GetSpokenPathName(*p);
 
                 std::string label;
                 if (p->IsQueue())
@@ -2134,8 +2184,7 @@ namespace OpenRCT2::Ui::Accessibility
         }
         if (auto* p = el->asPath(); p != nullptr)
         {
-            std::string name = p->HasLegacyPathEntry() ? GetObjectName(ObjectType::paths, p->GetLegacyPathEntryIndex())
-                                                        : GetObjectName(ObjectType::footpathSurface, p->GetSurfaceEntryIndex());
+            std::string name = GetSpokenPathName(*p);
             if (p->IsQueue())
                 name = name.empty() ? "Queue line" : name + " queue";
             else if (name.empty())

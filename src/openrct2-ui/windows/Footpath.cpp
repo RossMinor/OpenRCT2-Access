@@ -9,6 +9,7 @@
 
 #include <openrct2-ui/ProvisionalElements.h>
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -709,7 +710,11 @@ namespace OpenRCT2::Ui::Windows
         static std::string axPathName(ObjectEntryIndex surface)
         {
             const auto* e = GetPathSurfaceEntry(surface);
-            return e != nullptr ? OpenRCT2::FormatStringID(e->NameStringId) : std::string("none");
+            if (e == nullptr)
+                return std::string("none");
+            // Spoken form, so the type named here matches what the map cursor reads on the tile once
+            // the path is down.
+            return Accessibility::SpokenPathSurfaceName(OpenRCT2::FormatStringID(e->NameStringId));
         }
 
         static std::string axRailingsName(ObjectEntryIndex railings)

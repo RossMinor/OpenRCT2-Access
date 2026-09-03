@@ -55,6 +55,14 @@ namespace OpenRCT2::Ui::Accessibility
     // cursor. Shared so features outside MapNavigation (e.g. ride construction) read identically.
     std::string SpokenTileCoordsText(const TileCoordsXY& tile);
 
+    // A footpath surface object's name as the mod SPEAKS it - the game's own windows and tooltips
+    // keep showing the object's real name. Some stock paths are named after something only a sighted
+    // player can judge, so they gain a clarifying word while keeping the original name recognisable;
+    // trailing shape suffixes like "(Rounded)" are dropped, since they describe the kerb artwork
+    // rather than the surface. Shared so the tile readout and the footpath window never disagree
+    // about what a path is called.
+    std::string SpokenPathSurfaceName(std::string name);
+
     // Describes a placed ride entrance or exit for speech: which compass way its doorway faces and
     // whether a footpath is already connected there, e.g. ", facing East, path connected". Pass a
     // ride station's Entrance or Exit. Empty if the location is null.
