@@ -783,6 +783,80 @@ namespace OpenRCT2::Ui::Windows
             return options;
         }
 
+        // The railings each stock surface was originally paired with. Surface and railings are
+        // separate objects in OpenRCT2, and the default railings are simply whichever object loaded
+        // first - so picking a path by name could leave it wearing supports that belong to a
+        // completely different one. A sighted player sees that in the window's preview and fixes it
+        // in seconds; a blind player has no such cue, and the mismatch only becomes visible once the
+        // path leaves the ground. Pairing on selection gives a sensible starting combination while
+        // leaving the Railings control free to override it afterwards.
+        //
+        // Matched by NAME, not index: object indices depend on what a given park has loaded. Each
+        // railings entry is two distinctive words rather than the full name, so it survives spelling
+        // differences like "Gray-Brown" versus "Grey-Brown".
+        struct SurfaceRailingsPair
+        {
+            const char* surface; // the surface's name with any bracketed suffix stripped
+            const char* railingWordA;
+            const char* railingWordB; // empty when one word is already unambiguous
+        };
+        static constexpr SurfaceRailingsPair kSurfaceRailings[] = {
+            { "Ash Footpath", "bamboo", "black" },
+            { "Brown Tarmac Footpath", "concrete", "brown" },
+            { "Dirt Footpath", "bamboo", "brown" },
+            { "Crazy Paving Footpath", "concrete", "brown" },
+            { "Red Tarmac Footpath", "space", "" },
+            { "Tarmac Footpath", "wooden", "" },
+            { "Dark Green Tarmac Footpath", "concrete", "green" },
+        };
+
+        static std::string ToLower(std::string s)
+        {
+            for (auto& c : s)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return s;
+        }
+
+        // The railings object paired with a surface, or nullopt when the surface is not one of the
+        // stock paths (a custom or downloaded object), in which case the current railings stand.
+        static std::optional<ObjectEntryIndex> axPairedRailings(ObjectEntryIndex surface)
+        {
+            const auto* e = GetPathSurfaceEntry(surface);
+            if (e == nullptr)
+                return std::nullopt;
+
+            const auto name = ToLower(
+                Accessibility::PathNameWithoutSuffix(OpenRCT2::FormatStringID(e->NameStringId)));
+
+            for (const auto& pair : kSurfaceRailings)
+            {
+                if (name != ToLower(pair.surface))
+                    continue;
+
+                for (ObjectEntryIndex i = 0; i < kMaxFootpathRailingsObjects; i++)
+                {
+                    const auto* r = GetPathRailingsEntry(i);
+                    if (r == nullptr)
+                        continue;
+                    const auto rails = ToLower(OpenRCT2::FormatStringID(r->NameStringId));
+                    if (rails.find(pair.railingWordA) == std::string::npos)
+                        continue;
+                    if (pair.railingWordB[0] != '\0' && rails.find(pair.railingWordB) == std::string::npos)
+                        continue;
+                    return i;
+                }
+                break; // the surface is known but its railings are not loaded in this park
+            }
+            return std::nullopt;
+        }
+
+        // Applies the paired railings for a surface, if there is a pairing for it.
+        static void axApplyPairedRailings(ObjectEntryIndex surface)
+        {
+            if (auto paired = axPairedRailings(surface); paired.has_value())
+                gFootpathSelection.railings = *paired;
+        }
+
         void axCycleSurface(bool queue, int32_t dir)
         {
             auto options = axSurfaceOptions(queue);
@@ -809,6 +883,7 @@ namespace OpenRCT2::Ui::Windows
                 gFootpathSelection.queueSurface = chosen;
             else
                 gFootpathSelection.normalSurface = chosen;
+            axApplyPairedRailings(chosen);
             FootpathUpdateProvisional();
             _windowFootpathCost = kMoney64Undefined;
             invalidate();
@@ -824,11 +899,12 @@ namespace OpenRCT2::Ui::Windows
         {
             gFootpathSelection.isQueueSelected = queue;
             gFootpathSelection.legacyPath = kObjectEntryIndexNull;
+            const ObjectEntryIndex surface = queue ? gFootpathSelection.queueSurface
+                                                   : gFootpathSelection.normalSurface;
+            axApplyPairedRailings(surface);
             FootpathUpdateProvisional();
             _windowFootpathCost = kMoney64Undefined;
             invalidate();
-            const ObjectEntryIndex surface = queue ? gFootpathSelection.queueSurface
-                                                   : gFootpathSelection.normalSurface;
             Accessibility::ScreenReaderSpeak(
                 (queue ? "Building queues, " : "Building footpaths, ") + axPathName(surface));
         }

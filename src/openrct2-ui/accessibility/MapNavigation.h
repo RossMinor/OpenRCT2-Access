@@ -63,6 +63,11 @@ namespace OpenRCT2::Ui::Accessibility
     // about what a path is called.
     std::string SpokenPathSurfaceName(std::string name);
 
+    // A footpath object's name with any trailing bracketed suffix removed ("Dirt Footpath (Rounded)"
+    // -> "Dirt Footpath"). The suffix names the kerb artwork rather than the surface, so it is noise
+    // both for speech and for matching a path against a table of known types.
+    std::string PathNameWithoutSuffix(std::string name);
+
     // Describes a placed ride entrance or exit for speech: which compass way its doorway faces and
     // whether a footpath is already connected there, e.g. ", facing East, path connected". Pass a
     // ride station's Entrance or Exit. Empty if the location is null.

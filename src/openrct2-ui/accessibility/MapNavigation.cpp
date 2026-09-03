@@ -353,14 +353,11 @@ namespace OpenRCT2::Ui::Accessibility
     // something a sighted player can see but a blind one cannot, and a few carry a shape suffix that
     // says nothing about the surface. The original name is always kept recognisable so anything the
     // player reads in a guide or forum post still matches what they hear.
-    std::string SpokenPathSurfaceName(std::string name)
+    std::string PathNameWithoutSuffix(std::string name)
     {
-        if (name.empty())
-            return name;
-
-        // Drop a trailing shape descriptor - "Dirt Footpath (Rounded)", "Red Tarmac Footpath
-        // (Stairs)". These describe the kerb or step artwork, not the surface, so they only pad out
-        // a name the player hears on every tile.
+        // "Dirt Footpath (Rounded)", "Red Tarmac Footpath (Stairs)". The suffix describes the kerb or
+        // step artwork, not the surface, so it pads out a name the player hears on every tile - and
+        // it gets in the way of matching a path against a table of known types.
         if (!name.empty() && name.back() == ')')
         {
             const auto open = name.rfind('(');
@@ -371,6 +368,15 @@ namespace OpenRCT2::Ui::Accessibility
                     name.pop_back();
             }
         }
+        return name;
+    }
+
+    std::string SpokenPathSurfaceName(std::string name)
+    {
+        if (name.empty())
+            return name;
+
+        name = PathNameWithoutSuffix(std::move(name));
 
         const auto equalsIgnoreCase = [](const std::string& a, const char* b) {
             size_t i = 0;
@@ -567,6 +573,25 @@ namespace OpenRCT2::Ui::Accessibility
 
                 // A ramp reads as sloped so the player can tell a hill piece from a flat one.
                 parts.push_back(p->IsSloped() ? "Sloped " + label : label);
+
+                // Railings are the supports and side fencing, and they are a SEPARATE object from
+                // the surface - so a path can legitimately carry railings that look nothing like it.
+                // The game only draws them where a path leaves the ground, which is exactly why this
+                // went unnoticed for so long: a sighted player sees the mismatch the moment a ramp
+                // goes up, while the readout never mentioned that half of the path existed. Named
+                // only where they are visible, so flat ground paths do not gain a word on every tile.
+                if (!p->HasLegacyPathEntry())
+                {
+                    auto* pathSurface = MapGetSurfaceElementAt(tile);
+                    const bool visible = p->IsSloped()
+                        || (pathSurface != nullptr && p->baseHeight > pathSurface->baseHeight);
+                    if (visible)
+                    {
+                        std::string rails = GetObjectName(ObjectType::footpathRailings, p->GetRailingsEntryIndex());
+                        if (!rails.empty())
+                            parts.push_back(std::move(rails));
+                    }
+                }
 
                 // Path additions are the benches, litter bins, lamps and fountains placed on a
                 // path. They live on the same element as the path; announce them as their own part
