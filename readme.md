@@ -125,8 +125,9 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 - Escape: Cancels construction or exits build mode.
 - Shift + W, A, S, or D: Focusses the scenery you are building on the tile's edge of that direction. For example, if you are placing a bench, you can press shift + W to put it on the north side of the tile you are currently on and then press space to place it.
 - Shift + Q, E, Z, or C: Focusses the scenery you are building on the tile's corner you are currently on. For example, if you were placing flowers, you can press shift + Q to point a flower at the top left corner of the tile you are on and then can press space to place the flower.
-- Control + Up or Down: Cycles through the custom ride builder menu.
+- Control + Up or Down: Cycles through the custom ride builder menu. The menu items you get depend on the ride: only the pieces that ride type can actually build are offered.
 - Control + Left or Right: Cycle between the options for that menu item.
+- Special piece: One of the custom ride builder's menu items, sitting just after Curve. This is where a ride type's own pieces live - vertical loops, corkscrews, helices, reversers, s-bends, on-ride photo sections and so on - so its contents differ from one ride type to the next. Control + Left or Right steps through the pieces you can build from where you are standing; pieces that don't fit your current slope, banking or heading are skipped. To go back to ordinary track, set the Curve item to any value.
 - Control + Enter: Builds the ride piece with the attributes selected.
 - Control + B: Reports the build status of the custom ride.
 

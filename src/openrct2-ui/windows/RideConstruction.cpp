@@ -1139,6 +1139,7 @@ namespace OpenRCT2::Ui::Windows
         {
             direction,
             curve,
+            special, // the ride type's own pieces: loops, corkscrews, helices, reversers, s-bends
             slope,
             bank,
             chain,
@@ -1188,6 +1189,10 @@ namespace OpenRCT2::Ui::Windows
                 fields.push_back(AxField::direction);
             if (axWidgetPresent(WIDX_STRAIGHT))
                 fields.push_back(AxField::curve);
+            // Sits here to match the window, where the special-pieces dropdown is the row directly
+            // under the curve buttons, inside the same Direction group.
+            if (axWidgetPresent(WIDX_SPECIAL_TRACK_DROPDOWN))
+                fields.push_back(AxField::special);
             if (axWidgetPresent(WIDX_LEVEL))
                 fields.push_back(AxField::slope);
             // The banking widgets double as the brake/booster speed spinner on some rides; only treat
@@ -1276,6 +1281,91 @@ namespace OpenRCT2::Ui::Windows
             return out;
         }
 
+        // ---- Special pieces ----------------------------------------------------------------------
+        // The curve / slope / bank controls compose ordinary track. Everything a ride type owns
+        // outright - vertical loops, corkscrews, helices, reversers, s-bends, on-ride photos, tower
+        // bases - lives instead behind the window's special-pieces dropdown, and these are the
+        // pieces that differ most between ride types. The game builds that list itself in
+        // BuildSpecialElementsList: already narrowed to the ride's enabled track groups, with
+        // entries that do not fit the current slope/bank/diagonal marked disabled and separators
+        // inserted to group them. Read that list rather than assembling one here, so the keyboard
+        // offers exactly the dropdown's contents and needs no per-ride table of its own.
+
+        // The piece's on-screen name, including the dropdown's one wording fixup: the rapids piece
+        // is labelled "log bumps" on rides that are not water rides.
+        std::string axSpecialPieceName(TrackElemType trackType) const
+        {
+            StringId id = GetTrackElementDescriptor(trackType).description;
+            if (id == STR_RAPIDS)
+            {
+                auto currentRide = GetRide(_currentRideIndex);
+                if (currentRide != nullptr && currentRide->getRideTypeDescriptor().Category != RideCategory::water)
+                    id = STR_LOG_BUMPS;
+            }
+            return FormatStringID(id);
+        }
+
+        struct AxSpecialOption
+        {
+            int32_t index; // index into _specialElementDropdownState.Elements, for onDropdown
+            std::string label;
+        };
+
+        // The selectable entries, in dropdown order. Separators are layout rather than pieces, and a
+        // disabled entry is one the dropdown greys out because it does not meet the track we are
+        // building from - neither can be chosen, so neither is offered.
+        std::vector<AxSpecialOption> axSpecialOptions() const
+        {
+            std::vector<AxSpecialOption> out;
+            const auto& elements = _specialElementDropdownState.Elements;
+            for (int32_t i = 0; i < static_cast<int32_t>(elements.size()); i++)
+            {
+                if (elements[i].TrackType == TrackElemType::none || elements[i].Disabled)
+                    continue;
+                out.push_back({ i, axSpecialPieceName(elements[i].TrackType) });
+            }
+            return out;
+        }
+
+        // Which entry is selected now, or -1 when the player is on ordinary curve/slope track.
+        int32_t axCurrentSpecialOption(const std::vector<AxSpecialOption>& opts) const
+        {
+            if (!_currentlySelectedTrack.isTrackType)
+                return -1;
+            const auto& elements = _specialElementDropdownState.Elements;
+            for (int32_t i = 0; i < static_cast<int32_t>(opts.size()); i++)
+                if (elements[opts[i].index].TrackType == _currentlySelectedTrack.trackType)
+                    return i;
+            return -1;
+        }
+
+        // Ctrl+Left/Right steps through the special pieces. Selection goes through the window's own
+        // onDropdown, so it lands exactly as a mouse click on that dropdown entry would - including
+        // the per-piece fixups it applies (clearing bank for a vertical loop, and so on).
+        //
+        // There is no "none" entry to step back to, matching the dropdown, which has none either.
+        // Cycling the Curve control off a special piece is how a player returns to ordinary track,
+        // so the field label says so.
+        void axCycleSpecial(int32_t delta)
+        {
+            const auto opts = axSpecialOptions();
+            if (opts.empty())
+            {
+                Accessibility::ScreenReaderSpeak("No special pieces can be built from here");
+                return;
+            }
+
+            // With nothing selected, start just outside the list so the first step enters it from
+            // whichever end the player is heading towards.
+            const int32_t n = static_cast<int32_t>(opts.size());
+            const int32_t current = axCurrentSpecialOption(opts);
+            const int32_t start = (current < 0) ? (delta > 0 ? -1 : n) : current;
+            const int32_t idx = (((start + delta) % n) + n) % n;
+
+            onDropdown(WIDX_SPECIAL_TRACK_DROPDOWN, opts[idx].index);
+            Accessibility::ScreenReaderSpeak(opts[idx].label + ". " + axValidityAndCost());
+        }
+
         std::string axCostText(money64 cost) const
         {
             if (cost <= 0)
@@ -1300,7 +1390,9 @@ namespace OpenRCT2::Ui::Windows
             std::string s;
             if (_currentlySelectedTrack.isTrackType)
             {
-                s = "special piece";
+                // Name the special piece rather than just flagging that one is selected - which
+                // piece it is is the whole point of the choice.
+                s = axSpecialPieceName(_currentlySelectedTrack.trackType);
             }
             else
             {
@@ -1354,6 +1446,15 @@ namespace OpenRCT2::Ui::Windows
                     const auto opts = axCurveOptions();
                     const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentlySelectedTrack.curve));
                     return std::string("Curve, ") + ((idx >= 0) ? opts[idx].label : "straight");
+                }
+                case AxField::special:
+                {
+                    const auto opts = axSpecialOptions();
+                    const std::string count = std::to_string(opts.size()) + " available";
+                    if (_currentlySelectedTrack.isTrackType)
+                        return "Special piece, " + axSpecialPieceName(_currentlySelectedTrack.trackType) + ", " + count;
+                    // Say how to get back out, since this control has no "none" of its own.
+                    return "Special piece, none selected, " + count + ". Set the curve to leave a special piece";
                 }
                 case AxField::slope:
                 {
@@ -1595,6 +1696,9 @@ namespace OpenRCT2::Ui::Windows
                 case AxField::curve:
                     w = pickSelector(axCurveOptions(), static_cast<uint8_t>(_currentlySelectedTrack.curve));
                     break;
+                case AxField::special:
+                    w = WIDX_SPECIAL_TRACK_DROPDOWN;
+                    break;
                 case AxField::slope:
                     w = pickSelector(axSlopeOptions(), static_cast<uint8_t>(_currentTrackPitchEnd));
                     break;
@@ -1680,6 +1784,8 @@ namespace OpenRCT2::Ui::Windows
                         axRotate(delta);
                     else if (f == AxField::curve || f == AxField::slope || f == AxField::bank)
                         axCycleSelector(f, delta);
+                    else if (f == AxField::special)
+                        axCycleSpecial(delta);
                     else if (f == AxField::chain)
                         axToggleChain();
                     else
