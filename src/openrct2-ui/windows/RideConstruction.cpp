@@ -1492,19 +1492,22 @@ namespace OpenRCT2::Ui::Windows
             gRideEntranceExitPlaceType = placingExit ? ENTRANCE_TYPE_RIDE_EXIT : ENTRANCE_TYPE_RIDE_ENTRANCE;
 
             onToolUpdate(WIDX_ENTRANCE, *screenPos); // resolve the station-edge position/direction
-            onToolDown(WIDX_ENTRANCE, *screenPos);   // place it
 
-            const auto& st = ride->getStation(stationIndex);
-            if (placingExit)
+            // The tool resolves a facing only for a tile that actually borders the station platform,
+            // so this is the real "you cannot build here" test - and it is knowable BEFORE trying.
+            // The success case is announced from the placement action's callback instead: the
+            // station does not record the new entrance until the action lands a tick later, so
+            // checking it straight after onToolDown reported a failure for every placement that
+            // then went through.
+            if (gRideEntranceExitPlaceDirection == kInvalidDirection)
+            {
                 Accessibility::ScreenReaderSpeak(
-                    st.Exit.IsNull() ? "Could not place exit. Move the cursor onto a tile next to the station platform."
-                                     : "Exit placed" + Accessibility::DescribeEntranceExitConnection(st.Exit));
-            else
-                Accessibility::ScreenReaderSpeak(
-                    st.Entrance.IsNull()
-                        ? "Could not place entrance. Move the cursor onto a tile next to the station platform."
-                        : "Entrance placed" + Accessibility::DescribeEntranceExitConnection(st.Entrance)
-                            + ". Now place the exit.");
+                    placingExit ? "Could not place exit. Move the cursor onto a tile next to the station platform."
+                                : "Could not place entrance. Move the cursor onto a tile next to the station platform.");
+                return;
+            }
+
+            onToolDown(WIDX_ENTRANCE, *screenPos); // place it; the callback speaks the result
         }
 
         void axActivate(AxField field)
@@ -3211,6 +3214,11 @@ namespace OpenRCT2::Ui::Windows
             if (gRideEntranceExitPlaceDirection == kInvalidDirection)
                 return;
 
+            // Captured for the announcement below: the callback flips gRideEntranceExitPlaceType
+            // before we could read it, so record which of the two this placement was.
+            const bool placingExit = gRideEntranceExitPlaceType == ENTRANCE_TYPE_RIDE_EXIT;
+            const auto placingStation = gRideEntranceExitPlaceStationIndex;
+
             auto rideEntranceExitPlaceAction = GameActions::RideEntranceExitPlaceAction(
                 entranceOrExitCoords, DirectionReverse(gRideEntranceExitPlaceDirection), gRideEntranceExitPlaceRideIndex,
                 gRideEntranceExitPlaceStationIndex, gRideEntranceExitPlaceType == ENTRANCE_TYPE_RIDE_EXIT);
@@ -3218,13 +3226,28 @@ namespace OpenRCT2::Ui::Windows
             rideEntranceExitPlaceAction.SetCallback(
                 [=, this](const GameActions::GameAction* ga, const GameActions::Result* result) {
                     if (result->error != GameActions::Status::ok)
-                        return;
+                        return; // the failure is spoken by the error window
 
                     Audio::Play3D(Audio::SoundId::placeItem, result->position);
 
                     auto* windowMgr = GetWindowManager();
 
                     auto currentRide = GetRide(gRideEntranceExitPlaceRideIndex);
+
+                    // Announce from here, not from the caller: the station only records the new
+                    // entrance or exit once this action lands, a tick after Execute returns, so
+                    // reading it straight afterwards reported "could not place" for placements that
+                    // were about to succeed.
+                    if (currentRide != nullptr)
+                    {
+                        const auto& station = currentRide->getStation(placingStation);
+                        const auto& placed = placingExit ? station.Exit : station.Entrance;
+                        std::string spoken = placingExit ? "Exit placed" : "Entrance placed";
+                        spoken += Accessibility::DescribeEntranceExitConnection(placed);
+                        if (!placingExit && !RideAreAllPossibleEntrancesAndExitsBuilt(*currentRide).Successful)
+                            spoken += ". Now place the exit.";
+                        Accessibility::ScreenReaderSpeak(spoken);
+                    }
                     if (currentRide != nullptr && RideAreAllPossibleEntrancesAndExitsBuilt(*currentRide).Successful)
                     {
                         ToolCancel();
