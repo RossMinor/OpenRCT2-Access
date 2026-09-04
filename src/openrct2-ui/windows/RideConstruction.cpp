@@ -1236,15 +1236,34 @@ namespace OpenRCT2::Ui::Windows
             };
         }
 
-        static std::vector<AxOption> axSlopeOptions()
+        // The two steep-slope buttons lead a double life: whenever the current curve and banking
+        // have a helix equivalent, onPrepareDraw turns them into Helix Down and Helix Up, swapping
+        // their icons and tooltips (and even exchanging their positions with the gentle-slope
+        // buttons). Pressing one then selects a helix PIECE rather than setting a pitch, so calling
+        // it "steep down" named a piece the player was not about to build.
+        //
+        // onPrepareDraw rewrites both tooltips every frame - back to the steep-slope ones whenever
+        // no helix is on offer - so the tooltip is the button's current meaning, kept in step with
+        // what a sighted player sees without the mod having to re-derive any of the conditions.
+        bool axSteepIsHelix(WidgetIndex w) const
+        {
+            if (!axWidgetPresent(w))
+                return false;
+            const auto tip = widgets[w].tooltip;
+            return tip == STR_RIDE_CONSTRUCTION_HELIX_DOWN_TIP || tip == STR_RIDE_CONSTRUCTION_HELIX_UP_TIP;
+        }
+
+        std::vector<AxOption> axSlopeOptions() const
         {
             return {
                 { WIDX_SLOPE_DOWN_VERTICAL, "vertical drop", static_cast<uint8_t>(TrackPitch::down90) },
-                { WIDX_SLOPE_DOWN_STEEP, "steep down", static_cast<uint8_t>(TrackPitch::down60) },
+                { WIDX_SLOPE_DOWN_STEEP, axSteepIsHelix(WIDX_SLOPE_DOWN_STEEP) ? "helix down" : "steep down",
+                  static_cast<uint8_t>(TrackPitch::down60) },
                 { WIDX_SLOPE_DOWN, "down", static_cast<uint8_t>(TrackPitch::down25) },
                 { WIDX_LEVEL, "level", static_cast<uint8_t>(TrackPitch::none) },
                 { WIDX_SLOPE_UP, "up", static_cast<uint8_t>(TrackPitch::up25) },
-                { WIDX_SLOPE_UP_STEEP, "steep up", static_cast<uint8_t>(TrackPitch::up60) },
+                { WIDX_SLOPE_UP_STEEP, axSteepIsHelix(WIDX_SLOPE_UP_STEEP) ? "helix up" : "steep up",
+                  static_cast<uint8_t>(TrackPitch::up60) },
                 { WIDX_SLOPE_UP_VERTICAL, "vertical climb", static_cast<uint8_t>(TrackPitch::up90) },
             };
         }
@@ -1539,8 +1558,16 @@ namespace OpenRCT2::Ui::Windows
                 const int32_t idx = (((start + delta * i) % n) + n) % n;
                 if (!widgetIsDisabled(*this, opts[idx].widget))
                 {
+                    const bool wasTrackType = _currentlySelectedTrack.isTrackType;
                     onMouseDown(opts[idx].widget);
-                    Accessibility::ScreenReaderSpeak(std::string(opts[idx].label) + ". " + axValidityAndCost());
+                    // A button that turned out to select a whole PIECE rather than adjust a value -
+                    // the helix buttons hiding behind the steep-slope ones - is named from what it
+                    // actually chose, so the readout can never describe a piece the player is not
+                    // building.
+                    const std::string chosen = (!wasTrackType && _currentlySelectedTrack.isTrackType)
+                        ? axSpecialPieceName(_currentlySelectedTrack.trackType)
+                        : std::string(opts[idx].label);
+                    Accessibility::ScreenReaderSpeak(chosen + ". " + axValidityAndCost());
                     return;
                 }
             }
