@@ -1083,33 +1083,6 @@ namespace OpenRCT2::Ui::Accessibility
         return s;
     }
 
-    // If the tile holds placed ride track, returns the piece description(s) on it (shape, slope,
-    // bank). The ride name is deliberately not included - just the tile's pieces. Empty when the
-    // tile has no track, or only the construction preview ghost.
-    static std::string GetTrackReadout(const TileCoordsXY& tile)
-    {
-        std::string pieces;
-        for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
-        {
-            // Skip the construction preview ghost - only read track that has actually been placed.
-            if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
-            {
-                const auto& ted = OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType());
-                std::string piece = DescribeTrackPiece(ted, track);
-                if (!piece.empty())
-                {
-                    if (!pieces.empty())
-                        pieces += ", ";
-                    pieces += piece;
-                }
-            }
-            if (el->isLastForTile())
-                break;
-            el++;
-        }
-        return pieces;
-    }
-
     static void Move(int32_t dx, int32_t dy, const char* directionName)
     {
         const auto mapSize = getGameState().mapSize;
@@ -1213,12 +1186,15 @@ namespace OpenRCT2::Ui::Accessibility
             announcedCrossing = true;
         }
 
-        // In build mode (the ride construction window is open), tracing a layout tile by tile is
-        // useful, so on a ride's track announce the individual piece on EVERY move (no change
-        // suppression). Outside build mode the track reads as the ride's name and dimensions like
-        // any other feature, announced only when the tile description changes. If we just announced
-        // a boundary crossing, queue the read (interrupt = false) so both are heard, but skip the
-        // bare-ground labels ("Empty"/"Outside park") since the crossing already said it.
+        // Every tile reads through one path, whatever stands on it. Ride track used to be
+        // special-cased below: in build mode each piece was announced on EVERY move, bypassing the
+        // tile-speech mode, and because it spoke a track-only string it dropped the tile's
+        // elevations along with it. Track pieces are already part of the tile description in build
+        // mode (see GatherTileFeatures), so the ordinary path reads them together with everything
+        // else and honours the player's "every tile" / "on change" / "off" setting over track
+        // exactly as over ground. If we just announced a boundary crossing, queue the read
+        // (interrupt = false) so both are heard, but skip the bare-ground labels ("Empty"/"Outside
+        // park") since the crossing already said it.
         // With a larger brush selected (3x3/5x5/7x7), the tile read-out enumerates every feature in
         // the whole brush area, one by one, so the player can survey it in a single move. The 1x1
         // brush reads the single cursor tile exactly as before. Only the read-out widens - the
@@ -1245,16 +1221,8 @@ namespace OpenRCT2::Ui::Accessibility
             description = readout.bareGround ? *tdLabel : (*tdLabel + ", " + description);
             readout.bareGround = false;
         }
-        std::string track = IsRideConstructionWindowOpen() ? GetTrackReadout(_cursor) : std::string();
         const auto tileMode = static_cast<TileSpeechMode>(Config::Get().sound.accessibilityTileSpeechMode);
-        if (!track.empty())
-        {
-            // The build-mode track readout traces the layout piece by piece and is essential while
-            // building, so it is always spoken regardless of the tile-speech mode.
-            ScreenReaderSpeak(track, !announcedCrossing);
-            _lastTileDescription = std::move(description); // keep baseline coherent for leaving the track
-        }
-        else if (tileMode != TileSpeechMode::off || onPreviewTile)
+        if (tileMode != TileSpeechMode::off || onPreviewTile)
         {
             // "Every tile" reads on every move; "on change" (the original behaviour) reads only when
             // the description differs from the previous tile. A ride-preview footprint tile always
