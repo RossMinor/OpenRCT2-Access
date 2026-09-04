@@ -27,6 +27,7 @@
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/park/ParkSetEntranceFeeAction.h>
 #include <openrct2/actions/park/ParkSetNameAction.h>
+#include <openrct2/actions/park/ParkSetParameterAction.h>
 #include <openrct2/config/Config.h>
 #include <openrct2/core/UnitConversion.h>
 #include <openrct2/drawing/Drawing.String.h>
@@ -347,6 +348,28 @@ namespace OpenRCT2::Ui::Windows
             GameActions::Execute(&action, getGameState());
         }
 
+        // Opens or closes the park, announcing what actually happened.
+        //
+        // ParkSetParameterAction is QUEUED: it applies a tick later, so reading the park state right
+        // after Execute returns the value from before the press. Announcing from that read reported
+        // the opposite of what the press did - press Enter on an open park and it would say "Park
+        // opened", press again on a closed one and it would say "Park closed" while opening it.
+        // Announce from the action's callback instead, once the change has landed, and from the state
+        // we asked for rather than re-reading, so there is no timing to get wrong. Mirrors how the
+        // admission price is announced (see accessAdjustPrice).
+        void accessToggleParkOpen()
+        {
+            const bool open = !Park::IsOpen(getGameState().park);
+            auto action = GameActions::ParkSetParameterAction(
+                open ? GameActions::ParkParameter::open : GameActions::ParkParameter::close);
+            action.SetCallback([open](const GameActions::GameAction*, const GameActions::Result* result) {
+                if (result->error != GameActions::Status::ok)
+                    return; // the failure is spoken by the error window
+                Accessibility::ScreenReaderSpeak(open ? "Park opened" : "Park closed");
+            });
+            GameActions::Execute(&action, getGameState());
+        }
+
         // ---- graph accessibility recipe ----
 
         // Each park page is a single info node: its summary names the page (so a Tab switch reads it),
@@ -369,14 +392,10 @@ namespace OpenRCT2::Ui::Windows
             switch (page)
             {
                 case WINDOW_PARK_PAGE_ENTRANCE:
-                    // Enter toggles the park open/closed; the state text gives brief feedback.
-                    vt.onActivate = [this]() {
-                        auto& park = getGameState().park;
-                        Park::SetOpen(park, !Park::IsOpen(park));
-                    };
-                    vt.stateText = [this]() {
-                        return Park::IsOpen(getGameState().park) ? std::string("Park opened") : std::string("Park closed");
-                    };
+                    // Enter toggles the park open/closed. No stateText: the toggle lands a tick
+                    // later, so it announces itself from the action's callback instead - reading the
+                    // state here would report what it was before the press.
+                    vt.onActivate = [this]() { accessToggleParkOpen(); };
                     break;
                 case WINDOW_PARK_PAGE_PRICE:
                     // Left/Right lower/raise the admission fee (only when the park charges admission);
