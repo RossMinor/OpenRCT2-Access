@@ -421,7 +421,8 @@ namespace OpenRCT2::Ui::Accessibility
         return base + ", reading " + text;
     }
 
-    static std::string DescribeTrackPiece(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted);
+    static std::string DescribeTrackPiece(
+        const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted, const TrackElement* element = nullptr);
     static bool IsRideConstructionWindowOpen();
     static void GetBrushBounds(int32_t& ax, int32_t& ay, int32_t& bx, int32_t& by);
 
@@ -508,8 +509,8 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 if (buildMode)
                 {
-                    std::string piece
-                        = DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType()));
+                    std::string piece = DescribeTrackPiece(
+                        OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType()), track);
                     if (!piece.empty())
                         parts.push_back(piece);
                 }
@@ -976,35 +977,75 @@ namespace OpenRCT2::Ui::Accessibility
     // the piece; the curve sharpness from its track group. Special pieces keep their in-game name.
     static std::string DeriveBasicShape(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted)
     {
-        const int32_t turn = (ted.coordinates.rotationEnd - ted.coordinates.rotationBegin) & 3;
-        if (turn == 0)
-            return "straight";
-        if (turn == 2)
+        using OpenRCT2::TrackMetadata::TrackCurve;
+
+        const int32_t rotBegin = ted.coordinates.rotationBegin;
+        const int32_t rotEnd = ted.coordinates.rotationEnd;
+
+        // A rotation is not a plain compass value: the low two bits are the quarter it faces, and
+        // BIT 2 marks a diagonal heading. So a piece turns if either changes - a quarter turn moves
+        // the compass bits, while an eighth turn (the pieces the widest curve is built from) only
+        // flips the diagonal bit. Masking the difference with 3, as this used to, discarded that bit
+        // and reported half of the eighth pieces as "straight": rightEighthToDiag runs 0 -> 4 and
+        // leftEighthToOrthogonal runs 4 -> 0, both of which mask to no turn at all.
+        const bool quarterTurn = (rotBegin & 3) != (rotEnd & 3);
+        const bool eighthTurn = (rotBegin & 4) != (rotEnd & 4);
+        if (!quarterTurn && !eighthTurn)
+            return ((rotBegin & 4) != 0) ? "diagonal straight" : "straight";
+
+        if (((rotEnd - rotBegin) & 3) == 2)
             return "half turn";
 
-        const char* dir = (turn == 1) ? "right" : "left";
-        const char* sharp = "";
-        switch (ted.definition.group)
+        // Direction and radius come from the game's own curve classification rather than from the
+        // geometry: it is exactly what the construction window's turn buttons select, so the name
+        // matches the piece the player asked for. Deriving the radius from the track group or the
+        // tile count instead never worked for every piece - the sloped turns carry no size in their
+        // group at all, and the widest curve's pieces sit in the plain `flat` group.
+        const auto& chain = ted.curveChain;
+        const OpenRCT2::TrackMetadata::TypeOrCurve* named = nullptr;
+        if (!chain.next.isTrackType && chain.next.curve != TrackCurve::none)
+            named = &chain.next;
+        else if (!chain.previous.isTrackType && chain.previous.curve != TrackCurve::none)
+            named = &chain.previous;
+
+        if (named != nullptr)
         {
-            case OpenRCT2::TrackGroup::curveVerySmall:
-                sharp = "very small ";
-                break;
-            case OpenRCT2::TrackGroup::curveSmall:
-                sharp = "small ";
-                break;
-            case OpenRCT2::TrackGroup::curveLarge:
-                sharp = "large ";
-                break;
-            default:
-                break;
+            switch (named->curve)
+            {
+                case TrackCurve::leftVerySmall:
+                    return "left very small curve";
+                case TrackCurve::rightVerySmall:
+                    return "right very small curve";
+                case TrackCurve::leftSmall:
+                    return "left small curve";
+                case TrackCurve::rightSmall:
+                    return "right small curve";
+                case TrackCurve::left:
+                    return "left curve";
+                case TrackCurve::right:
+                    return "right curve";
+                case TrackCurve::leftLarge:
+                    return "left large curve";
+                case TrackCurve::rightLarge:
+                    return "right large curve";
+                default:
+                    break;
+            }
         }
-        return std::string(dir) + " " + sharp + "curve";
+
+        // Unclassified turn: fall back to the geometry for at least a direction.
+        return std::string((((rotEnd - rotBegin) & 3) == 1) ? "right" : "left") + " curve";
     }
 
     // Builds the full spoken description of one track piece: its shape (the game's piece name, or a
     // derived name for basic pieces), its slope (level / gentle up / steep down, or a transition
     // like "level to gentle up"), and its banking when banked - all of the piece's attributes.
-    static std::string DescribeTrackPiece(const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted)
+    //
+    // `element` is the PLACED piece, when there is one. Whether a piece carries the chain lift is a
+    // property of the placement, not of the piece type - the same slope exists with and without it -
+    // so it can only be read off the element. Passing nullptr describes the type alone.
+    static std::string DescribeTrackPiece(
+        const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted, const TrackElement* element)
     {
         std::string s = OpenRCT2::FormatStringID(ted.description);
         if (s.empty())
@@ -1024,6 +1065,11 @@ namespace OpenRCT2::Ui::Accessibility
                 : std::string(RollName(def.rollStart)) + " to " + RollName(def.rollEnd);
             s += ", " + bank;
         }
+
+        // Last, because it is the piece's most consequential property: a chain lift is what carries
+        // the train up, and a slope built without one is the classic reason a coaster stalls.
+        if (element != nullptr && element->HasChain())
+            s += ", chain lift";
         return s;
     }
 
@@ -1039,7 +1085,7 @@ namespace OpenRCT2::Ui::Accessibility
             if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
             {
                 const auto& ted = OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType());
-                std::string piece = DescribeTrackPiece(ted);
+                std::string piece = DescribeTrackPiece(ted, track);
                 if (!piece.empty())
                 {
                     if (!pieces.empty())
