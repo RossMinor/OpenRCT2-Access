@@ -1254,6 +1254,28 @@ namespace OpenRCT2::Ui::Windows
             return -1;
         }
 
+        // Narrows an option table to the pieces THIS ride type can actually build. The tables above
+        // list every piece the game has; a given ride uses only some of them - a wooden coaster has
+        // no very small curves, a junior coaster no large ones, and each has pieces the other cannot
+        // lay at all. The vanilla window answers this by hiding a button outright
+        // (WidgetType::empty) when the ride's enabled track groups do not cover that piece, so
+        // widget presence IS the game's own answer to "can this ride use this piece?" - no separate
+        // capability table to keep in step with the rides.
+        //
+        // Only the cycling list is narrowed. Naming what is currently selected still consults the
+        // full table, so a value is never left unnameable. Buttons that are present but disabled
+        // stay in the list too: those are temporary, turning on and off with the current slope or
+        // bank, and the cycler already steps over them - keeping them means the list does not change
+        // length underfoot while the player is moving through it.
+        std::vector<AxOption> axAvailableOptions(const std::vector<AxOption>& all) const
+        {
+            std::vector<AxOption> out;
+            for (const auto& o : all)
+                if (axWidgetPresent(o.widget))
+                    out.push_back(o);
+            return out;
+        }
+
         std::string axCostText(money64 cost) const
         {
             if (cost <= 0)
@@ -1379,21 +1401,29 @@ namespace OpenRCT2::Ui::Windows
             switch (field)
             {
                 case AxField::curve:
-                    opts = axCurveOptions();
+                    opts = axAvailableOptions(axCurveOptions());
                     current = _currentlySelectedTrack.isTrackType
                         ? -1
                         : axCurrentOption(opts, static_cast<uint8_t>(_currentlySelectedTrack.curve));
                     break;
                 case AxField::slope:
-                    opts = axSlopeOptions();
+                    opts = axAvailableOptions(axSlopeOptions());
                     current = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackPitchEnd));
                     break;
                 case AxField::bank:
-                    opts = axBankOptions();
+                    opts = axAvailableOptions(axBankOptions());
                     current = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackRollEnd));
                     break;
                 default:
                     return;
+            }
+
+            // Nothing this ride can use in this control at all - say so rather than dividing by zero
+            // in the wrap-around below.
+            if (opts.empty())
+            {
+                Accessibility::ScreenReaderSpeak("No other option available");
+                return;
             }
 
             const int32_t n = static_cast<int32_t>(opts.size());
