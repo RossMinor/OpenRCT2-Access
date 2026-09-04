@@ -979,6 +979,16 @@ namespace OpenRCT2::Ui::Accessibility
     {
         using OpenRCT2::TrackMetadata::TrackCurve;
 
+        // A station platform is three distinct piece types, not one: a one-tile station is
+        // `endStation`, and extending it rewrites the earlier tiles into `beginStation` and
+        // `middleStation`. Only `endStation` carries an in-game description, so the other two fell
+        // through to the geometry below and - being straight and level - read as "straight". The
+        // platform therefore disappeared from every tile except the most recently placed one. All
+        // three share TrackGroup::stationEnd, so name them from the group and let every platform
+        // tile speak the game's own wording.
+        if (ted.definition.group == OpenRCT2::TrackGroup::stationEnd)
+            return OpenRCT2::FormatStringID(STR_STATION_PLATFORM);
+
         const int32_t rotBegin = ted.coordinates.rotationBegin;
         const int32_t rotEnd = ted.coordinates.rotationEnd;
 
