@@ -130,6 +130,8 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 - Special piece: One of the custom ride builder's menu items, sitting just after Curve. This is where a ride type's own pieces live - vertical loops, corkscrews, helices, reversers, s-bends, on-ride photo sections and so on - so its contents differ from one ride type to the next. Control + Left or Right steps through the pieces you can build from where you are standing; pieces that don't fit your current slope, banking or heading are skipped. To go back to ordinary track, set the Curve item to any value.
 - Control + Enter: Builds the ride piece with the attributes selected.
 - Control + B: Reports the build status of the custom ride.
+- Delete: Removes the track piece your map cursor is on. This reaches any piece in the ride, not just the last one you placed, so you can fix a mistake in the middle without undoing everything after it. If two pieces of the ride are stacked on the same tile, the one nearest your cursor's elevation is the one that goes. Afterwards the build helper moves to the end of the run of track still joined to the station, so Control + Enter carries on building from there rather than from the hole you just made.
+- Insert: Moves the build helper to the track your map cursor is on, then along that stretch to its open end, so you can pick construction up from anywhere in the ride instead of walking back through it piece by piece. Your cursor needs to be on a piece of the ride you are building. If a piece you build closes a gap, the helper walks itself on to the next open end and says "joined up".
 
 ### Other Useful Commands
 

@@ -263,6 +263,15 @@ namespace OpenRCT2::Ui::Windows
     void WindowRideConstructionKeyboardShortcutBuildCurrent();
     void WindowRideConstructionKeyboardShortcutDemolishCurrent();
 
+    // Accessibility: the keyboard map cursor's Delete and Insert keys, which need the cursor's tile
+    // and focus height - hence the position argument rather than reading the mouse. Delete removes
+    // the construction ride's track piece nearest `pos` on that tile, wherever it sits in the ride,
+    // then walks the build focus to the end of the run still joined to the station. Insert walks the
+    // build focus to the track under the cursor and on to that run's open end. Both do nothing when
+    // the construction window is not open.
+    void WindowRideConstructionAccessDeleteAt(const CoordsXYZ& pos);
+    void WindowRideConstructionAccessFocusAtCursor(const CoordsXYZ& pos);
+
     // RideList
     WindowBase* RideListOpen();
     void WindowRideListRefreshList(WindowBase* w);

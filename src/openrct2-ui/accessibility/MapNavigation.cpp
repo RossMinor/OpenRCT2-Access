@@ -1083,6 +1083,11 @@ namespace OpenRCT2::Ui::Accessibility
         return s;
     }
 
+    std::string DescribeTrackPieceText(const TrackElement& element)
+    {
+        return DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(element.GetTrackType()), &element);
+    }
+
     static void Move(int32_t dx, int32_t dy, const char* directionName)
     {
         const auto mapSize = getGameState().mapSize;
@@ -3446,6 +3451,21 @@ namespace OpenRCT2::Ui::Accessibility
         if (w == nullptr)
             return false;
 
+        // Delete and Insert act at the MAP CURSOR rather than at the build focus, so they are
+        // handled here instead of as AccessibilityActions: the cursor's tile and focus height live
+        // in this file and the window has no way to ask for them. Delete removes the piece under the
+        // cursor - any piece in the ride, not just the last one placed - and Insert moves the build
+        // focus to the track under the cursor.
+        if ((modifiers & (KMOD_CTRL | KMOD_SHIFT)) == 0 && (key == SDLK_DELETE || key == SDLK_INSERT))
+        {
+            const auto pos = TileCoordsXYZ(_cursor.x, _cursor.y, _scanHeight).ToCoordsXYZ();
+            if (key == SDLK_DELETE)
+                Windows::WindowRideConstructionAccessDeleteAt(pos);
+            else
+                Windows::WindowRideConstructionAccessFocusAtCursor(pos);
+            return true;
+        }
+
         std::optional<AccessibilityAction> action;
         if (modifiers & KMOD_CTRL)
         {
@@ -3558,7 +3578,8 @@ namespace OpenRCT2::Ui::Accessibility
             ScreenReaderSpeak(
                 "Construction. Arrow keys move the map cursor. Control up and down choose a build option, "
                 "Control left and right change it, Control Enter builds at the cursor, Control B reads the "
-                "build state, Escape exits.");
+                "build state. Delete removes the piece under the cursor, Insert moves the build focus to "
+                "the track under the cursor. Escape exits.");
             return;
         }
         // Keyboard-driven flat-ride placement.

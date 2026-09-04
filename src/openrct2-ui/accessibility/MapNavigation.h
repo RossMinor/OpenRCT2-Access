@@ -15,8 +15,18 @@
 #include <optional>
 #include <string>
 
+namespace OpenRCT2
+{
+    struct TrackElement;
+}
+
 namespace OpenRCT2::Ui::Accessibility
 {
+    // The spoken description of a placed track piece - its shape, slope, banking and whether it
+    // carries the chain lift - in the same wording the map cursor's tile readout uses. Shared so the
+    // ride builder and the map cursor can never disagree about what a piece is called.
+    std::string DescribeTrackPieceText(const TrackElement& element);
+
     // In-game map cursor for screen-reader users. Arrow keys move a tile cursor around
     // the park, 'C' reads the current coordinates, and reaching the edge of the owned
     // land announces the border direction. Returns true if the event was consumed.

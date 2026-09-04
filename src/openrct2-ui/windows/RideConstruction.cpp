@@ -1150,7 +1150,10 @@ namespace OpenRCT2::Ui::Windows
             bank,
             chain,
             construct,
-            demolish,
+            // No demolish field: the vanilla Demolish button can only remove the piece at the build
+            // focus, so undoing a mistake in the middle of a ride meant walking the focus back
+            // through every piece after it. The Delete key removes the piece under the map cursor
+            // instead (axDeleteTrackAt), which reaches any piece directly.
             back,
             forward,
             station, // place station entrance / exit
@@ -1209,8 +1212,6 @@ namespace OpenRCT2::Ui::Windows
                 fields.push_back(AxField::chain);
             if (axWidgetPresent(WIDX_CONSTRUCT))
                 fields.push_back(AxField::construct);
-            if (axWidgetPresent(WIDX_DEMOLISH))
-                fields.push_back(AxField::demolish);
             if (axWidgetPresent(WIDX_PREVIOUS_SECTION))
                 fields.push_back(AxField::back);
             if (axWidgetPresent(WIDX_NEXT_SECTION))
@@ -1478,8 +1479,6 @@ namespace OpenRCT2::Ui::Windows
                     return std::string("Chain lift, ") + (_currentTrackHasLiftHill ? "on" : "off");
                 case AxField::construct:
                     return "Construct. " + axComposedPiece();
-                case AxField::demolish:
-                    return "Demolish last piece";
                 case AxField::back:
                     return "Move back one section";
                 case AxField::forward:
@@ -1566,6 +1565,238 @@ namespace OpenRCT2::Ui::Windows
                 std::string("Track points ") + axDirectionName(_currentTrackPieceDirection) + ". " + axValidityAndCost());
         }
 
+        // ---- Editing anywhere in the ride (Delete / Insert) --------------------------------------
+        // The build focus ("build helper") is a single position the next piece chains from, normally
+        // the open end of the track. These two put the player in charge of it: Delete removes the
+        // piece the map cursor is on, wherever that sits in the ride, and Insert hands the focus to
+        // the cursor so the next piece is built there instead of at the end.
+
+        // Points the builder at one specific track piece. This is what RideModify does, minus
+        // everything about RideModify that does not belong here: RideModify is the "player clicked a
+        // piece in the world" entry point, so it also stops the ride and re-focuses the construction
+        // window - and it stops the ride by EXECUTING A GAME ACTION. Running that from inside
+        // another action's callback (which is where the focus has to be restored after a deletion)
+        // nests one game action inside another, and on the way through it also walks sections, which
+        // silently resets the player's chosen curve, slope and banking. Both are why deleting a
+        // piece then rebuilding it stopped working. None of that work is needed here: the window is
+        // already open on this ride and construction already stopped it, so all that is left is the
+        // three globals a build position is actually made of.
+        static bool axSelectPiece(const CoordsXYE& piece)
+        {
+            if (piece.element == nullptr || piece.element->asTrack() == nullptr)
+                return false;
+
+            const auto direction = piece.element->getDirection();
+            const auto type = piece.element->asTrack()->GetTrackType();
+            // Resolve a multi-tile piece to its origin tile, as every other build position is.
+            auto origin = GetTrackElementOriginAndApplyChanges(
+                { CoordsXYZ{ piece, piece.element->getBaseZ() }, direction }, type, 0, nullptr, {});
+            if (!origin.has_value())
+                return false;
+
+            RideConstructionInvalidateCurrentTrack();
+            _rideConstructionState = RideConstructionState::Selected;
+            _currentTrackBegin = *origin;
+            _currentTrackPieceDirection = direction;
+            _currentTrackPieceType = type;
+            _currentTrackSelectionFlags.clearAll();
+            _rideConstructionNextArrowPulse = 0;
+            gMapSelectFlags.unset(MapSelectFlag::enableArrow);
+            return true;
+        }
+
+        // Steps the build position forward one piece at a time until the track runs out. This is the
+        // same RideSelectNextSection the Forward menu item calls, and it flips the state to Front
+        // the moment it cannot advance - which IS the break point - so the walk ends itself and the
+        // player is left somewhere they can actually build. Stepping rather than teleporting is the
+        // point: every position along the way is one the game put us in.
+        //
+        // A complete circuit has no break and would otherwise loop forever, so the walk also stops
+        // if it arrives back where it started. The counter is a last-resort guard for a corrupted
+        // circuit that satisfies neither condition.
+        static void axStepToOpenEnd()
+        {
+            constexpr int32_t kMaxSteps = 8192;
+            const auto start = _currentTrackBegin;
+            for (int32_t i = 0; i < kMaxSteps; i++)
+            {
+                if (_rideConstructionState != RideConstructionState::Selected)
+                    return; // reached the break: Front (or Back), ready to build
+                RideSelectNextSection();
+                if (_currentTrackBegin == start)
+                    return; // came full circle - the circuit is closed, so there is no break
+            }
+        }
+
+        // The buildable end of the run of track still joined to the ride's origin. findTrackGap
+        // walks the circuit from the origin and, when it runs out without looping, hands back the
+        // last piece it reached - the piece just before the break. Selecting that and stepping
+        // forward leaves the builder at the break itself, pointing into the hole.
+        static bool axFocusConnectedEnd()
+        {
+            auto currentRide = GetRide(_currentRideIndex);
+            if (currentRide == nullptr)
+                return false;
+
+            CoordsXYE piece{};
+            if (!RideTryGetOriginElement(*currentRide, &piece))
+                return false; // the ride has no track left at all
+
+            // A complete circuit has no break: findTrackGap leaves `piece` at the origin, which is
+            // as good a place as any when there is nothing left to join.
+            findTrackGap(*currentRide, piece, &piece);
+            if (!axSelectPiece(piece))
+                return false;
+            axStepToOpenEnd();
+            WindowRideConstructionUpdateActiveElements();
+            return true;
+        }
+
+        // This ride's track piece nearest `pos.z` on that tile. Height decides it because a coaster
+        // crossing over itself puts two pieces on one tile, and the player means the level their
+        // cursor is focused on - not whichever element the tile happens to store first.
+        TileElement* axTrackElementAt(const CoordsXYZ& pos) const
+        {
+            TileElement* best = nullptr;
+            int32_t bestDelta = std::numeric_limits<int32_t>::max();
+            for (TileElement* el = MapGetFirstElementAt(pos); el != nullptr;)
+            {
+                if (auto* track = el->asTrack();
+                    track != nullptr && !el->isGhost() && track->GetRideIndex() == _currentRideIndex)
+                {
+                    const int32_t delta = el->getBaseZ() > pos.z ? el->getBaseZ() - pos.z : pos.z - el->getBaseZ();
+                    if (delta < bestDelta)
+                    {
+                        bestDelta = delta;
+                        best = el;
+                    }
+                }
+                if (el->isLastForTile())
+                    break;
+                el++;
+            }
+            return best;
+        }
+
+        // Delete: remove the piece under the map cursor.
+        void axDeleteTrackAt(const CoordsXYZ& pos)
+        {
+            TileElement* el = axTrackElementAt(pos);
+            if (el == nullptr)
+            {
+                Accessibility::ScreenReaderSpeak("No track from this ride under the cursor");
+                return;
+            }
+
+            // Name it before it is gone - the element is invalid once the removal lands.
+            const std::string name = Accessibility::DescribeTrackPieceText(*el->asTrack());
+
+            // What the player has dialled up on the curve / slope / banking / chain controls. Moving
+            // the build position walks sections, and section walking calls
+            // RideConstructionSetDefaultNextPiece, which rewrites all of these from whatever track
+            // it lands next to. Without putting them back, deleting a piece silently changed the
+            // piece you were about to build - so rebuilding "the same one" was not the same one.
+            // Vanilla saves and restores exactly this set around its own demolish for this reason.
+            const auto savedTrack = _currentlySelectedTrack;
+            const auto savedPitch = _currentTrackPitchEnd;
+            const auto savedRoll = _currentTrackRollEnd;
+            const auto savedLiftHill = _currentTrackHasLiftHill;
+            const auto savedAlternative = _currentTrackAlternative;
+
+            // Point the builder at the piece. Not RideModify: see axSelectPiece.
+            if (!axSelectPiece(CoordsXYE{ pos.x, pos.y, el }))
+            {
+                Accessibility::ScreenReaderSpeak("That piece cannot be removed");
+                return;
+            }
+
+            _currentTrackPrice = kMoney64Undefined;
+            RideConstructionInvalidateCurrentTrack();
+
+            auto removeAction = GameActions::TrackRemoveAction(
+                _currentTrackPieceType, 0,
+                { _currentTrackBegin.x, _currentTrackBegin.y, _currentTrackBegin.z,
+                  static_cast<Direction>(_currentTrackPieceDirection) });
+
+            // Announce and re-focus from the callback, not from here: the piece is still standing
+            // when Execute returns, so anything read at that point describes the ride as it was.
+            removeAction.SetCallback([=, this](const GameActions::GameAction*, const GameActions::Result* result) {
+                if (result->error != GameActions::Status::ok)
+                {
+                    WindowRideConstructionUpdateActiveElements();
+                    Accessibility::ScreenReaderSpeak("Could not remove " + name);
+                    return;
+                }
+                // Deleting mid-ride leaves the focus sitting in the hole, on a piece that no longer
+                // exists. Walk it back to the end of the run still joined to the station, so
+                // Ctrl+Enter continues the track rather than refusing.
+                std::string spoken = "Removed " + name;
+                if (axFocusConnectedEnd())
+                {
+                    // Give the player back the piece they had selected, which the walk overwrote.
+                    _currentlySelectedTrack = savedTrack;
+                    _currentTrackPitchEnd = savedPitch;
+                    _currentTrackRollEnd = savedRoll;
+                    _currentTrackHasLiftHill = savedLiftHill;
+                    _currentTrackAlternative = savedAlternative;
+                    WindowRideConstructionUpdateActiveElements();
+                    spoken += ". " + axBuildStateText();
+                }
+                else
+                {
+                    spoken += ". No track left";
+                }
+                Accessibility::ScreenReaderSpeak(spoken);
+            });
+
+            GameActions::Execute(&removeAction, getGameState());
+        }
+
+        // Insert: move the build focus to the track under the map cursor. It selects the piece the
+        // cursor is on and then walks forward to that run's open end, so wherever it lands the
+        // player can actually build - the keyboard equivalent of clicking a piece to pick up
+        // construction from there.
+        //
+        // This deliberately does NOT use RideConstructionState::Place (the free-placement state the
+        // window opens in for a ride's first piece). Dropping into Place mid-build re-arms the
+        // construct tool underneath a construction already in progress, and the state machine does
+        // not expect to be sent back to the start; stepping along the track keeps every position one
+        // the game itself moved us to.
+        void axFocusAtCursor(const CoordsXYZ& pos)
+        {
+            TileElement* el = axTrackElementAt(pos);
+            if (el == nullptr)
+            {
+                Accessibility::ScreenReaderSpeak(
+                    "No track from this ride under the cursor. Move onto a piece of this ride first");
+                return;
+            }
+
+            // The player's dialled-up piece survives the move, for the same reason as in
+            // axDeleteTrackAt: walking sections rewrites it from the track it lands beside.
+            const auto savedTrack = _currentlySelectedTrack;
+            const auto savedPitch = _currentTrackPitchEnd;
+            const auto savedRoll = _currentTrackRollEnd;
+            const auto savedLiftHill = _currentTrackHasLiftHill;
+            const auto savedAlternative = _currentTrackAlternative;
+
+            if (!axSelectPiece(CoordsXYE{ pos.x, pos.y, el }))
+            {
+                Accessibility::ScreenReaderSpeak("Cannot build from that piece");
+                return;
+            }
+            axStepToOpenEnd();
+
+            _currentlySelectedTrack = savedTrack;
+            _currentTrackPitchEnd = savedPitch;
+            _currentTrackRollEnd = savedRoll;
+            _currentTrackHasLiftHill = savedLiftHill;
+            _currentTrackAlternative = savedAlternative;
+            WindowRideConstructionUpdateActiveElements();
+
+            Accessibility::ScreenReaderSpeak("Build focus moved. " + axBuildStateText());
+        }
+
         void axConstruct()
         {
             if (_rideConstructionState == RideConstructionState::Place)
@@ -1597,7 +1828,17 @@ namespace OpenRCT2::Ui::Windows
                     + (_trackPlaceErrorText.empty() ? FormatStringID(_trackPlaceErrorMessage) : _trackPlaceErrorText));
                 return;
             }
-            std::string s = "Built. " + axBuildStateText();
+
+            // A piece that closes a hole leaves the focus pointing into track that already exists,
+            // where building could only ever be refused. Walk it on to the next open end so the
+            // player can carry straight on.
+            std::string s = "Built. ";
+            if (_rideConstructionState == RideConstructionState::Front && axTrackElementAt(_currentTrackBegin) != nullptr)
+            {
+                if (axFocusConnectedEnd())
+                    s += "Joined up. ";
+            }
+            s += axBuildStateText();
             if (_trackPlaceCost != kMoney64Undefined && _trackPlaceCost > 0)
                 s += ", spent " + axCostText(_trackPlaceCost);
             Accessibility::ScreenReaderSpeak(s);
@@ -1664,10 +1905,6 @@ namespace OpenRCT2::Ui::Windows
                 case AxField::construct:
                     axConstruct();
                     break;
-                case AxField::demolish:
-                    onMouseDown(WIDX_DEMOLISH);
-                    Accessibility::ScreenReaderSpeak("Removed last piece. " + axBuildStateText());
-                    break;
                 // Previous / Next Section are the vanilla buttons that move the build position along
                 // the existing track; they just announce the new build state.
                 case AxField::back:
@@ -1720,9 +1957,6 @@ namespace OpenRCT2::Ui::Windows
                     break;
                 case AxField::construct:
                     w = WIDX_CONSTRUCT;
-                    break;
-                case AxField::demolish:
-                    w = WIDX_DEMOLISH;
                     break;
                 case AxField::back:
                     w = WIDX_PREVIOUS_SECTION;
@@ -5362,6 +5596,25 @@ namespace OpenRCT2::Ui::Windows
         }
 
         w->onMouseDown(WIDX_NEXT_SECTION);
+    }
+
+    // Accessibility: driven by the Delete and Insert keys from the keyboard map cursor, which is
+    // where the cursor's tile and focus height live. Both are no-ops when the construction window is
+    // not open, so the keys stay free everywhere else.
+    void WindowRideConstructionAccessDeleteAt(const CoordsXYZ& pos)
+    {
+        auto* windowMgr = GetWindowManager();
+        auto* w = static_cast<RideConstructionWindow*>(windowMgr->FindByClass(WindowClass::rideConstruction));
+        if (w != nullptr)
+            w->axDeleteTrackAt(pos);
+    }
+
+    void WindowRideConstructionAccessFocusAtCursor(const CoordsXYZ& pos)
+    {
+        auto* windowMgr = GetWindowManager();
+        auto* w = static_cast<RideConstructionWindow*>(windowMgr->FindByClass(WindowClass::rideConstruction));
+        if (w != nullptr)
+            w->axFocusAtCursor(pos);
     }
 
     void WindowRideConstructionKeyboardShortcutBuildCurrent()
