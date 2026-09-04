@@ -209,6 +209,12 @@ namespace OpenRCT2::Ui::Windows
     static int32_t _trackPlaceZ;
     static money64 _trackPlaceCost;
     static StringId _trackPlaceErrorMessage;
+    // Accessibility: the same failure, already formatted. Several construction errors are
+    // STR_X_IN_THE_WAY, which needs the blocking thing's name as an argument - and that argument
+    // lives in the game action result's errorMessageArgs, not in the string id. Formatting the id
+    // alone dropped it and read out "Cannot build.  in the way", naming nothing. Captured here at
+    // the point the result is still to hand, via Result::getErrorMessage which applies the args.
+    static std::string _trackPlaceErrorText;
     static bool _autoRotatingShop;
     static bool _gotoStartPlacementMode = false;
 
@@ -1584,7 +1590,11 @@ namespace OpenRCT2::Ui::Windows
 
             if (_trackPlaceErrorMessage != kStringIdNone)
             {
-                Accessibility::ScreenReaderSpeak("Cannot build. " + FormatStringID(_trackPlaceErrorMessage));
+                // Prefer the text captured with the result: it carries the argument that names what
+                // is blocking, which the string id on its own cannot.
+                Accessibility::ScreenReaderSpeak(
+                    "Cannot build. "
+                    + (_trackPlaceErrorText.empty() ? FormatStringID(_trackPlaceErrorMessage) : _trackPlaceErrorText));
                 return;
             }
             std::string s = "Built. " + axBuildStateText();
@@ -3001,6 +3011,7 @@ namespace OpenRCT2::Ui::Windows
             _currentTrackPrice = kMoney64Undefined;
             _trackPlaceCost = kMoney64Undefined;
             _trackPlaceErrorMessage = kStringIdNone;
+            _trackPlaceErrorText.clear();
             RideConstructionInvalidateCurrentTrack();
             if (WindowRideConstructionUpdateState(
                     &trackType, &trackDirection, &rideIndex, &liftHillAndAlternativeState, &trackPos, &properties))
@@ -3032,11 +3043,14 @@ namespace OpenRCT2::Ui::Windows
             {
                 _trackPlaceCost = kMoney64Undefined;
                 _trackPlaceErrorMessage = std::get<StringId>(res.errorMessage);
+                // Keep the formatted text too, so the spoken failure names what is in the way.
+                _trackPlaceErrorText = res.getErrorMessage();
             }
             else
             {
                 _trackPlaceCost = res.cost;
                 _trackPlaceErrorMessage = kStringIdNone;
+                _trackPlaceErrorText.clear();
             }
 
             if (res.error != GameActions::Status::ok)
@@ -4415,11 +4429,13 @@ namespace OpenRCT2::Ui::Windows
                 {
                     _trackPlaceCost = mazeSetTrackResult.cost;
                     _trackPlaceErrorMessage = kStringIdNone;
+                    _trackPlaceErrorText.clear();
                 }
                 else
                 {
                     _trackPlaceCost = kMoney64Undefined;
                     _trackPlaceErrorMessage = std::get<StringId>(mazeSetTrackResult.errorMessage);
+                    _trackPlaceErrorText = mazeSetTrackResult.getErrorMessage();
                 }
 
                 gDisableErrorWindowSound = false;
