@@ -3437,11 +3437,21 @@ namespace OpenRCT2::Ui::Accessibility
         return windowMgr != nullptr && windowMgr->FindByClass(WindowClass::rideConstruction) != nullptr;
     }
 
-    // Ride construction keyboard menu. While the construction window is open, Ctrl+arrows operate
-    // the build menu (field navigation and value changes), Ctrl+Enter activates the focused item,
-    // Ctrl+B reads the build state, and Escape exits (with confirmation). Plain arrows are NOT
-    // consumed here, so the map tile cursor keeps working normally during construction. Returns true
-    // if the key was consumed. Translated keys are forwarded to the window's onAccessibilityAction.
+    // Ride construction keyboard menu. While the construction window is open, ALT+arrows operate the
+    // build menu (field navigation and value changes), Ctrl+Enter activates the focused item, Ctrl+B
+    // reads the build state, and Escape exits (with confirmation). Plain arrows are NOT consumed
+    // here, so the map tile cursor keeps working normally during construction. Returns true if the
+    // key was consumed. Translated keys are forwarded to the window's onAccessibilityAction.
+    //
+    // The arrows moved off Ctrl because Ctrl+arrows already mean "jump the map cursor to the nearest
+    // ride in that direction" - opening the builder used to swallow that shortcut for as long as it
+    // stayed open. Alt is free: the game binds no Alt+arrow at all (its arrow shortcuts are bare or
+    // Shift-modified), and shortcut matching compares the exact modifier set, so a held Alt cannot
+    // fall through to the bare map-scroll bindings either.
+    //
+    // Enter and B stay on Ctrl deliberately. Alt+Enter is the game's windowed-mode toggle, and since
+    // this handler runs before the shortcut manager, claiming it would break that toggle for as long
+    // as the builder was open. Ctrl+Enter and Ctrl+B collide with nothing in this context.
     static bool HandleRideConstructionAccessKey(uint32_t key, uint32_t modifiers)
     {
         auto* windowMgr = GetWindowManager();
@@ -3456,7 +3466,7 @@ namespace OpenRCT2::Ui::Accessibility
         // in this file and the window has no way to ask for them. Delete removes the piece under the
         // cursor - any piece in the ride, not just the last one placed - and Insert moves the build
         // focus to the track under the cursor.
-        if ((modifiers & (KMOD_CTRL | KMOD_SHIFT)) == 0 && (key == SDLK_DELETE || key == SDLK_INSERT))
+        if ((modifiers & (KMOD_CTRL | KMOD_SHIFT | KMOD_ALT)) == 0 && (key == SDLK_DELETE || key == SDLK_INSERT))
         {
             const auto pos = TileCoordsXYZ(_cursor.x, _cursor.y, _scanHeight).ToCoordsXYZ();
             if (key == SDLK_DELETE)
@@ -3467,7 +3477,7 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         std::optional<AccessibilityAction> action;
-        if (modifiers & KMOD_CTRL)
+        if ((modifiers & KMOD_ALT) && !(modifiers & (KMOD_CTRL | KMOD_SHIFT)))
         {
             switch (key)
             {
@@ -3483,6 +3493,12 @@ namespace OpenRCT2::Ui::Accessibility
                 case SDLK_RIGHT:
                     action = AccessibilityAction::moveRight;
                     break;
+            }
+        }
+        else if ((modifiers & KMOD_CTRL) && !(modifiers & (KMOD_SHIFT | KMOD_ALT)))
+        {
+            switch (key)
+            {
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER:
                     action = AccessibilityAction::activate;
@@ -3576,8 +3592,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (IsRideConstructionWindowOpen())
         {
             ScreenReaderSpeak(
-                "Construction. Arrow keys move the map cursor. Control up and down choose a build option, "
-                "Control left and right change it, Control Enter builds at the cursor, Control B reads the "
+                "Construction. Arrow keys move the map cursor. Alt up and down choose a build option, "
+                "Alt left and right change it, Control Enter builds at the cursor, Control B reads the "
                 "build state. Delete removes the piece under the cursor, Insert moves the build focus to "
                 "the track under the cursor. Escape exits.");
             return;
