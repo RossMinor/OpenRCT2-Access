@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <openrct2-ui/UiStringIds.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Game.h>
 #include <openrct2/GameState.h>
@@ -65,8 +66,18 @@ namespace OpenRCT2::Ui::FileBrowser
         auto hasFilePicker = GetContext()->GetUiContext().HasFilePicker();
         auto& config = Config::Get().general;
 
-        // Open system file picker?
-        if (config.useNativeBrowseDialog && hasFilePicker)
+        // Open system file picker? Always, when a screen reader is running.
+        //
+        // The built-in browser is drawn with the game's own widget system, so it is silent and has no
+        // keyboard model a reader can follow - which makes loading and saving, the one thing a player
+        // cannot work around, unreachable. The system picker is the standard Windows file dialog
+        // (IFileDialog), which every screen reader already reads and navigates, with the file list,
+        // path box, filter list and recent places a player knows from every other application.
+        //
+        // This overrides the config option rather than reading it, because the option defaults to off
+        // and a player who cannot see the browser cannot discover the setting that would fix it. The
+        // option remains an explicit opt-in for everyone else.
+        if ((config.useNativeBrowseDialog || Accessibility::ScreenReaderIsAvailable()) && hasFilePicker)
         {
             const bool isSave = (action == LoadSaveAction::save);
             const auto defaultDirectory = GetDir(type);
