@@ -18,14 +18,15 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 
 ## Requirements
 
-- Windows and the [NVDA screen reader](https://www.nvaccess.org/download/).
+- Windows.
+- A screen reader. The mod speaks through [Prism](https://github.com/ethindp/prism), a library that hands the mod's speech to whichever reader you already run, so NVDA, JAWS, Narrator, System Access, ZDSR and others all work. [NVDA](https://www.nvaccess.org/download/) is free and is the one the mod is developed and tested against, so it is still the safest choice.
 - The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/).
 
 ---
 
 ## Installing and updating
 
-1. Make sure NVDA is installed and running.
+1. Make sure your screen reader is installed and running.
 2. Download the latest release of the mod under the **Releases** heading.
 3. Launch the game from Steam to generate any needed files, then close the game. It will likely ask you if you would like to install Direct Play, which you want to do.
 4. Unzip the mod folder anywhere on your computer.
