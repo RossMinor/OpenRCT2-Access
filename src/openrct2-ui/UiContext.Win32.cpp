@@ -61,6 +61,59 @@ private:
     HRESULT m_hr;
 };
 
+// Drops the game out of fullscreen for as long as a native modal dialog is on screen, then puts it
+// back exactly as it was.
+//
+// A modal dialog owned by a fullscreen SDL window is a keyboard trap. Windows disables the owner
+// while the dialog is up, but the dialog itself is drawn behind the fullscreen window, so the game
+// stops responding and there is nothing on screen to interact with. Borderless fullscreen makes it
+// worse: SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS minimises the game the moment the dialog takes focus,
+// and Windows minimises owned windows along with their owner - so the dialog vanishes too, leaving a
+// disabled game and an invisible dialog with no way back but killing the process.
+//
+// Going windowed first sidesteps both: the minimise hint only applies to fullscreen windows, and a
+// windowed owner lets the dialog sit above the game where it belongs.
+class CFullscreenSuspender
+{
+public:
+    explicit CFullscreenSuspender(SDL_Window* window)
+        : m_window(window)
+    {
+        if (m_window == nullptr)
+            return;
+
+        m_savedFlags = SDL_GetWindowFlags(m_window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP);
+        if (m_savedFlags != 0)
+        {
+            SDL_SetWindowFullscreen(m_window, 0);
+            // Let the window manager actually apply the change before a modal dialog is parented to
+            // the window, or the dialog can still be owned by a window Windows thinks is fullscreen.
+            SDL_PumpEvents();
+        }
+    }
+
+    ~CFullscreenSuspender()
+    {
+        if (m_window == nullptr)
+            return;
+
+        if (m_savedFlags != 0)
+        {
+            SDL_SetWindowFullscreen(m_window, m_savedFlags);
+        }
+        // Bring the game back to the front whether or not it was fullscreen: the dialog took focus,
+        // and without this the player can be left tabbed away from a game they cannot see.
+        SDL_RaiseWindow(m_window);
+    }
+
+    CFullscreenSuspender(const CFullscreenSuspender&) = delete;
+    CFullscreenSuspender& operator=(const CFullscreenSuspender&) = delete;
+
+private:
+    SDL_Window* m_window;
+    Uint32 m_savedFlags = 0;
+};
+
 namespace OpenRCT2::Ui
 {
     class Win32Context : public IPlatformUiContext
@@ -97,6 +150,11 @@ namespace OpenRCT2::Ui
 
         void ShowMessageBox(SDL_Window* window, const std::string& message) override
         {
+            // Same fullscreen trap as the file dialog: a message box owned by a fullscreen window
+            // disables the game and then hides behind it. An error the player cannot dismiss is the
+            // worst place for this to happen, since it is usually telling them something went wrong.
+            CFullscreenSuspender fullscreenSuspender(window);
+
             HWND hwnd = GetHWND(window);
             std::wstring messageW = String::toWideChar(message);
             MessageBoxW(hwnd, messageW.c_str(), L"OpenRCT2", MB_OK);
@@ -128,6 +186,10 @@ namespace OpenRCT2::Ui
         std::string ShowFileDialogInternal(SDL_Window* window, const FileDialogDesc& desc, bool isFolder)
         {
             std::string resultFilename;
+
+            // Must outlive the dialog, and restore on every exit path - including the early returns
+            // when COM or the dialog itself fails to start.
+            CFullscreenSuspender fullscreenSuspender(window);
 
             CCoInitialize coInitialize(COINIT_APARTMENTTHREADED);
             if (coInitialize)
@@ -177,7 +239,12 @@ namespace OpenRCT2::Ui
                             filtersSet = SUCCEEDED(fileDialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data()));
                         }
 
-                        if (filtersSet && SUCCEEDED(fileDialog->Show(nullptr)))
+                        // Owned by the game window rather than opened parentless. An unowned dialog is
+                        // not modal to the game, so it can end up behind it - and a screen reader user
+                        // then has a focused dialog they cannot see and the game will not respond to,
+                        // with no visual cue to alt-tab back to. Ownership also returns focus to the
+                        // game window when the dialog closes.
+                        if (filtersSet && SUCCEEDED(fileDialog->Show(GetHWND(window))))
                         {
                             ComPtr<IShellItem> resultItem;
                             if (SUCCEEDED(fileDialog->GetResult(resultItem.GetAddressOf())))
