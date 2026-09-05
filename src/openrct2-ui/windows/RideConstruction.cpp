@@ -1171,6 +1171,21 @@ namespace OpenRCT2::Ui::Windows
             return w < static_cast<WidgetIndex>(widgets.size()) && widgets[w].type != WidgetType::empty;
         }
 
+        // The Rotate control only exists while a ride's first piece is being positioned (the Place
+        // state is the only one that shows WIDX_ROTATE), and for a tracked ride that piece is
+        // normally the station. Say so when it really is one: which way a station is laid down
+        // decides which way the whole ride runs and cannot be changed once it is built, so it is
+        // worth naming what is being turned rather than leaving it as a bare "Direction". All three
+        // station piece types share TrackGroup::stationEnd, the same test the tile readout uses to
+        // recognise a platform.
+        bool axPlacingStation() const
+        {
+            if (!_currentlySelectedTrack.isTrackType)
+                return false;
+            const auto& ted = GetTrackElementDescriptor(_currentlySelectedTrack.trackType);
+            return ted.definition.group == TrackGroup::stationEnd;
+        }
+
         // The track heading, described in the player's own frame (Up always raises Y, Right raises X,
         // etc., regardless of camera rotation), so "up" means the track extends the way the Up arrow
         // moves. Matches the direction enum: 0 = right, 1 = down, 2 = left, 3 = up.
@@ -1533,8 +1548,8 @@ namespace OpenRCT2::Ui::Windows
             switch (field)
             {
                 case AxField::direction:
-                    return std::string("Direction, points ") + axDirectionName(_currentTrackPieceDirection)
-                        + ". Left and right rotate it";
+                    return std::string(axPlacingStation() ? "Station direction, points " : "Direction, points ")
+                        + axDirectionName(_currentTrackPieceDirection) + ". Left and right rotate it";
                 case AxField::curve:
                 {
                     if (_currentlySelectedTrack.isTrackType)
@@ -1682,7 +1697,8 @@ namespace OpenRCT2::Ui::Windows
             for (int32_t i = 0; i < times; i++)
                 onMouseUp(WIDX_ROTATE);
             Accessibility::ScreenReaderSpeak(
-                std::string("Track points ") + axDirectionName(_currentTrackPieceDirection) + ". " + axValidityAndCost());
+                std::string(axPlacingStation() ? "Station points " : "Track points ")
+                + axDirectionName(_currentTrackPieceDirection) + ". " + axValidityAndCost());
         }
 
         // ---- Editing anywhere in the ride (Delete / Insert) --------------------------------------
