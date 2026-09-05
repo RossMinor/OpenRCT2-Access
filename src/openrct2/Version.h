@@ -20,7 +20,7 @@
 // GitHub repo; if they differ it reports that an update is available. Forgetting to
 // bump it means a shipped build thinks the release it came from is a newer version and
 // nags on every launch.
-#define kAccessVersion "0.99"
+#define kAccessVersion "0.99.1"
 #define kAccessVersionTag "v" kAccessVersion
 
 // A single greppable banner naming this build and its mod version, mirroring the engine's own

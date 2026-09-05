@@ -4,6 +4,14 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+0.99.1 (2026-09-05)
+------------------------------------------------------------------------
+New Features and Improvements
+- The game engine is now OpenRCT2 0.5.4, up from the 0.5.2-era build the mod had been sitting on.
+- The mod now installs into a copy of OpenRCT2 you already have, instead of bringing its own copy of the game. Your saved parks, settings and scenarios stay where they are. Run Install-OpenRCT2Access.bat from the download, and Uninstall-OpenRCT2Access.bat to put things back exactly as they were.
+- The installer checks that the mod build matches your OpenRCT2 version and refuses if it does not, rather than installing something that would leave you with missing or wrong graphics. It also backs up your original program file before changing anything.
+- Automatic updates now go through that same installer, so an update gets the same version check, the same backup, and touches only the mod's own files. If an update is refused, the game is left exactly as it was and the mod tells you so the next time it starts.
+
 0.99 (2026-09-04)
 ------------------------------------------------------------------------
 New Features and Improvements
