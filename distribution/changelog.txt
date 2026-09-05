@@ -4,6 +4,23 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+0.99 (2026-09-04)
+------------------------------------------------------------------------
+New Features and Improvements
+- Speech now goes through Prism, so the mod talks to whichever screen reader you already use - NVDA, JAWS, Narrator, System Access, ZDSR and others - rather than NVDA alone.
+- Support for custom rides. This includes rollercoasters, mine carts, trains, car rides, and more. The only one not supported yet are mazes. See the documentation for the keyboard commands and a tutorial for using the ride builder.
+- Shift + c now opens the ride construction menu.
+- Elevation controls have now been changed to home and end and shift + home and end for better ergonomics.
+- The game now reports all elevations of multiple objects that exist on a single tile.
+- Footpaths are described with a bit more accuracy and railings are also read as part of the path now.
+- A few more helpful tips for when a path or ride doesn't connect.
+
+Bug Fixes
+- Control + e now works at any point in the game, no matter if you're in build mode or not.
+- Opening and closing parks now works properly.
+- So many fixes to elevation logic, too many to list. In short, it's completely reliable now and should make building rides and slopes much easier. Thank you to bradjrenshaw for helping with this.
+- Fixed a few broken ride construction menus.
+
 0.98 (2026-08-27)
 ------------------------------------------------------------------------
 - Change: Rebuilt most menu and window navigation on a single shared engine (the Graph A11y Kernel), replacing the per-window handlers that had drifted apart. Tab and Shift+Tab switch a window's pages or tabs, Up/Down move, Left/Right adjust, Enter activates, Escape closes, with first-letter type-ahead in lists - consistent across every migrated window.
