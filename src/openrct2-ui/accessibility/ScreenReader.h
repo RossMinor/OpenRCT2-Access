@@ -29,15 +29,25 @@ namespace OpenRCT2::Ui::Accessibility
     // so they all honour the single volume control in the accessibility settings window.
     void PlayCue(Audio::SoundId soundId, const CoordsXYZ& loc);
 
-    // Loads the screen reader bridge (nvdaControllerClient64.dll on Windows).
+    // Loads the speech bridge. Speech goes through Prism (prism.dll), which routes it to whichever
+    // screen reader is actually running - NVDA, JAWS, Narrator, System Access and others on Windows,
+    // VoiceOver on macOS, Speech Dispatcher or Orca on Linux - so nothing above this layer needs to
+    // know which reader the player uses. If prism.dll cannot be loaded the mod falls back to driving
+    // NVDA directly, and if that fails too the game runs silently rather than refusing to start.
     // Safe to call multiple times; only the first call has an effect.
     void ScreenReaderInit();
 
-    // Frees the screen reader library.
+    // Frees the speech bridge.
     void ScreenReaderShutdown();
 
-    // Returns true if a supported screen reader (NVDA) is loaded and currently running.
+    // Returns true if a screen reader is loaded and currently running. Re-checks on each call, so it
+    // becomes true when the player starts a reader after the game.
     bool ScreenReaderIsAvailable();
+
+    // The name of the screen reader currently being spoken through ("NVDA", "JAWS", ...), or an empty
+    // string when none is running. The pointer is owned by the speech bridge; copy it if you need to
+    // keep it. Useful for reporting to the player which reader the mod found.
+    const char* ScreenReaderBackendName();
 
     // Speaks UTF-8 text through the screen reader. When interrupt is true, any
     // in-progress speech is cancelled first. No-op when no screen reader is available.

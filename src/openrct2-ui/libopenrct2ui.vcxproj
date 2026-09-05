@@ -59,6 +59,8 @@
     <ClInclude Include="accessibility\SceneryPlacement.h" />
     <ClInclude Include="accessibility\TrackDesignDescription.h" />
     <ClInclude Include="accessibility\ScreenReader.h" />
+    <ClInclude Include="accessibility\prism\prism.h" />
+    <ClInclude Include="accessibility\prism\prism_version.h" />
     <ClInclude Include="accessibility\graph\ControlId.h" />
     <ClInclude Include="accessibility\graph\GraphAnnouncer.h" />
     <ClInclude Include="accessibility\graph\GraphBuilder.h" />
