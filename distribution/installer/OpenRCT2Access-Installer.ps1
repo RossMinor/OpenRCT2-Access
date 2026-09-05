@@ -11,6 +11,11 @@
 # missing or wrong graphics. The installer therefore reads the engine version out of both
 # executables and refuses to proceed unless they match exactly.
 #
+# When the player's OpenRCT2 is OLDER than the mod build needs, it can offer to fix that: it fetches
+# the official OpenRCT2 build for the exact version this mod was compiled against, checksums it, and
+# unpacks it over the installation before installing the mod. When their OpenRCT2 is NEWER it stops
+# instead - that case is the mod lagging behind, and downgrading someone's game is not a fix.
+#
 # Written for Windows PowerShell 5.1 - no ternary, no null-coalescing, no && chaining.
 
 [CmdletBinding()]
@@ -27,7 +32,13 @@ param(
     # Skip the "Press Enter to close" at the end. Required when something else is driving this
     # script - the in-game updater runs it from a background window where a prompt nobody can see
     # would hang the update forever.
-    [switch] $NoPause
+    [switch] $NoPause,
+
+    # Permit replacing the player's OpenRCT2 with the stock version this mod build needs, when
+    # theirs is older. Deliberately NOT implied by -Yes: that switch means "yes, install the mod",
+    # and downloading 80 MB and rewriting the game's own files is a much larger thing to agree to
+    # than swapping one executable. A person running this interactively is asked instead.
+    [switch] $AllowEngineUpgrade
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,6 +48,12 @@ $script:PayloadExe    = 'openrct2.exe'
 $script:PayloadDlls   = @('prism.dll', 'tolk.dll', 'nvdaControllerClient64.dll')
 $script:PayloadDirs   = @('data\sounds\access')
 $script:BackupName    = 'openrct2.exe.pre-access-backup'
+
+# Where a stock engine is fetched from when the player's OpenRCT2 is too old for this mod build.
+# x64 because the payload executable is x64: the stock exe we lay down is the one the uninstall
+# later restores, so it has to be the build the player would otherwise have been running.
+$script:EngineRepo         = 'OpenRCT2/OpenRCT2'
+$script:EngineAssetSuffix  = '-windows-portable-x64.zip'
 
 function Write-Step { param([string] $Text) Write-Host ''; Write-Host $Text }
 function Write-Info { param([string] $Text) Write-Host "  $Text" }
@@ -154,6 +171,113 @@ function Resolve-Target {
     return (Resolve-Path -LiteralPath $typed).Path
 }
 
+# -1 when $A is older than $B, 0 when equal, 1 when newer. The direction matters: an older game can
+# be brought up to the mod, a newer one cannot be brought down to it.
+function Compare-EngineVersion {
+    param([Parameter(Mandatory)] [string] $A, [Parameter(Mandatory)] [string] $B)
+    $va = [version] $A
+    $vb = [version] $B
+    if ($va -lt $vb) { return -1 }
+    if ($va -gt $vb) { return 1 }
+    return 0
+}
+
+# Downloads the stock OpenRCT2 portable build for an exact version and returns the path to the
+# verified zip. The tag is pinned to the version the mod was built against - never "latest" - so the
+# result is the one build known to match this mod, and cannot drift out from under the version gate
+# between the release being cut and somebody installing it.
+function Get-StockEngineZip {
+    param([Parameter(Mandatory)] [string] $Version)
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $headers = @{ 'User-Agent' = 'OpenRCT2-Access-Installer' }
+    $tag = "v$Version"
+
+    Write-Info "Looking up OpenRCT2 $Version ..."
+    try {
+        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$($script:EngineRepo)/releases/tags/$tag" -Headers $headers
+    } catch {
+        throw "Could not reach GitHub to look up OpenRCT2 $Version. Check your internet connection."
+    }
+
+    $asset = $rel.assets | Where-Object { $_.name.EndsWith($script:EngineAssetSuffix) } | Select-Object -First 1
+    if (-not $asset) { throw "OpenRCT2 $Version does not publish a Windows x64 portable build." }
+
+    $sizeMb = [math]::Round($asset.size / 1MB, 0)
+    Write-Info "Downloading $($asset.name) - about $sizeMb MB. This can take a few minutes."
+
+    $dest = Join-Path ([System.IO.Path]::GetTempPath()) $asset.name
+    $ProgressPreference = 'SilentlyContinue'
+    (New-Object System.Net.WebClient).DownloadFile($asset.browser_download_url, $dest)
+
+    # Verify against the checksum file published alongside the build. This is about to overwrite the
+    # player's game, so a truncated or corrupted download must stop here rather than halfway through
+    # writing files into their installation.
+    $sumsAsset = $rel.assets | Where-Object { $_.name.EndsWith('sha256sums.txt') } | Select-Object -First 1
+    if ($sumsAsset) {
+        $expected = $null
+        $sums = (New-Object System.Net.WebClient).DownloadString($sumsAsset.browser_download_url)
+        foreach ($line in ($sums -split "`n")) {
+            $parts = $line.Trim() -split '\s+'
+            if ($parts.Count -ge 2) {
+                $name = $parts[1]
+                if ($name.StartsWith('./')) { $name = $name.Substring(2) }
+                if ($name -eq $asset.name) { $expected = $parts[0].ToLower() }
+            }
+        }
+        if ($expected) {
+            $actual = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) {
+                Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+                throw 'The OpenRCT2 download did not match its published checksum. Nothing was changed.'
+            }
+            Write-Info 'Download verified against the published checksum.'
+        } else {
+            Write-Info 'Warning: no checksum was published for this file; continuing unverified.'
+        }
+    }
+
+    return $dest
+}
+
+# Unpacks a stock OpenRCT2 portable build over an existing installation. The portable zip stores
+# openrct2.exe and data\ at its root, so entries map straight onto the target folder. Player content
+# lives in Documents\OpenRCT2 (saves, settings, the RCT2 asset path) and is not touched.
+function Install-StockEngine {
+    param([Parameter(Mandatory)] [string] $Target, [Parameter(Mandatory)] [string] $ZipPath)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    # The mod's backup is a copy of the engine we are about to replace. Left in place, a later
+    # uninstall would restore that old executable next to the new data\ folder - precisely the
+    # version mismatch this installer exists to prevent. Drop it now; the mod install that follows
+    # backs up the freshly laid down stock exe instead.
+    $backupPath = Join-Path $Target $script:BackupName
+    if (Test-Path -LiteralPath $backupPath) {
+        Remove-Item -LiteralPath $backupPath -Force
+        Write-Info 'Removed the old backup - it belonged to the previous OpenRCT2 version.'
+    }
+
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $count = 0
+        foreach ($entry in $archive.Entries) {
+            # Directory entries have an empty Name; the folders get created from the file paths.
+            if ([string]::IsNullOrEmpty($entry.Name)) { continue }
+            $outPath = Join-Path $Target ($entry.FullName.Replace('/', '\'))
+            $outDir = Split-Path -Parent $outPath
+            if (-not (Test-Path -LiteralPath $outDir)) {
+                New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $outPath, $true)
+            $count++
+        }
+        Write-Info "Installed OpenRCT2 ($count files)."
+    } finally {
+        $archive.Dispose()
+    }
+}
+
 function Assert-GameClosed {
     $running = Get-Process -Name 'openrct2' -ErrorAction SilentlyContinue
     if ($running) {
@@ -180,15 +304,75 @@ function Invoke-Install {
 
     # The hard gate. Mixing an exe with another version's data/ gives broken graphics, not a clean error.
     if ($payloadVer.Engine -ne $targetVer.Engine) {
+        $cmp = Compare-EngineVersion $targetVer.Engine $payloadVer.Engine
+
+        if ($cmp -gt 0) {
+            # Their OpenRCT2 is newer than this mod build. We could make the versions agree by putting
+            # an older OpenRCT2 on their machine, but that is the mod being behind, not the player
+            # being wrong - and taking working game features away to install an accessibility layer is
+            # not a trade this installer gets to make on their behalf. It needs a new mod build.
+            Write-Host ''
+            Write-Host 'Cannot install: this mod build is older than your OpenRCT2.'
+            Write-Info "You have OpenRCT2 $($targetVer.Engine); this mod build is for $($payloadVer.Engine)."
+            Write-Info 'Installing it would mean downgrading your game, so it will not be done automatically.'
+            Write-Info ''
+            Write-Info "Watch for a mod build for OpenRCT2 $($targetVer.Engine)."
+            Write-Info 'Releases: https://github.com/RossMinor/OpenRCT2-Access/releases'
+            throw 'Mod build is older than the installed game - nothing was changed.'
+        }
+
+        # Their OpenRCT2 is older. This one is fixable, and it is worth fixing: "go and find OpenRCT2
+        # $($payloadVer.Engine) yourself" is where the install used to end, which for a player who
+        # cannot see is the least helpful possible place to stop.
         Write-Host ''
-        Write-Host 'Cannot install: version mismatch.'
-        Write-Info "This mod build is for OpenRCT2 $($payloadVer.Engine), but the installed game is $($targetVer.Engine)."
+        Write-Host 'Your OpenRCT2 is too old for this mod build.'
+        Write-Info "You have OpenRCT2 $($targetVer.Engine); this mod build is for $($payloadVer.Engine)."
         Write-Info 'The executable and the game data folder must come from the same OpenRCT2 version,'
-        Write-Info 'so installing this would leave the game with missing or wrong graphics.'
+        Write-Info 'so installing the mod as-is would leave the game with missing or wrong graphics.'
         Write-Info ''
-        Write-Info "Download the mod build for OpenRCT2 $($targetVer.Engine), or update OpenRCT2 to $($payloadVer.Engine)."
-        Write-Info 'Releases: https://github.com/RossMinor/OpenRCT2-Access/releases'
-        throw 'Version mismatch - nothing was changed.'
+        Write-Info "This installer can update OpenRCT2 to $($payloadVer.Engine) for you first, downloading"
+        Write-Info 'the official build straight from the OpenRCT2 project. Your saved games, settings and'
+        Write-Info 'RollerCoaster Tycoon 2 files are kept - they live outside the game folder.'
+
+        if (-not $AllowEngineUpgrade) {
+            if ($Yes) {
+                # Driven by something else (the in-game updater) that only agreed to a mod install.
+                # Replacing the whole game is a bigger step than it consented to, so stop and say so.
+                Write-Info ''
+                Write-Info "To update OpenRCT2 as well, run Install-OpenRCT2Access.bat yourself and answer yes."
+                throw 'Version mismatch - nothing was changed.'
+            }
+            Write-Host ''
+            $answer = Read-Host "Type yes to update OpenRCT2 to $($payloadVer.Engine) and then install the mod, or press Enter to cancel"
+            if ($answer.Trim().ToLower() -ne 'yes') { Write-Host 'Cancelled. Nothing was changed.'; return }
+        }
+
+        if (-not (Test-Writable $Target)) {
+            Write-Host ''
+            Write-Host 'Cannot write to the installation folder.'
+            Write-Info "Folder: $Target"
+            Write-Info 'Close this window, then right-click Install-OpenRCT2Access.bat and choose'
+            Write-Info '"Run as administrator".'
+            throw 'Need administrator rights - nothing was changed.'
+        }
+
+        Write-Step "Updating OpenRCT2 to $($payloadVer.Engine)"
+        # Downloaded and checksummed in full before anything in the game folder is touched, so a
+        # failed or corrupted download leaves the installation exactly as it was.
+        $engineZip = Get-StockEngineZip -Version $payloadVer.Engine
+        try {
+            Install-StockEngine -Target $Target -ZipPath $engineZip
+        } finally {
+            Remove-Item -LiteralPath $engineZip -Force -ErrorAction SilentlyContinue
+        }
+
+        # Re-read rather than assume: this is the check that the upgrade actually landed, and it is
+        # the same check that gated us here, so the mod install below is now on proven-matching files.
+        $targetVer = Get-ExeVersions (Join-Path $Target $script:PayloadExe)
+        if ($targetVer.Engine -ne $payloadVer.Engine) {
+            throw "OpenRCT2 still reports $($targetVer.Engine) after the update. Stopping before installing the mod."
+        }
+        Write-Info "OpenRCT2 is now $($targetVer.Engine)."
     }
 
     if (-not (Test-Writable $Target)) {
