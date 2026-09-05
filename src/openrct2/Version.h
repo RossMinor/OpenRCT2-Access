@@ -23,6 +23,14 @@
 #define kAccessVersion "0.99"
 #define kAccessVersionTag "v" kAccessVersion
 
+// A single greppable banner naming this build and its mod version, mirroring the engine's own
+// "OpenRCT2, v0.5.4" in gVersionInfoFull. The installer reads BOTH strings straight out of an
+// executable to decide what it is looking at: the engine version tells it whether this build
+// matches the player's OpenRCT2, and this banner tells it whether the mod is already installed and
+// at which version. It must therefore survive into the binary as a plain literal, which is why
+// ScreenReaderInit logs it rather than leaving it unreferenced for the linker to discard.
+#define kAccessVersionBanner OPENRCT2_NAME "-Access, " kAccessVersionTag
+
 // The GitHub repo the update checker queries for the latest release.
 #define kAccessUpdateRepo "RossMinor/OpenRCT2-Access"
 

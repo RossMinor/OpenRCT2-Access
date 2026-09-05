@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <openrct2/Diagnostic.h>
+#include <openrct2/Version.h>
 #include <openrct2/audio/Audio.h>
 #include <openrct2/audio/AudioMixer.h>
 #include <openrct2/config/Config.h>
@@ -254,6 +255,10 @@ namespace OpenRCT2::Ui::Accessibility
     {
         if (_prismCtx != nullptr || _nvdaClient != nullptr)
             return;
+
+        // Also the reason this literal exists in the binary at all - the installer greps for it to
+        // recognise a modded executable. See kAccessVersionBanner.
+        LOG_INFO("%s", kAccessVersionBanner);
 
         if (!TryInitPrism())
             TryInitNvda();
