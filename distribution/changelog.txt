@@ -4,6 +4,12 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+0.99.2 (2026-09-05)
+------------------------------------------------------------------------
+Bug Fixes
+- Pre-built rides and stalls now build at the elevation you have raised the cursor to with home, instead of always at ground level. Placing a ride above a path works now; previously the path refused the build no matter how high you were, and the error described the path down at ground level rather than where you were standing.
+- Something in the way that cannot be cleared, such as a path or a fence, no longer refuses the build outright. The game itself is asked at each height whether the ride fits, so a ride that can stand on supports above an obstruction will now do so. Scenery is still cleared when it is the only thing in the way, so a ride blocked by bushes settles onto the ground rather than hovering above them.
+
 0.99.1 (2026-09-05)
 ------------------------------------------------------------------------
 New Features and Improvements
