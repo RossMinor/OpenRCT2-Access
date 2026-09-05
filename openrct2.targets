@@ -17,6 +17,7 @@
     <DataShadersPath Condition="'$(DataShadersPath)' == ''">$(SolutionDir)data\shaders\</DataShadersPath>
     <DataScenarioPath Condition="'$(DataScenarioPath)' == ''">$(SolutionDir)data\scenario_patches\</DataScenarioPath>
     <DataSoundsPath Condition="'$(DataSoundsPath)' == ''">$(SolutionDir)data\sounds\</DataSoundsPath>
+    <SpeechLibPath Condition="'$(SpeechLibPath)' == ''">$(SolutionDir)src\openrct2-ui\accessibility\runtime\</SpeechLibPath>
     <ResourcesPath Condition="'$(ResourcesPath)' == ''">$(SolutionDir)resources\</ResourcesPath>
     <G2InputFile Condition="'$(G2InputFile)' == ''">$(ResourcesPath)g2\sprites.json</G2InputFile>
     <FontsInputFile Condition="'$(FontsInputFile)' == ''">$(ResourcesPath)fonts\sprites.json</FontsInputFile>
@@ -47,6 +48,8 @@
     <SoundFiles Include="$(DataSoundsPath)**\*"
                 Exclude="$(DataSoundsPath)*.bak;
                           $(DataSoundsPath)*.tmp" />
+
+    <SpeechLibFiles Include="$(SpeechLibPath)*.dll" />
   </ItemGroup>
 
   <!-- Target Implementations -->
@@ -131,6 +134,31 @@
     <Message Text="Copied sound: %(CopiedSoundFiles.RecursiveDir)%(CopiedSoundFiles.Filename)%(CopiedSoundFiles.Extension)"
              Importance="high"
              Condition="'@(CopiedSoundFiles)' != ''" />
+  </Target>
+
+  <!-- OpenRCT2-Access: deploy the speech runtime libraries (Prism and the NVDA fallback client)
+       next to the executable, since the game loads them from its own folder at startup. They are
+       tracked under src\ and copied here because bin\ is gitignored: without this a fresh clone
+       builds a game that runs but cannot speak, and the failure is silent rather than a crash.
+       See src\openrct2-ui\accessibility\runtime\README.md. -->
+  <Target Name="CopySpeechLibraries"
+          AfterTargets="Build"
+          Inputs="@(SpeechLibFiles)"
+          Outputs="@(SpeechLibFiles->'$(OutDir)%(Filename)%(Extension)')">
+
+    <MakeDir Directories="$(OutDir)" />
+
+    <Copy SourceFiles="@(SpeechLibFiles)"
+          DestinationFiles="@(SpeechLibFiles->'$(OutDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="true"
+          Retries="3">
+      <Output TaskParameter="CopiedFiles" ItemName="CopiedSpeechLibFiles" />
+    </Copy>
+
+    <Message Text="Copied speech library: %(CopiedSpeechLibFiles.Filename)%(CopiedSpeechLibFiles.Extension)"
+             Importance="high"
+             Condition="'@(CopiedSpeechLibFiles)' != ''" />
   </Target>
 
   <Target Name="BuildG2"

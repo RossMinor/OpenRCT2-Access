@@ -35,9 +35,10 @@ defined before including them so the declarations carry no `dllimport`.
    [Prism releases page](https://github.com/ethindp/prism/releases).
 2. Copy `include/prism.h` and `include/prism_version.h` here, then re-apply the quoted-include
    edit above.
-3. Copy `dynamic/release/bin/prism.dll` and `dynamic/release/bin/tolk.dll` into `bin/`.
-   `tolk.dll` is a runtime dependency of the Windows backends; shipping `prism.dll` alone is not
-   enough.
+3. Copy `dynamic/release/bin/prism.dll` and `dynamic/release/bin/tolk.dll` into
+   [`../runtime/`](../runtime/), which is version-controlled and copied next to the executable on
+   every build. Take the binaries and the headers from the *same* release so the declarations the
+   mod compiles against match the DLL it loads.
 4. Check `PRISM_CONFIG_VERSION` in the new header. `ScreenReader.cpp` obtains its config from
    `prism_config_init()` rather than filling the struct itself, so a version bump is normally
    transparent, but a new field worth setting would show up here.
