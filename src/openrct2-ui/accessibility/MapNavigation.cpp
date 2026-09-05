@@ -3485,8 +3485,12 @@ namespace OpenRCT2::Ui::Accessibility
             return true;
         }
 
+        // The whole build menu sits on Ctrl, arrows included. The consequence is that Ctrl+arrows
+        // cannot also jump the cursor to a nearby ride while the builder is open - in build mode the
+        // menu takes those keys. This handler runs before the game's shortcuts, so the jump simply
+        // does not fire here; it works again as soon as the builder is closed.
         std::optional<AccessibilityAction> action;
-        if ((modifiers & KMOD_ALT) && !(modifiers & (KMOD_CTRL | KMOD_SHIFT)))
+        if ((modifiers & KMOD_CTRL) && !(modifiers & (KMOD_SHIFT | KMOD_ALT)))
         {
             switch (key)
             {
@@ -3502,12 +3506,6 @@ namespace OpenRCT2::Ui::Accessibility
                 case SDLK_RIGHT:
                     action = AccessibilityAction::moveRight;
                     break;
-            }
-        }
-        else if ((modifiers & KMOD_CTRL) && !(modifiers & (KMOD_SHIFT | KMOD_ALT)))
-        {
-            switch (key)
-            {
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER:
                     action = AccessibilityAction::activate;
@@ -3601,8 +3599,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (IsRideConstructionWindowOpen())
         {
             ScreenReaderSpeak(
-                "Construction. Arrow keys move the map cursor. Alt up and down choose a build option, "
-                "Alt left and right change it, Control Enter builds at the cursor, Control B reads the "
+                "Construction. Arrow keys move the map cursor. Control up and down choose a build option, "
+                "Control left and right change it, Control Enter builds at the cursor, Control B reads the "
                 "build state. Delete removes the piece under the cursor, Insert moves the build focus to "
                 "the track under the cursor. Escape exits.");
             return;
