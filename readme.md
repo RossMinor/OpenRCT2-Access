@@ -117,7 +117,7 @@ You will occasionally hear an elevation like "4.5". That means the thing you are
 
 #### While in Build Mode
 
-Build mode is activated when you construct pre-built or custom rides. It will cause the mod to behave differently than it normally does while you're in this mode.
+Build mode is activated when you construct pre-built or custom rides. It will cause the mod to behave differently than it normally does while you're in this mode. The mod says "entering build mode" followed by the ride's name when it starts, whichever way you got there.
 
 - Arrow Keys: Moves the ride you are wanting to construct around the map.
 - R: Rotate the ride you are constructing 90 degrees right.

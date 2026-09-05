@@ -312,6 +312,12 @@ namespace OpenRCT2::Ui::Windows
             _trackPlaceShiftState = false;
 
             UpdateTrackPieceWidgets();
+
+            // Announced from here rather than from any of the places that open the builder, so every
+            // route in - Ctrl+Enter on a ride, the new-ride window, clicking existing track - says
+            // the same thing exactly once. Build mode rebinds the arrow keys and changes what most
+            // of them do, so entering it silently left the player guessing which mode they were in.
+            Accessibility::ScreenReaderSpeak("Entering build mode. " + std::string(currentRide->getName()));
         }
 
         void onClose() override

@@ -3063,8 +3063,17 @@ namespace OpenRCT2::Ui::Accessibility
             ScreenReaderSpeak("No ride here to build on");
             return;
         }
+        // A newly created construction window announces itself from its own onOpen, which covers
+        // every route into build mode. Only speak here when that window is already up for this ride,
+        // since then no window is created and no onOpen will fire.
+        auto* windowMgr = GetWindowManager();
+        auto* existing = windowMgr != nullptr ? windowMgr->FindByClass(WindowClass::rideConstruction) : nullptr;
+        const bool reusingWindow = existing != nullptr && existing->number == static_cast<int16_t>(rid.ToUnderlying());
+
         RideInitialiseConstructionWindow(*ride);
-        ScreenReaderSpeak(std::string(ride->getName()) + ", construction");
+
+        if (reusingWindow)
+            ScreenReaderSpeak("Build mode. " + std::string(ride->getName()));
     }
 
     // Shift+Page Up/Down: zoom the main view (matching the game's own zoom) and announce the level.
