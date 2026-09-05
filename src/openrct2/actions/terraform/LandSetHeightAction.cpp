@@ -9,20 +9,16 @@
 
 #include "LandSetHeightAction.h"
 
-#include "../../Context.h"
 #include "../../GameState.h"
 #include "../../OpenRCT2.h"
 #include "../../localisation/StringIds.h"
 #include "../../management/Finance.h"
 #include "../../object/SmallSceneryEntry.h"
 #include "../../ride/RideData.h"
-#include "../../windows/Intent.h"
 #include "../../world/ConstructionClearance.h"
 #include "../../world/Footpath.h"
 #include "../../world/Map.h"
-#include "../../world/Park.h"
 #include "../../world/QuarterTile.h"
-#include "../../world/Scenery.h"
 #include "../../world/TileElementsView.h"
 #include "../../world/Wall.h"
 #include "../../world/tile_element/PathElement.h"
@@ -254,19 +250,14 @@ namespace OpenRCT2::GameActions
 
     void LandSetHeightAction::SmallSceneryRemoval() const
     {
-        TileElement* tileElement = MapGetFirstElementAt(_coords);
-        do
+        for (auto* sceneryElement : TileElementsView<SmallSceneryElement>(_coords))
         {
-            if (tileElement == nullptr)
-                break;
-            if (tileElement->getType() != TileElementType::SmallScenery)
+            if (_height > sceneryElement->clearanceHeight)
                 continue;
-            if (_height > tileElement->clearanceHeight)
+            if (_height + 4 < sceneryElement->baseHeight)
                 continue;
-            if (_height + 4 < tileElement->baseHeight)
-                continue;
-            TileElementRemove(tileElement--);
-        } while (!(tileElement++)->isLastForTile());
+            TileElementRemove(reinterpret_cast<TileElement*>(sceneryElement));
+        }
     }
 
     StringId LandSetHeightAction::CheckRideSupports() const
@@ -352,10 +343,10 @@ namespace OpenRCT2::GameActions
         TileElement** tile_element, [[maybe_unused]] const CoordsXY& coords, [[maybe_unused]] CommandFlags flags,
         [[maybe_unused]] money64* price)
     {
-        if ((*tile_element)->getType() == TileElementType::Surface)
+        if ((*tile_element)->getType() == TileElementType::surface)
             return true;
 
-        if ((*tile_element)->getType() == TileElementType::SmallScenery)
+        if ((*tile_element)->getType() == TileElementType::smallScenery)
             return true;
 
         return false;

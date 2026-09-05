@@ -26,7 +26,9 @@
 #include <openrct2/actions/track/TrackDesignAction.h>
 #include <openrct2/audio/Audio.h>
 #include <openrct2/config/Config.h>
+#include <openrct2/drawing/Drawing.Sprite.h>
 #include <openrct2/drawing/Drawing.h>
+#include <openrct2/drawing/NewDrawing.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/paint/VirtualFloor.h>
@@ -626,20 +628,20 @@ namespace OpenRCT2::Ui::Windows
                 {
                     switch (el->getType())
                     {
-                        case TileElementType::Path:
+                        case TileElementType::path:
                             parts.push_back("Path");
                             break;
-                        case TileElementType::Track:
+                        case TileElementType::track:
                             if (!namedRide) // one mention per tile, however many pieces sit on it
                             {
                                 namedRide = true;
                                 parts.push_back("Another ride");
                             }
                             break;
-                        case TileElementType::Entrance:
+                        case TileElementType::entrance:
                             parts.push_back("Ride entrance or exit");
                             break;
-                        case TileElementType::Banner:
+                        case TileElementType::banner:
                             parts.push_back("Banner");
                             break;
                         default: // Surface, scenery and walls/fences are clearable - not reported.

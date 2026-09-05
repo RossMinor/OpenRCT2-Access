@@ -52,7 +52,7 @@ namespace OpenRCT2
 #pragma pack(push, 1)
     struct PathElement : TileElementBase
     {
-        static constexpr TileElementType kElementType = TileElementType::Path;
+        static constexpr TileElementType kElementType = TileElementType::path;
 
     private:
         ObjectEntryIndex SurfaceIndex;  // 5
@@ -82,8 +82,8 @@ namespace OpenRCT2
         const FootpathRailingsObject* GetRailingsEntry() const;
         void SetRailingsEntryIndex(ObjectEntryIndex newIndex);
 
-        const PathSurfaceDescriptor& GetSurfaceDescriptor() const;
-        const PathRailingsDescriptor& GetRailingsDescriptor() const;
+        const PathSurfaceDescriptor* GetSurfaceDescriptor() const;
+        const PathRailingsDescriptor* GetRailingsDescriptor() const;
 
         uint8_t GetQueueBannerDirection() const;
         void SetQueueBannerDirection(uint8_t direction);

@@ -16,6 +16,7 @@
     #include "../core/Guard.hpp"
     #include "../core/IStream.hpp"
     #include "../core/String.hpp"
+    #include "../drawing/Font.h"
     #include "../localisation/Language.h"
 
     #include <SDL.h>
@@ -471,12 +472,12 @@ namespace OpenRCT2::Platform
         return _assetList;
     }
 
-    std::vector<std::string_view> GetSearchablePathsRCT1()
+    std::vector<std::string> GetSearchablePathsRCT1()
     {
         return { "/sdcard/rct1" };
     }
 
-    std::vector<std::string_view> GetSearchablePathsRCT2()
+    std::vector<std::string> GetSearchablePathsRCT2()
     {
         return { "/sdcard/rct2" };
     }

@@ -38,7 +38,7 @@ namespace OpenRCT2::Ui::Accessibility
         {
             if (!el->isGhost())
             {
-                if (el->getType() == TileElementType::Path)
+                if (el->getType() == TileElementType::path)
                 {
                     // A footpath's base is the surface a guest walks on - the relevant level whether it
                     // sits on the ground or bridges over water/a gap.

@@ -12,7 +12,7 @@
 #include <string>
 
 #define OPENRCT2_NAME "OpenRCT2"
-#define kOpenRCT2Version "0.5.2"
+#define kOpenRCT2Version "0.5.4"
 
 // Version of the OpenRCT2-Access fork. This MUST be bumped to match the git tag /
 // GitHub release tag on every release (e.g. release "v0.93" -> kAccessVersion "0.93").

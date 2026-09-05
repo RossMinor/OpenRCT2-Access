@@ -16,7 +16,6 @@
 #include "../../config/Config.h"
 #include "../../core/EnumUtils.hpp"
 #include "../../core/Guard.hpp"
-#include "../../core/String.hpp"
 #include "../../drawing/Colour.h"
 #include "../../drawing/Drawing.h"
 #include "../../entity/Duck.h"
@@ -33,7 +32,6 @@
 #include "../../scenario/ScenarioObjective.h"
 #include "../../ui/WindowManager.h"
 #include "../../util/Util.h"
-#include "../../windows/Intent.h"
 #include "../../world/Location.hpp"
 #include "../../world/Map.h"
 #include "../../world/Park.h"
@@ -468,7 +466,7 @@ namespace OpenRCT2::GameActions
         TileElementIteratorBegin(&it);
         do
         {
-            if (it.element->getType() == TileElementType::SmallScenery)
+            if (it.element->getType() == TileElementType::smallScenery)
             {
                 it.element->asSmallScenery()->SetAge(0);
             }
@@ -484,7 +482,7 @@ namespace OpenRCT2::GameActions
         TileElementIteratorBegin(&it);
         do
         {
-            if (it.element->getType() != TileElementType::Path)
+            if (it.element->getType() != TileElementType::path)
                 continue;
 
             if (!(it.element)->asPath()->HasAddition())
@@ -507,7 +505,7 @@ namespace OpenRCT2::GameActions
         TileElementIteratorBegin(&it);
         do
         {
-            if (it.element->getType() != TileElementType::Path)
+            if (it.element->getType() != TileElementType::path)
                 continue;
 
             auto* path = it.element->asPath();
@@ -857,7 +855,7 @@ namespace OpenRCT2::GameActions
         TileElementIteratorBegin(&it);
         do
         {
-            if (it.element->getType() == TileElementType::Surface)
+            if (it.element->getType() == TileElementType::surface)
             {
                 // Remove all park fence flags
                 it.element->asSurface()->SetParkFences(0);

@@ -22,7 +22,6 @@
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Cheats.h>
 #include <openrct2/Diagnostic.h>
-#include <openrct2/Editor.h>
 #include <openrct2/Game.h>
 #include <openrct2/GameState.h>
 #include <openrct2/Input.h>

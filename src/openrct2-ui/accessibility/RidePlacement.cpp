@@ -37,6 +37,7 @@
 #include <openrct2/ride/TrackData.h>
 #include <openrct2/ride/ted/TrackElementDescriptor.h>
 #include <openrct2/ui/WindowManager.h>
+#include <openrct2/util/Util.h>
 #include <openrct2/windows/Intent.h>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/tile_element/SurfaceElement.h>
@@ -246,7 +247,11 @@ namespace OpenRCT2::Ui::Accessibility
 
         const int32_t rideEntryIndex = RideGetEntryIndex(item.Type, item.EntryIndex);
         const int32_t colour1 = RideGetRandomColourPresetIndex(item.Type);
-        const int32_t colour2 = RideGetUnusedPresetVehicleColour(rideEntryIndex);
+        // UtilRand, not ScenarioRand: the colour is picked here in UI code and then passed into the
+        // action as an explicit parameter, so it travels with the action rather than being re-rolled
+        // per client. Drawing from the synced RNG outside an action would desync multiplayer. This
+        // matches Ride::setRideEntry, which computes its colour the same way.
+        const int32_t colour2 = RideGetUnusedPresetVehicleColour(rideEntryIndex, UtilRand());
 
         auto createAction = GameActions::RideCreateAction(
             item.Type, item.EntryIndex, colour1, colour2, getGameState().lastEntranceStyle,
@@ -484,7 +489,7 @@ namespace OpenRCT2::Ui::Accessibility
                 continue;
             do
             {
-                if (el->getType() != TileElementType::Track)
+                if (el->getType() != TileElementType::track)
                     continue;
                 if (el->getBaseZ() != stationBaseZ)
                     continue;

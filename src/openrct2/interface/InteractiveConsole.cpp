@@ -11,13 +11,11 @@
 
 #include "../Context.h"
 #include "../Date.h"
-#include "../EditorObjectSelectionSession.h"
 #include "../Game.h"
 #include "../GameState.h"
 #include "../OpenRCT2.h"
 #include "../PlatformEnvironment.h"
 #include "../ReplayManager.h"
-#include "../Version.h"
 #include "../actions/GameActionRunner.h"
 #include "../actions/cheats/CheatSetAction.h"
 #include "../actions/general/GameSetSpeedAction.h"
@@ -35,18 +33,14 @@
 #include "../core/Path.hpp"
 #include "../core/String.hpp"
 #include "../drawing/Drawing.h"
-#include "../drawing/Font.h"
 #include "../drawing/Image.h"
 #include "../entity/Balloon.h"
 #include "../entity/EntityList.h"
 #include "../entity/EntityRegistry.h"
 #include "../entity/Staff.h"
-#include "../interface/Chat.h"
-#include "../interface/Viewport.h"
 #include "../interface/WindowBase.h"
 #include "../localisation/Formatting.h"
 #include "../localisation/StringIds.h"
-#include "../management/Finance.h"
 #include "../management/NewsItem.h"
 #include "../management/Research.h"
 #include "../network/Network.h"
@@ -54,28 +48,25 @@
 #include "../object/ObjectManager.h"
 #include "../object/ObjectRepository.h"
 #include "../object/PeepAnimationsObject.h"
-#include "../platform/Platform.h"
 #include "../profiling/Profiling.h"
 #include "../ride/Ride.h"
 #include "../ride/RideData.h"
 #include "../ride/RideManager.hpp"
 #include "../ride/Vehicle.h"
+#include "../scenes/editor/EditorController.h"
 #include "../ui/WindowManager.h"
 #include "../util/Util.h"
 #include "../windows/Intent.h"
 #include "../world/Map.h"
 #include "../world/Park.h"
-#include "../world/Scenery.h"
 #include "Viewport.h"
 
 #include <array>
 #include <cmath>
 #include <cstdarg>
 #include <cstdlib>
-#include <deque>
 #include <exception>
 #include <string>
-#include <thread>
 #include <vector>
 
 #ifndef DISABLE_TTF
@@ -1237,7 +1228,7 @@ static void ConsoleCommandOpen(InteractiveConsole& console, const arguments_t& a
 
 static void ConsoleCommandRemoveUnusedObjects(InteractiveConsole& console, [[maybe_unused]] const arguments_t& argv)
 {
-    int32_t result = EditorRemoveUnusedObjects();
+    int32_t result = Editor::RemoveUnusedObjects();
     console.WriteFormatLine("%d unused object entries have been removed.", result);
 }
 

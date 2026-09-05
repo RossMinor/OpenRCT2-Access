@@ -17,6 +17,7 @@
 #include "../drawing/ScrollingText.h"
 #include "../interface/Cursors.h"
 #include "../localisation/Language.h"
+#include "../world/Location.hpp"
 
 namespace OpenRCT2
 {
@@ -132,7 +133,9 @@ namespace OpenRCT2
             _legacyType.flags2 = Json::GetFlags<uint8_t>(
                 properties,
                 {
-                    { "isOpaque", WALL_SCENERY_2_IS_OPAQUE },
+                    { "isTransparent", WALL_SCENERY_2_IS_TRANSPARENT },
+                    // Deprecated because it did the opposite of what the name implied.
+                    { "isOpaque", WALL_SCENERY_2_IS_TRANSPARENT },
                     { "isAnimated", WALL_SCENERY_2_ANIMATED },
                 });
 

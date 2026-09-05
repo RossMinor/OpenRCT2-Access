@@ -13,7 +13,6 @@
 #include "../../GameState.h"
 #include "../../OpenRCT2.h"
 #include "../../core/Guard.hpp"
-#include "../../core/MemoryStream.h"
 #include "../../localisation/StringIds.h"
 #include "../../management/Finance.h"
 #include "../../world/ConstructionClearance.h"
@@ -33,6 +32,7 @@ namespace OpenRCT2::GameActions
         : _loc(location)
         , _pathType(pathType)
         , _entranceType(entranceType)
+        , _pathTypeIsLegacy(pathTypeIsLegacy)
     {
     }
 

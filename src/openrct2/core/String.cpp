@@ -8,12 +8,10 @@
  *****************************************************************************/
 
 #include "../Diagnostic.h"
-#include "../core/Guard.hpp"
 
 #include <cassert>
 #include <cctype>
 #include <cstring>
-#include <cwctype>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -22,10 +20,7 @@
 #ifndef _WIN32
     #if defined(__linux__) || defined(__sun)
         #include <alloca.h>
-    #else
-        #include <stdlib.h>
     #endif
-    #include <unicode/ucnv.h>
     #include <unicode/unistr.h>
     #include <unicode/utypes.h>
 #else
@@ -36,11 +31,9 @@
 #endif
 
 #include "String.hpp"
-#include "StringBuilder.h"
 #include "UTF8.h"
 
 #if defined(__unix__) || defined(__HAIKU__) || (defined(__APPLE__) && defined(__MACH__))
-    #include <strings.h>
     #define _stricmp(x, y) strcasecmp((x), (y))
 #endif
 
@@ -492,7 +485,7 @@ namespace OpenRCT2::String
             // current character.
             size_t newStringSize = (nextCh - 1) - firstNonWhitespace;
 
-#ifdef DEBUG
+#if DEBUG > 0
             size_t currentStringSize = sizeOf(str);
             Guard::Assert(newStringSize < currentStringSize, GUARD_LINE);
 #endif

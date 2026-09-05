@@ -669,7 +669,7 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t ground = surface->baseHeight;
         for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
         {
-            if (!el->isGhost() && el->getType() != TileElementType::Surface)
+            if (!el->isGhost() && el->getType() != TileElementType::surface)
             {
                 auto* path = el->asPath();
                 const bool sloped = path != nullptr && path->IsSloped();
@@ -4045,10 +4045,10 @@ namespace OpenRCT2::Ui::Accessibility
         {
             switch (el->getType())
             {
-                case TileElementType::Path:
-                case TileElementType::Track:
-                case TileElementType::Entrance:
-                case TileElementType::Banner:
+                case TileElementType::path:
+                case TileElementType::track:
+                case TileElementType::entrance:
+                case TileElementType::banner:
                     return true;
                 default: // Surface, small/large scenery and walls/fences are clearable, so they don't count.
                     break;

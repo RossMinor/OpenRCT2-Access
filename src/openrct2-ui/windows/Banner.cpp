@@ -34,6 +34,7 @@
 #include <openrct2/world/Banner.h>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/Scenery.h>
+#include <openrct2/world/TileElementsView.h>
 #include <openrct2/world/tile_element/BannerElement.h>
 #include <string>
 #include <vector>
@@ -117,24 +118,13 @@ namespace OpenRCT2::Ui::Windows
                 return nullptr;
             }
 
-            TileElement* tileElement = MapGetFirstElementAt(banner->position);
-            if (tileElement == nullptr)
+            for (auto* bannerElement : TileElementsView<BannerElement>(banner->position))
             {
-                return nullptr;
-            }
-
-            do
-            {
-                auto* bannerElement = tileElement->asBanner();
-                if (bannerElement == nullptr)
-                {
-                    continue;
-                }
                 if (bannerElement->GetIndex() == GetBannerIndex())
                 {
                     return bannerElement;
                 }
-            } while (!(tileElement++)->isLastForTile());
+            }
 
             return nullptr;
         }

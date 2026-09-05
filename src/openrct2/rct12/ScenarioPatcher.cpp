@@ -10,10 +10,12 @@
 #include "ScenarioPatcher.h"
 
 #include "../Context.h"
+#include "../Diagnostic.h"
 #include "../Game.h"
 #include "../PlatformEnvironment.h"
 #include "../actions/GameActionResult.h"
 #include "../actions/footpath/FootpathPlaceAction.h"
+#include "../actions/ride/RideSetStatusAction.h"
 #include "../core/File.h"
 #include "../core/Guard.hpp"
 #include "../core/Json.hpp"
@@ -27,6 +29,7 @@
 #include "../world/Footpath.h"
 #include "../world/Location.hpp"
 #include "../world/Map.h"
+#include "../world/TileElementsView.h"
 #include "../world/tile_element/EntranceElement.h"
 #include "../world/tile_element/PathElement.h"
 #include "../world/tile_element/Slope.h"
@@ -340,21 +343,13 @@ static void ApplyTrackTypeFixes(const json_t& trackTilesFixes)
 
         for (const auto& tile : coordinatesVector)
         {
-            auto* tileElement = MapGetFirstElementAt(tile);
-            if (tileElement == nullptr)
-                continue;
-
-            do
+            for (auto* trackElement : TileElementsView<TrackElement>(tile))
             {
-                if (tileElement->getType() != TileElementType::Track)
-                    continue;
-
-                auto* trackElement = tileElement->asTrack();
                 if (trackElement->GetTrackType() != fromTrackType)
                     continue;
 
                 trackElement->SetTrackType(destinationTrackType);
-            } while (!(tileElement++)->isLastForTile());
+            }
         }
     }
 }
@@ -362,11 +357,11 @@ static void ApplyTrackTypeFixes(const json_t& trackTilesFixes)
 static TileElementType toTileElementType(const u8string_view tileTypeString)
 {
     if (tileTypeString == "track")
-        return TileElementType::Track;
+        return TileElementType::track;
     else
     {
         Guard::Assert(false, "Unsupported tile type conversion");
-        return TileElementType::Track;
+        return TileElementType::track;
     }
 }
 
@@ -385,7 +380,7 @@ static void ApplyTileFixes(const json_t& scenarioPatch)
     else
     {
         auto tileType = toTileElementType(Json::GetString(tilesFixes[_typeKey]));
-        if (tileType == TileElementType::Track)
+        if (tileType == TileElementType::track)
         {
             ApplyTrackTypeFixes(tilesFixes);
         }
@@ -536,6 +531,24 @@ static void SwapRideEntranceAndExit(RideId rideId)
     }
 }
 
+static void OpenRide(RideId rideId)
+{
+    auto ride = GetRide(rideId);
+    if (ride == nullptr)
+    {
+        Guard::Assert(false, "Invalid Ride Id for OpenRide");
+        return;
+    }
+
+    auto rideOpenAction = GameActions::RideSetStatusAction(ride->id, RideStatus::open);
+    auto& gameState = getGameState();
+    auto result = rideOpenAction.Execute(gameState, gameState.park);
+    if (result.error != GameActions::Status::ok)
+    {
+        Guard::Assert(false, "Could not open ride %s", ride->getName().c_str());
+    }
+}
+
 static void ApplyRideFixes(const json_t& scenarioPatch)
 {
     if (!scenarioPatch.contains(_ridesKey))
@@ -581,6 +594,10 @@ static void ApplyRideFixes(const json_t& scenarioPatch)
         if (operation == "swap_entrance_exit")
         {
             SwapRideEntranceAndExit(rideId);
+        }
+        else if (operation == "open_ride")
+        {
+            OpenRide(rideId);
         }
         else
         {

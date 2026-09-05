@@ -11,10 +11,10 @@
 
 #include "../localisation/StringWithArgs.h"
 #include "ColourWithFlags.h"
+#include "Cursors.h"
 #include "ScrollArea.h"
 #include "Window.h"
 
-#include <list>
 #include <memory>
 #include <optional>
 #include <span>
@@ -22,12 +22,6 @@
 #include <vector>
 
 enum class TileInspectorPage : int16_t;
-
-struct ResearchItem;
-namespace OpenRCT2
-{
-    struct RCTObjectEntry;
-}
 
 #ifdef __WARN_SUGGEST_FINAL_METHODS__
     #pragma GCC diagnostic push
@@ -66,9 +60,9 @@ namespace OpenRCT2
 
         template<typename T>
         constexpr explicit Focus(T newValue, ZoomLevel newZoom = {})
+            : zoom(newZoom)
+            , data(newValue)
         {
-            data = newValue;
-            zoom = newZoom;
         }
 
         CoordsXYZ GetPos() const;
