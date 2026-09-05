@@ -20,7 +20,7 @@
 // GitHub repo; if they differ it reports that an update is available. Forgetting to
 // bump it means a shipped build thinks the release it came from is a newer version and
 // nags on every launch.
-#define kAccessVersion "0.98"
+#define kAccessVersion "0.99"
 #define kAccessVersionTag "v" kAccessVersion
 
 // The GitHub repo the update checker queries for the latest release.
