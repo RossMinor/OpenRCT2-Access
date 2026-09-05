@@ -1150,13 +1150,15 @@ namespace OpenRCT2::Ui::Windows
             bank,
             chain,
             construct,
-            // No demolish field: the vanilla Demolish button can only remove the piece at the build
-            // focus, so undoing a mistake in the middle of a ride meant walking the focus back
-            // through every piece after it. The Delete key removes the piece under the map cursor
-            // instead (axDeleteTrackAt), which reaches any piece directly.
-            back,
-            forward,
             station, // place station entrance / exit
+            // Three of the window's buttons deliberately have no field here, because the map cursor
+            // reaches what they do more directly. Demolish can only remove the piece at the build
+            // focus, so undoing a mistake mid-ride meant walking the focus back through every piece
+            // after it - Delete removes the piece under the cursor instead. Previous and Next
+            // Section step the build focus one piece at a time along existing track, which Insert
+            // does in one press by taking the focus straight to the track under the cursor. The
+            // buttons themselves stay in the window untouched, for the mouse and for the game's own
+            // keyboard shortcuts.
         };
 
         struct AxOption
@@ -1227,10 +1229,6 @@ namespace OpenRCT2::Ui::Windows
                 fields.push_back(AxField::chain);
             if (axWidgetPresent(WIDX_CONSTRUCT))
                 fields.push_back(AxField::construct);
-            if (axWidgetPresent(WIDX_PREVIOUS_SECTION))
-                fields.push_back(AxField::back);
-            if (axWidgetPresent(WIDX_NEXT_SECTION))
-                fields.push_back(AxField::forward);
             if (axWidgetPresent(WIDX_ENTRANCE))
                 fields.push_back(AxField::station);
             return fields;
@@ -1597,10 +1595,6 @@ namespace OpenRCT2::Ui::Windows
                         + (widgetIsDisabled(*this, WIDX_CHAIN_LIFT) ? ", locked" : "");
                 case AxField::construct:
                     return "Construct. " + axComposedPiece();
-                case AxField::back:
-                    return "Move back one section";
-                case AxField::forward:
-                    return "Move forward one section";
                 case AxField::station:
                 {
                     auto* ride = GetRide(_currentRideIndex);
@@ -2053,16 +2047,6 @@ namespace OpenRCT2::Ui::Windows
                 case AxField::construct:
                     axConstruct();
                     break;
-                // Previous / Next Section are the vanilla buttons that move the build position along
-                // the existing track; they just announce the new build state.
-                case AxField::back:
-                    onMouseDown(WIDX_PREVIOUS_SECTION);
-                    Accessibility::ScreenReaderSpeak("Back. " + axBuildStateText());
-                    break;
-                case AxField::forward:
-                    onMouseDown(WIDX_NEXT_SECTION);
-                    Accessibility::ScreenReaderSpeak("Forward. " + axBuildStateText());
-                    break;
                 default:
                     break; // selectors change via Ctrl+Left/Right, not activate
             }
@@ -2105,12 +2089,6 @@ namespace OpenRCT2::Ui::Windows
                     break;
                 case AxField::construct:
                     w = WIDX_CONSTRUCT;
-                    break;
-                case AxField::back:
-                    w = WIDX_PREVIOUS_SECTION;
-                    break;
-                case AxField::forward:
-                    w = WIDX_NEXT_SECTION;
                     break;
                 case AxField::station:
                     w = WIDX_ENTRANCE;
