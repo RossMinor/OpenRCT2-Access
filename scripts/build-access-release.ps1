@@ -13,7 +13,21 @@
 [CmdletBinding()]
 param(
     # Where to write the zip. Defaults to the repository's artifacts folder.
-    [string] $OutputDir
+    [string] $OutputDir,
+
+    # Also include the whole built data\ tree, making the package a working standalone game as well
+    # as an installer. This exists for ONE release - the first installer-shaped one.
+    #
+    # Every already-released build updates itself by blind-copying the release zip over its own
+    # folder (the old FinishInstall did "xcopy /e /y staging\* installDir\"). Those builds are
+    # standalone portable copies, so an installer-only package would give them a new executable on
+    # top of their older data\ - mismatched g2.dat, broken graphics, for players who cannot see the
+    # result. Shipping data\ alongside means that blind copy lands a self-consistent set instead.
+    #
+    # Builds from the first installer release onward install through the installer and version-check
+    # properly, so once no one is plausibly still running an older build this switch should stop
+    # being used and packages go back to ~8 MB.
+    [switch] $IncludeGameData
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,10 +69,38 @@ $files[(Join-Path $repo 'PRIVACY.md')]                       = 'PRIVACY.md'
 # Prism is MPL-2.0 and we redistribute prism.dll, so its licence has to travel with it.
 $files[(Join-Path $repo 'src\openrct2-ui\accessibility\prism\LICENSE-MPL-2.0.txt')] = 'LICENSE-Prism-MPL-2.0.txt'
 
-# The mod's own sound cues - the only game data the package carries. The folder's README is
+# The mod's own sound cues - normally the only game data the package carries. The folder's README is
 # developer documentation and would otherwise be installed into the player's data directory.
 foreach ($w in Get-ChildItem (Join-Path $repo 'data\sounds\access') -Filter *.wav) {
     $files[$w.FullName] = "data/sounds/access/$($w.Name)"
+}
+
+if ($IncludeGameData) {
+    # The built data tree, so a blind copy of this package over an older standalone build produces a
+    # matching executable and data set. portable-data is excluded: it holds the player's own config
+    # and saved parks, and overwriting those would be the worst kind of "upgrade".
+    $dataRoot = Join-Path $bin 'data'
+    if (-not (Test-Path -LiteralPath $dataRoot)) { Fail "-IncludeGameData needs a built data tree at $dataRoot." }
+    $prefix = (Resolve-Path -LiteralPath $dataRoot).Path.Length + 1
+
+    # Dedupe on the ZIP ENTRY NAME, not the source path. The mod's cues are staged above from the
+    # repository while bin\data holds build-output copies of the same files: different paths, same
+    # destination. Keyed by path they would both be added and the zip would carry two entries called
+    # data/sounds/access/DirtStep1.wav. Keeping the repository copy also drops anything stale that
+    # is sitting in bin\data but no longer in the repository.
+    $used = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($n in $files.Values) { [void] $used.Add($n) }
+
+    foreach ($f in Get-ChildItem $dataRoot -Recurse -File) {
+        $rel = 'data/' + $f.FullName.Substring($prefix).Replace([char]92, [char]47)
+        # Skip the mod's sound folder wholesale rather than relying on the name check. bin\data is
+        # build output that accumulates: it still holds a misspelled Vommit.wav no longer in the
+        # repository, and the folder's developer README, neither of which belongs in a player's
+        # install. The repository copies staged above are the authoritative set.
+        if ($rel.StartsWith('data/sounds/access/')) { continue }
+        if ($used.Add($rel)) { $files[$f.FullName] = $rel }
+    }
+    Write-Host '  including the full game data tree (migration package)'
 }
 
 foreach ($src in $files.Keys) {
@@ -97,6 +139,16 @@ foreach ($required in 'openrct2.exe', 'prism.dll', 'Install-OpenRCT2Access.bat',
 }
 if (($names | Where-Object { $_ -like 'data/sounds/access/*' }).Count -lt 1) { $problems += 'no sound cues' }
 if ($names | Where-Object { $_ -like '*.pdb' -or $_ -like '*.lib' -or $_ -like '*portable-data*' }) { $problems += 'development files leaked in' }
+if (($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { $problems += 'duplicate entry names' }
+if ($IncludeGameData) {
+    # A migration package is only useful to an old build if the data it copies actually matches the
+    # executable beside it, so check the files that pair with the engine rather than trusting a count.
+    foreach ($required in 'data/g2.dat', 'data/fonts.dat', 'data/tracks.dat') {
+        if ($names -notcontains $required) { $problems += "missing $required (needed for the migration package)" }
+    }
+    if (($names | Where-Object { $_ -like 'data/language/*' }).Count -lt 1) { $problems += 'no language files' }
+    if (($names | Where-Object { $_ -like 'data/object/*' }).Count -lt 1) { $problems += 'no object data' }
+}
 
 if ($problems.Count -gt 0) {
     Write-Host 'Package FAILED verification:'
