@@ -188,15 +188,15 @@ namespace OpenRCT2::Ui::Accessibility
         return GameActions::Query(&query, getGameState()).error;
     }
 
-    // Finds a base height where the whole footprint fits at `origin`. Starts at ground level and
-    // searches upward, mirroring the construction tool. Returns the height, or nullopt if none fits.
-    static std::optional<int32_t> FindFootprintBaseZ(const CoordsXY& origin)
+    // Finds a base height where the whole footprint fits at `origin`, searching upward from `startZ`
+    // and mirroring the construction tool. Returns the height, or nullopt if none fits.
+    //
+    // The engine's own query is the authority at every step. Nothing here decides for itself whether
+    // an obstruction matters - a flat ride can legitimately stand on supports over a path - so the
+    // answer comes from a real TrackPlaceAction at each height rather than from inspecting tiles.
+    static std::optional<int32_t> FindFootprintBaseZ(const CoordsXY& origin, int32_t startZ)
     {
-        auto ground = FootprintGroundZ(origin);
-        if (!ground.has_value())
-            return std::nullopt;
-
-        int32_t baseZ = *ground;
+        int32_t baseZ = startZ;
         for (int32_t i = 0; i < 7; i++, baseZ += kCoordsZStep)
         {
             const auto err = QueryFootprintAt(origin, baseZ);
@@ -435,35 +435,38 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
 
-        const bool hardBlocker = FootprintHasHardBlocker(origin);
-        const auto groundErr = QueryFootprintAt(origin, *ground);
+        // Build from the player's working elevation, not from the terrain. Home and End exist so a
+        // ride can be put above something already on the ground, and starting at ground level would
+        // throw that away - which is what used to make a path underneath refuse the build no matter
+        // how high the cursor was raised. Clamped to the ground because the footprint can span
+        // higher terrain than the cursor tile itself.
+        const int32_t startZ = std::max(*ground, GetCursorWorkingZ());
 
-        // Case A: it already builds at ground level. Place it, then sweep any coexisting scenery so
-        // nothing is left under it.
-        if (groundErr == GameActions::Status::ok)
+        // Does it build exactly where the player asked?
+        if (QueryFootprintAt(origin, startZ) == GameActions::Status::ok)
         {
-            ExecuteFootprintPlace(origin, *ground);
+            ExecuteFootprintPlace(origin, startZ);
             return;
         }
 
-        // Case B: blocked by something other than scenery (a path, wall, fence or another ride).
-        // Clearing scenery would not make it buildable, so report the reason and leave scenery alone.
-        if (hardBlocker)
-        {
-            AnnounceFootprintError(origin, *ground);
-            return;
-        }
+        // Clearing only helps when scenery is what is in the way; against a path, wall or another
+        // ride it would bulldoze the player's trees for a placement that fails anyway. Doing it here
+        // rather than after the height search also keeps a ride sitting down on the ground instead
+        // of floating above the bushes it could have removed.
+        if (!FootprintHasHardBlocker(origin))
+            ClearFootprintScenery(origin);
 
-        // Case C: only scenery (or uneven terrain) is in the way. Clear the footprint scenery first
-        // so the ride sits at ground level instead of floating above it, then build (raising it as
-        // the construction tool would if the terrain is uneven).
-        ClearFootprintScenery(origin);
-        if (auto baseZ = FindFootprintBaseZ(origin); baseZ.has_value())
+        // Then let the engine decide, height by height. An unclearable obstruction is not a refusal:
+        // the ride may well stand above it on supports, and only the engine can say.
+        if (auto baseZ = FindFootprintBaseZ(origin, startZ); baseZ.has_value())
         {
             ExecuteFootprintPlace(origin, *baseZ);
             return;
         }
-        AnnounceFootprintError(origin, *ground);
+
+        // Report against the height the player actually chose, so a refusal at elevation 6 does not
+        // describe something lying on the ground far below the cursor.
+        AnnounceFootprintError(origin, startZ);
     }
 
     // If `tile` is a valid square to place an entrance/exit on, returns the direction from that

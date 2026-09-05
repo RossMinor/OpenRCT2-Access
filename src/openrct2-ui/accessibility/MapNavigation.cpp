@@ -906,6 +906,11 @@ namespace OpenRCT2::Ui::Accessibility
         _lastTileDescription = GetTileDescription(_cursor);
     }
 
+    int32_t GetCursorWorkingZ()
+    {
+        return TileCoordsXYZ(_cursor.x, _cursor.y, _scanHeight).ToCoordsXYZ().z;
+    }
+
     std::optional<ScreenCoordsXY> GetMapCursorScreenPos()
     {
         if (!_initialised)

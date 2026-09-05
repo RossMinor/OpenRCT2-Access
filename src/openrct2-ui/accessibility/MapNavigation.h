@@ -89,6 +89,12 @@ namespace OpenRCT2::Ui::Accessibility
     // scenery and walls/fences do not count, as the clear-scenery tool removes those automatically.
     bool TileHasNonSceneryBlocker(const TileCoordsXY& tile);
 
+    // The map cursor's working elevation as a world Z - the height Home and End raise the focus to,
+    // equal to the ground when the cursor has not been raised. Anything that builds at the cursor
+    // should start its height search here rather than at the terrain, or Home and End have no effect
+    // on it and the player cannot build above a path, a bridge or anything else in the way.
+    int32_t GetCursorWorkingZ();
+
     // The screen position of the keyboard map cursor's tile (the viewport centre, since the cursor
     // keeps the view centred on itself). Ride construction feeds this to the build tool so pieces
     // are placed where the map cursor is, not where the mouse is. Empty if the cursor isn't ready.
