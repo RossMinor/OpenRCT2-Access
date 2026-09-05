@@ -21,17 +21,34 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 - Windows.
 - A screen reader. The mod speaks through [Prism](https://github.com/ethindp/prism), a library that hands the mod's speech to whichever reader you already run, so NVDA, JAWS, Narrator, System Access, ZDSR and others all work. [NVDA](https://www.nvaccess.org/download/) is free and is the one the mod is developed and tested against, so it is still the safest choice.
 - The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/).
+- [OpenRCT2](https://openrct2.io/download) itself. The mod installs into a copy of OpenRCT2 that you already have, rather than bringing its own.
 
 ---
 
 ## Installing and updating
 
+The mod installs itself into your existing OpenRCT2, so your saved parks, settings and scenarios stay exactly where they are and you keep playing the same copy of the game you already had.
+
 1. Make sure your screen reader is installed and running.
-2. Download the latest release of the mod under the **Releases** heading.
-3. Launch the game from Steam to generate any needed files, then close the game. It will likely ask you if you would like to install Direct Play, which you want to do.
-4. Unzip the mod folder anywhere on your computer.
-5. Run OpenRCT2Access.exe in the folder and the game will be accessible. **Note:** You will need to launch the game with this method for the time being.
-6. The mod has an updater, so you will be alerted when there's a new update.
+2. Install [OpenRCT2](https://openrct2.io/download) if you do not already have it.
+3. Launch Rollercoaster Tycoon 2 from Steam once to generate any needed files, then close it. It will likely ask you if you would like to install Direct Play, which you want to do.
+4. Download the latest release of the mod under the **Releases** heading. Each release names the OpenRCT2 version it is for, so pick the one matching yours.
+5. Unzip the download somewhere that is **not** your OpenRCT2 folder. Your Downloads folder is fine.
+6. Close OpenRCT2 if it is running.
+7. Run **Install-OpenRCT2Access.bat**. It finds your OpenRCT2, tells you exactly what it is going to change, and asks you to type `yes` before it touches anything.
+8. Launch OpenRCT2 the way you normally do. It will now be accessible.
+
+If it says it cannot write to the folder, close the window, then right-click **Install-OpenRCT2Access.bat** and choose **Run as administrator**. That happens when OpenRCT2 is installed under Program Files.
+
+To remove the mod, run **Uninstall-OpenRCT2Access.bat**. It puts your original OpenRCT2 back exactly as it was and deletes everything the installer added.
+
+### About versions
+
+Each mod release works with one specific version of OpenRCT2, and the installer will refuse to install onto any other. This is not fussiness: the game's graphics file is checked against a list built into the program itself, so mixing a mod build with a different version of OpenRCT2 gives you missing or wrong graphics instead of a clear error. If the refusal happens, it names both versions so you know which download you need.
+
+Because of this, **updating OpenRCT2 will remove the mod** - the update replaces the program file the mod lives in. If speech stops working after OpenRCT2 updates itself, download the mod release for your new version and run the installer again.
+
+The mod also has its own updater and will tell you in-game when a new version is out.
 
 ---
 
