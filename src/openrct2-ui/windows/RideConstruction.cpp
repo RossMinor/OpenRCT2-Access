@@ -1333,16 +1333,27 @@ namespace OpenRCT2::Ui::Windows
 
         struct AxSpecialOption
         {
-            int32_t index; // index into _specialElementDropdownState.Elements, for onDropdown
+            int32_t index; // index into _specialElementDropdownState.Elements; kAxSpecialNone = none
             std::string label;
         };
 
-        // The selectable entries, in dropdown order. Separators are layout rather than pieces, and a
-        // disabled entry is one the dropdown greys out because it does not meet the track we are
-        // building from - neither can be chosen, so neither is offered.
+        // The synthetic first entry: no special piece at all. The vanilla dropdown has no such row,
+        // because for a mouse player the curve buttons ARE the way out - the curve and the special
+        // piece are one setting (_currentlySelectedTrack holds either a curve or a track type), so
+        // clicking any curve clears the type. None of that is visible from a linear keyboard menu,
+        // where Special piece reads as its own independent control with no way back. And since the
+        // game locks Slope, Banking and Chain lift for as long as a special piece is selected, being
+        // unable to clear it leaves three further controls dead with nothing to explain them.
+        static constexpr int32_t kAxSpecialNone = -1;
+
+        // The selectable entries: "none" first, then the dropdown's own in its order. Separators are
+        // layout rather than pieces, and a disabled entry is one the dropdown greys out because it
+        // does not meet the track we are building from - neither can be chosen, so neither is
+        // offered.
         std::vector<AxSpecialOption> axSpecialOptions() const
         {
             std::vector<AxSpecialOption> out;
+            out.push_back({ kAxSpecialNone, "none" });
             const auto& elements = _specialElementDropdownState.Elements;
             for (int32_t i = 0; i < static_cast<int32_t>(elements.size()); i++)
             {
@@ -1353,43 +1364,102 @@ namespace OpenRCT2::Ui::Windows
             return out;
         }
 
-        // Which entry is selected now, or -1 when the player is on ordinary curve/slope track.
+        // Which entry is selected now. Ordinary curve/slope track is entry 0, "none".
         int32_t axCurrentSpecialOption(const std::vector<AxSpecialOption>& opts) const
         {
             if (!_currentlySelectedTrack.isTrackType)
-                return -1;
+                return 0;
             const auto& elements = _specialElementDropdownState.Elements;
             for (int32_t i = 0; i < static_cast<int32_t>(opts.size()); i++)
-                if (elements[opts[i].index].TrackType == _currentlySelectedTrack.trackType)
+                if (opts[i].index != kAxSpecialNone
+                    && elements[opts[i].index].TrackType == _currentlySelectedTrack.trackType)
                     return i;
-            return -1;
+            return 0;
         }
 
-        // Ctrl+Left/Right steps through the special pieces. Selection goes through the window's own
-        // onDropdown, so it lands exactly as a mouse click on that dropdown entry would - including
-        // the per-piece fixups it applies (clearing bank for a vertical loop, and so on).
-        //
-        // There is no "none" entry to step back to, matching the dropdown, which has none either.
-        // Cycling the Curve control off a special piece is how a player returns to ordinary track,
-        // so the field label says so.
+        // Leaves special-piece mode the way a mouse player does: by pressing a curve button, whose
+        // own handler clears the track type and so re-enables Slope, Banking and Chain lift.
+        // Straight is the natural landing place; on a ride with no straight piece, any curve it does
+        // have clears the type just as well.
+        bool axClearSpecialPiece()
+        {
+            const auto curves = axAvailableOptions(axCurveOptions());
+            for (const auto& o : curves)
+            {
+                if (o.value == static_cast<uint8_t>(TrackCurve::none) && !widgetIsDisabled(*this, o.widget))
+                {
+                    onMouseDown(o.widget);
+                    return true;
+                }
+            }
+            for (const auto& o : curves)
+            {
+                if (!widgetIsDisabled(*this, o.widget))
+                {
+                    onMouseDown(o.widget);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Ctrl+Left/Right steps through the special pieces. Selecting one goes through the window's
+        // own onDropdown, so it lands exactly as a mouse click on that dropdown entry would -
+        // including the per-piece fixups it applies (clearing bank for a vertical loop, and so on).
         void axCycleSpecial(int32_t delta)
         {
             const auto opts = axSpecialOptions();
-            if (opts.empty())
+            if (opts.size() <= 1) // "none" alone
             {
                 Accessibility::ScreenReaderSpeak("No special pieces can be built from here");
                 return;
             }
 
-            // With nothing selected, start just outside the list so the first step enters it from
-            // whichever end the player is heading towards.
             const int32_t n = static_cast<int32_t>(opts.size());
             const int32_t current = axCurrentSpecialOption(opts);
-            const int32_t start = (current < 0) ? (delta > 0 ? -1 : n) : current;
-            const int32_t idx = (((start + delta) % n) + n) % n;
+            const int32_t idx = (((current + delta) % n) + n) % n;
+
+            if (opts[idx].index == kAxSpecialNone)
+            {
+                if (!axClearSpecialPiece())
+                {
+                    Accessibility::ScreenReaderSpeak("Cannot clear the special piece here");
+                    return;
+                }
+                // Say what the curve fell back to, so the player knows what they are now building.
+                Accessibility::ScreenReaderSpeak("No special piece. " + axComposedPiece());
+                return;
+            }
 
             onDropdown(WIDX_SPECIAL_TRACK_DROPDOWN, opts[idx].index);
             Accessibility::ScreenReaderSpeak(opts[idx].label + ". " + axValidityAndCost());
+        }
+
+        // Why a control cannot be changed right now, or empty when there is no reason we can name.
+        // A sighted player sees the greyed-out buttons and works this out at a glance; the keyboard
+        // player used to hear only "no other option available", which says nothing about the cause
+        // or the way out. By far the commonest cause is a special piece being selected: slope,
+        // banking and the chain lift are all properties of the piece itself, so the game locks them
+        // for as long as one is chosen.
+        std::string axLockReason(const char* controlName) const
+        {
+            if (_currentlySelectedTrack.isTrackType)
+            {
+                return std::string(controlName) + " is fixed by the "
+                    + axSpecialPieceName(_currentlySelectedTrack.trackType)
+                    + " special piece. Set Special piece to none to change it";
+            }
+            return {};
+        }
+
+        // ", locked" when a control has no option that can be chosen, so landing on it says up front
+        // that it cannot be changed instead of leaving the player to find that out by trying.
+        std::string axLockedSuffix(const std::vector<AxOption>& opts) const
+        {
+            for (const auto& o : opts)
+                if (axWidgetPresent(o.widget) && !widgetIsDisabled(*this, o.widget))
+                    return {};
+            return ", locked";
         }
 
         std::string axCostText(money64 cost) const
@@ -1475,27 +1545,29 @@ namespace OpenRCT2::Ui::Windows
                 }
                 case AxField::special:
                 {
+                    // The count excludes the synthetic "none", so it reads as the number of pieces
+                    // there are to choose from rather than the length of the list.
                     const auto opts = axSpecialOptions();
-                    const std::string count = std::to_string(opts.size()) + " available";
-                    if (_currentlySelectedTrack.isTrackType)
-                        return "Special piece, " + axSpecialPieceName(_currentlySelectedTrack.trackType) + ", " + count;
-                    // Say how to get back out, since this control has no "none" of its own.
-                    return "Special piece, none selected, " + count + ". Set the curve to leave a special piece";
+                    const std::string value = _currentlySelectedTrack.isTrackType
+                        ? axSpecialPieceName(_currentlySelectedTrack.trackType)
+                        : std::string("none");
+                    return "Special piece, " + value + ", " + std::to_string(opts.size() - 1) + " available";
                 }
                 case AxField::slope:
                 {
                     const auto opts = axSlopeOptions();
                     const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackPitchEnd));
-                    return std::string("Slope, ") + ((idx >= 0) ? opts[idx].label : "level");
+                    return std::string("Slope, ") + ((idx >= 0) ? opts[idx].label : "level") + axLockedSuffix(opts);
                 }
                 case AxField::bank:
                 {
                     const auto opts = axBankOptions();
                     const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentTrackRollEnd));
-                    return std::string("Banking, ") + ((idx >= 0) ? opts[idx].label : "no bank");
+                    return std::string("Banking, ") + ((idx >= 0) ? opts[idx].label : "no bank") + axLockedSuffix(opts);
                 }
                 case AxField::chain:
-                    return std::string("Chain lift, ") + (_currentTrackHasLiftHill ? "on" : "off");
+                    return std::string("Chain lift, ") + (_currentTrackHasLiftHill ? "on" : "off")
+                        + (widgetIsDisabled(*this, WIDX_CHAIN_LIFT) ? ", locked" : "");
                 case AxField::construct:
                     return "Construct. " + axComposedPiece();
                 case AxField::back:
@@ -1547,7 +1619,7 @@ namespace OpenRCT2::Ui::Windows
             // in the wrap-around below.
             if (opts.empty())
             {
-                Accessibility::ScreenReaderSpeak("No other option available");
+                Accessibility::ScreenReaderSpeak(axCycleBlockedText(field));
                 return;
             }
 
@@ -1571,11 +1643,32 @@ namespace OpenRCT2::Ui::Windows
                     return;
                 }
             }
-            Accessibility::ScreenReaderSpeak("No other option available");
+            Accessibility::ScreenReaderSpeak(axCycleBlockedText(field));
+        }
+
+        // What to say when a control has nothing that can be selected: the reason if we can name
+        // one, and the bare fact otherwise.
+        std::string axCycleBlockedText(AxField field) const
+        {
+            const char* name = (field == AxField::slope) ? "Slope" : (field == AxField::bank) ? "Banking" : nullptr;
+            if (name != nullptr)
+            {
+                if (std::string reason = axLockReason(name); !reason.empty())
+                    return reason;
+            }
+            return "No other option available";
         }
 
         void axToggleChain()
         {
+            // Pressing a disabled button does nothing, so without this the readout would report the
+            // unchanged state as though the toggle had worked.
+            if (widgetIsDisabled(*this, WIDX_CHAIN_LIFT))
+            {
+                std::string reason = axLockReason("Chain lift");
+                Accessibility::ScreenReaderSpeak(reason.empty() ? "Chain lift cannot be changed here" : reason);
+                return;
+            }
             onMouseDown(WIDX_CHAIN_LIFT);
             Accessibility::ScreenReaderSpeak(
                 std::string("Chain lift ") + (_currentTrackHasLiftHill ? "on" : "off") + ". " + axValidityAndCost());
