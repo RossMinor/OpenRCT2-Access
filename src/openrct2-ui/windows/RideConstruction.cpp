@@ -1552,8 +1552,20 @@ namespace OpenRCT2::Ui::Windows
                         + axDirectionName(_currentTrackPieceDirection) + ". Left and right rotate it";
                 case AxField::curve:
                 {
+                    // The curve and the whole-piece selection share one slot (_currentlySelectedTrack
+                    // holds either a TrackCurve or a TrackElemType), so while a piece holds it there
+                    // is simply no curve to report. Say that, and nothing more: this control's job
+                    // is the curve, and naming the piece here only made it sound as though the piece
+                    // were the curve's value. Which piece is selected is the Special piece control's
+                    // business, and Construct and Ctrl+B both name it too.
+                    //
+                    // This is not a rare state. The builder opens in it: RideInitialiseConstruction
+                    // Window seeds the slot with the ride's StartTrackPiece, which for every tracked
+                    // ride is the station platform - so the very first read of this control hits it,
+                    // and it clears as soon as the curve is cycled. "not set" rather than "none",
+                    // because none is already the internal name of the straight piece.
                     if (_currentlySelectedTrack.isTrackType)
-                        return "Curve, special piece";
+                        return "Curve, not set";
                     const auto opts = axCurveOptions();
                     const int32_t idx = axCurrentOption(opts, static_cast<uint8_t>(_currentlySelectedTrack.curve));
                     return std::string("Curve, ") + ((idx >= 0) ? opts[idx].label : "straight");
