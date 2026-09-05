@@ -2,11 +2,12 @@
 
 **A blind-accessibility mod for [OpenRCT2](https://github.com/OpenRCT2/OpenRCT2).**
 
-OpenRCT2-Access is a fork of OpenRCT2 that adds screen-reader support and
-full keyboard control, so blind and low-vision players can play
-Rollercoaster Tycoon 2 without a mouse or sight. It speaks the interface
-through the **NVDA** screen reader and lets you navigate the game's menus,
-windows, and map entirely from the keyboard.
+OpenRCT2-Access adds screen-reader support and full keyboard control to
+OpenRCT2, so blind and low-vision players can play Rollercoaster Tycoon 2
+without a mouse or sight. It speaks the interface through whichever screen
+reader you already use and lets you navigate the game's menus, windows, and
+map entirely from the keyboard. It installs into a copy of OpenRCT2 you
+already have.
 
 ## Important Note About This Page
 
