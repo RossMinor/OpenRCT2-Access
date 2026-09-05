@@ -258,7 +258,15 @@ namespace OpenRCT2::Ui::Windows
         u8string _brakeSpeedText{};
 
         // Accessibility: keyboard build menu, driven by Ctrl+arrows from the map-navigation handler.
-        int32_t _accessFieldIndex = -1;  // focused build field (index into axBuildFields), -1 = none
+        // The focused build field, held as the AxField value itself rather than as a position in the
+        // field list (-1 = nothing focused). The list changes shape as building progresses: the
+        // Direction control exists only while a ride's first piece is being positioned, so it
+        // vanishes the moment that piece is built and every field after it shifts up one. Storing a
+        // position meant focus silently slid onto the neighbouring control at exactly the moment the
+        // player was most likely to press Ctrl+Enter again - aiming at Construct and getting the
+        // station entrance. Stored as an int so this declaration does not need AxField, which is
+        // declared further down with the rest of the accessibility code.
+        int32_t _accessField = -1;
         bool _accessPendingExit = false; // Escape pressed once; a second Escape confirms leaving
 
     public:
@@ -1234,6 +1242,20 @@ namespace OpenRCT2::Ui::Windows
             return fields;
         }
 
+        // Where the focused field sits in the list as it stands right now, or -1 when nothing has
+        // focus or the focused control is no longer offered. Everything reads focus through here, so
+        // a list that has changed shape underneath the player can never point at the wrong control -
+        // at worst it reports no focus, which the callers already handle.
+        int32_t axFocusIndex(const std::vector<AxField>& fields) const
+        {
+            if (_accessField < 0)
+                return -1;
+            for (int32_t i = 0; i < static_cast<int32_t>(fields.size()); i++)
+                if (static_cast<int32_t>(fields[i]) == _accessField)
+                    return i;
+            return -1;
+        }
+
         static std::vector<AxOption> axCurveOptions()
         {
             return {
@@ -2032,6 +2054,19 @@ namespace OpenRCT2::Ui::Windows
             }
 
             onToolDown(WIDX_ENTRANCE, *screenPos); // place it; the callback speaks the result
+
+            // Leave entrance/exit mode straight away rather than camping in it. Vanilla keeps the
+            // tool armed so a mouse player can click entrance then exit in one go, but that mode
+            // hides the Construct button - so from the keyboard, where each placement is its own
+            // deliberate menu action, staying in it stranded a player who wanted only one, or who
+            // reached this control by accident, until BOTH had been placed.
+            //
+            // Cancelling the tool is the same exit a mouse player gets by clicking the Entrance
+            // button a second time: onUpdate sees no entrance/exit tool active and restores
+            // gRideEntranceExitPlacePreviousRideConstructionState on the next frame. It is safe from
+            // here because this control only exists once the ride has a station, which means the
+            // state we came from is never Place - the one state that needs a tool to stay alive.
+            ToolCancel();
         }
 
         void axActivate(AxField field)
@@ -2055,7 +2090,8 @@ namespace OpenRCT2::Ui::Windows
         std::optional<ScreenRect> getAccessibilityFocusRect() override
         {
             const auto fields = axBuildFields();
-            if (_accessFieldIndex < 0 || _accessFieldIndex >= static_cast<int32_t>(fields.size()))
+            const int32_t focusIdx = axFocusIndex(fields);
+            if (focusIdx < 0)
                 return std::nullopt;
 
             // The curve/slope/bank fields highlight their currently selected option button.
@@ -2067,7 +2103,7 @@ namespace OpenRCT2::Ui::Windows
             };
 
             WidgetIndex w = WIDX_CONSTRUCT;
-            switch (fields[_accessFieldIndex])
+            switch (fields[focusIdx])
             {
                 case AxField::direction:
                     w = WIDX_ROTATE;
@@ -2134,22 +2170,24 @@ namespace OpenRCT2::Ui::Windows
                     }
                     const int32_t n = static_cast<int32_t>(fields.size());
                     const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
-                    _accessFieldIndex = (_accessFieldIndex < 0) ? (delta > 0 ? 0 : n - 1)
-                                                                : (_accessFieldIndex + delta + n) % n;
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(fields[_accessFieldIndex]));
+                    const int32_t focusIdx = axFocusIndex(fields);
+                    const int32_t next = (focusIdx < 0) ? (delta > 0 ? 0 : n - 1) : (focusIdx + delta + n) % n;
+                    _accessField = static_cast<int32_t>(fields[next]);
+                    Accessibility::ScreenReaderSpeak(axFieldLabel(fields[next]));
                     return true;
                 }
 
                 case AccessibilityAction::moveLeft:
                 case AccessibilityAction::moveRight:
                 {
-                    if (_accessFieldIndex < 0 || _accessFieldIndex >= static_cast<int32_t>(fields.size()))
+                    const int32_t focusIdx = axFocusIndex(fields);
+                    if (focusIdx < 0)
                     {
                         Accessibility::ScreenReaderSpeak("Press Control up or down to choose a setting first");
                         return true;
                     }
                     const int32_t delta = (action == AccessibilityAction::moveRight) ? 1 : -1;
-                    const AxField f = fields[_accessFieldIndex];
+                    const AxField f = fields[focusIdx];
                     if (f == AxField::direction)
                         axRotate(delta);
                     else if (f == AxField::curve || f == AxField::slope || f == AxField::bank)
@@ -2164,8 +2202,8 @@ namespace OpenRCT2::Ui::Windows
                 }
 
                 case AccessibilityAction::activate:
-                    if (_accessFieldIndex >= 0 && _accessFieldIndex < static_cast<int32_t>(fields.size()))
-                        axActivate(fields[_accessFieldIndex]);
+                    if (const int32_t focusIdx = axFocusIndex(fields); focusIdx >= 0)
+                        axActivate(fields[focusIdx]);
                     return true;
 
                 case AccessibilityAction::announce: // Ctrl+B
@@ -3755,7 +3793,7 @@ namespace OpenRCT2::Ui::Windows
                         std::string spoken = placingExit ? "Exit placed" : "Entrance placed";
                         spoken += Accessibility::DescribeEntranceExitConnection(placed);
                         if (!placingExit && !RideAreAllPossibleEntrancesAndExitsBuilt(*currentRide).Successful)
-                            spoken += ". Now place the exit.";
+                            spoken += ". Exit still to place.";
                         Accessibility::ScreenReaderSpeak(spoken);
                     }
                     if (currentRide != nullptr && RideAreAllPossibleEntrancesAndExitsBuilt(*currentRide).Successful)
