@@ -22,7 +22,12 @@ param(
     [switch] $Uninstall,
 
     # Answer yes to the confirmation prompt. For scripted use; a person should not need it.
-    [switch] $Yes
+    [switch] $Yes,
+
+    # Skip the "Press Enter to close" at the end. Required when something else is driving this
+    # script - the in-game updater runs it from a background window where a prompt nobody can see
+    # would hang the update forever.
+    [switch] $NoPause
 )
 
 $ErrorActionPreference = 'Stop'
@@ -342,5 +347,5 @@ try {
 }
 
 Write-Host ''
-Read-Host 'Press Enter to close'
+if (-not $NoPause) { Read-Host 'Press Enter to close' | Out-Null }
 exit $exitCode

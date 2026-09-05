@@ -68,6 +68,21 @@ namespace OpenRCT2::Ui::Accessibility
         return std::filesystem::temp_directory_path() / "openrct2-access-changelog.txt";
     }
 
+    // Written by the update helper when the installer refuses the update - most often because the
+    // player's OpenRCT2 has been updated since this mod build was released, so the two no longer
+    // match. Its presence on the next launch is how a failure that happened while the game was
+    // closed gets reported to a player who cannot see the helper's console window.
+    static std::filesystem::path InstallFailedMarkerPath()
+    {
+        return std::filesystem::temp_directory_path() / "openrct2-access-update-failed.txt";
+    }
+
+    // Where the helper sends the installer's output, so a refusal can be read after the fact.
+    static std::filesystem::path InstallLogPath()
+    {
+        return std::filesystem::temp_directory_path() / "openrct2-access-update.log";
+    }
+
     static void RunCheck()
     {
 #if !defined(DISABLE_HTTP) && !defined(DISABLE_VERSION_CHECKER)
@@ -196,14 +211,25 @@ namespace OpenRCT2::Ui::Accessibility
         _installFuture = std::async(std::launch::async, RunInstall, _downloadUrl);
     }
 
-    // Launches the swap helper and quits. The helper waits for this process to exit, copies the
-    // staged files over the install directory, relaunches, and cleans up.
+    // Launches the swap helper and quits. The helper waits for this process to exit, runs the
+    // installer bundled in the release, relaunches, and cleans up.
+    //
+    // This used to be a plain "xcopy staging\* installDir\", which was fine when a release was a
+    // whole portable copy of the game. Now that a release only carries the mod's own files, copying
+    // them blindly would drop a build meant for one OpenRCT2 version onto whatever version the
+    // player happens to be running - and because the executable is validated against data\g2.dat by
+    // a sprite count compiled into it, the result is missing or wrong graphics rather than an error
+    // anyone could act on. Deferring to the installer buys the version gate, the backup that makes
+    // Uninstall-OpenRCT2Access.bat work, and a copy limited to the files the mod actually owns.
     static void FinishInstall()
     {
 #ifdef _WIN32
         const std::string installDir = Platform::GetCurrentExecutableDirectory();
         const std::string staging = _stagingDir.string();
         const auto batPath = (std::filesystem::temp_directory_path() / "openrct2-access-update.bat").string();
+        const std::string logPath = InstallLogPath().string();
+        const std::string failMarker = InstallFailedMarkerPath().string();
+        const std::string changelogMarker = ChangelogMarkerPath().string();
 
         std::ofstream bat(batPath, std::ios::binary | std::ios::trunc);
         bat << "@echo off\r\n"
@@ -213,7 +239,17 @@ namespace OpenRCT2::Ui::Accessibility
             << "  timeout /t 1 /nobreak >nul\r\n"
             << "  goto wait\r\n"
             << ")\r\n"
-            << "xcopy /e /y /i \"" << staging << "\\*\" \"" << installDir << "\\\" >nul\r\n"
+            // -Yes because the player already agreed to the update in-game; -NoPause because this
+            // window is minimised and a prompt here would hang the update with nobody to answer it.
+            << "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" << staging
+            << "\\OpenRCT2Access-Installer.ps1\" -TargetPath \"" << installDir << "\" -Yes -NoPause > \"" << logPath
+            << "\" 2>&1\r\n"
+            // On refusal the game is untouched, so it is still safe to relaunch - but the changelog
+            // prompt would be a lie, and the player needs to be told what happened.
+            << "if errorlevel 1 (\r\n"
+            << "  del \"" << changelogMarker << "\" >nul 2>&1\r\n"
+            << "  echo " << logPath << "> \"" << failMarker << "\"\r\n"
+            << ")\r\n"
             << "start \"\" \"" << installDir << "\\openrct2.exe\"\r\n"
             << "rmdir /s /q \"" << staging << "\"\r\n"
             << "del \"%~f0\"\r\n";
@@ -246,6 +282,26 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_checkedUpdateMarker)
         {
             _checkedUpdateMarker = true;
+
+            // A refused update leaves the game exactly as it was, so this is the only sign the
+            // player gets that the update they asked for did not happen. Say so plainly and name
+            // the log, rather than letting them assume they are running the new version.
+            {
+                std::error_code failEc;
+                const auto failPath = InstallFailedMarkerPath();
+                if (std::filesystem::exists(failPath, failEc))
+                {
+                    std::filesystem::remove(failPath, failEc); // one-shot
+                    ScreenReaderSpeak(
+                        "The update could not be installed, and the game has been left as it was. This usually means "
+                        "the update was built for a different version of OpenRCT2 than the one you have. Details are "
+                        "in openrct2-access-update.log in your temp folder.");
+                    LogAnnouncement(
+                        "Update refused. The mod build did not match this OpenRCT2 version. See "
+                        + InstallLogPath().string());
+                }
+            }
+
             const auto markerPath = ChangelogMarkerPath();
             std::error_code ec;
             if (std::filesystem::exists(markerPath, ec))

@@ -59,7 +59,16 @@ If you change how those banners are formatted, update `Get-ExeVersions` in the s
   `-ExecutionPolicy Bypass -NoProfile`, since PowerShell blocks downloaded scripts by default and a
   user's own profile could otherwise print noise into output that is being read aloud.
 - Parameters: `-TargetPath <folder>` to skip detection, `-Uninstall`, `-Yes` to skip the
-  confirmation prompt. `-Yes` exists for testing; a player should never need it.
+  confirmation prompt, `-NoPause` to skip the closing "Press Enter". The last two are for callers
+  rather than people: the mod's in-game updater runs this script from a minimised window where a
+  prompt nobody can see would hang the update forever.
+- **The in-game updater installs through this script**, rather than copying files itself, so an
+  automatic update gets the same version gate, the same backup and the same limited file set as a
+  manual one. If the installer refuses, the updater leaves the game untouched, writes
+  `openrct2-access-update-failed.txt` into the temp folder next to `openrct2-access-update.log`, and
+  the mod announces the failure on the next launch. Renaming this script or changing its parameters
+  therefore breaks automatic updates - see `FinishInstall` in
+  [AccessUpdate.cpp](../../src/openrct2-ui/accessibility/AccessUpdate.cpp).
 - The script targets **Windows PowerShell 5.1** - no ternary, no null-coalescing, no `&&`.
 - Re-installing never overwrites an existing backup, so a second install cannot replace the pristine
   executable with a modded one and strand the player without an uninstall.
