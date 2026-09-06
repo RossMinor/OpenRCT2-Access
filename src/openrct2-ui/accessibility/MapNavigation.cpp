@@ -247,9 +247,9 @@ namespace OpenRCT2::Ui::Accessibility
     static bool PathIsDirtSurface(const PathElement& pathEl)
     {
         std::string_view id;
-        if (const auto* surface = pathEl.GetSurfaceEntry(); surface != nullptr)
+        if (const auto* surface = pathEl.getSurfaceEntry(); surface != nullptr)
             id = surface->GetIdentifier();
-        else if (const auto* legacy = pathEl.GetLegacyPathEntry(); legacy != nullptr)
+        else if (const auto* legacy = pathEl.getLegacyPathEntry(); legacy != nullptr)
             id = legacy->GetIdentifier();
         return id.find("dirt") != std::string_view::npos;
     }
@@ -257,7 +257,7 @@ namespace OpenRCT2::Ui::Accessibility
     static bool IsTileOwned(const TileCoordsXY& tile)
     {
         auto* surface = MapGetSurfaceElementAt(tile);
-        return surface != nullptr && (surface->GetOwnership() & OWNERSHIP_OWNED) != 0;
+        return surface != nullptr && surface->hasOwnership(OwnershipFlag::landOwned);
     }
 
     // Returns the ride occupying this tile (via its track/structure), or null if none.
@@ -270,7 +270,7 @@ namespace OpenRCT2::Ui::Accessibility
         do
         {
             if (auto* track = element->asTrack(); track != nullptr)
-                return track->GetRideIndex();
+                return track->getRideIndex();
         } while (!(element++)->isLastForTile());
 
         return RideId::GetNull();
@@ -411,8 +411,8 @@ namespace OpenRCT2::Ui::Accessibility
     static std::string GetSpokenPathName(const PathElement& path)
     {
         return SpokenPathSurfaceName(
-            path.HasLegacyPathEntry() ? GetObjectName(ObjectType::paths, path.GetLegacyPathEntryIndex())
-                                      : GetObjectName(ObjectType::footpathSurface, path.GetSurfaceEntryIndex()));
+            path.hasLegacyPathEntry() ? GetObjectName(ObjectType::paths, path.getLegacyPathEntryIndex())
+                                      : GetObjectName(ObjectType::footpathSurface, path.getSurfaceEntryIndex()));
     }
 
     // Builds the spoken description of a sign-capable element (banner, wall, or large scenery). If
@@ -494,9 +494,9 @@ namespace OpenRCT2::Ui::Accessibility
     {
         for (auto* pathEl : TileElementsView<PathElement>(tile.ToCoordsXY()))
         {
-            if (pathEl->isGhost() || !pathEl->HasAddition() || pathEl->AdditionIsGhost())
+            if (pathEl->isGhost() || !pathEl->hasAddition() || pathEl->additionIsGhost())
                 continue;
-            const auto* entry = pathEl->GetAdditionEntry();
+            const auto* entry = pathEl->getAdditionEntry();
             if (entry != nullptr && (entry->flags & PATH_ADDITION_FLAG_IS_BIN))
                 return true;
         }
@@ -529,7 +529,7 @@ namespace OpenRCT2::Ui::Accessibility
         std::vector<std::string> parts;
 
         // Water is the flooded surface, sitting beneath any structure, so it is the lowest feature.
-        if (auto* surface = MapGetSurfaceElementAt(tile); surface != nullptr && surface->GetWaterHeight() > 0)
+        if (auto* surface = MapGetSurfaceElementAt(tile); surface != nullptr && surface->getWaterHeight() > 0)
             parts.push_back("Water");
 
         // In build mode (the ride construction window is open) read each placed track piece's
@@ -546,11 +546,11 @@ namespace OpenRCT2::Ui::Accessibility
                 if (buildMode)
                 {
                     std::string piece = DescribeTrackPiece(
-                        OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->GetTrackType()), track);
+                        OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track->getTrackType()), track);
                     if (!piece.empty())
                         parts.push_back(piece);
                 }
-                else if (const RideId rid = track->GetRideIndex(); rid != namedRide)
+                else if (const RideId rid = track->getRideIndex(); rid != namedRide)
                 {
                     namedRide = rid; // only announce the ride once per tile, not per piece
                     std::string desc = RideNameWithDimensions(rid);
@@ -567,17 +567,17 @@ namespace OpenRCT2::Ui::Accessibility
             }
             else if (auto* entrance = el->asEntrance(); entrance != nullptr)
             {
-                switch (entrance->GetEntranceType())
+                switch (entrance->getEntranceType())
                 {
-                    case ENTRANCE_TYPE_PARK_ENTRANCE:
+                    case EntranceType::parkEntrance:
                         parts.push_back("Park entrance");
                         break;
-                    case ENTRANCE_TYPE_RIDE_ENTRANCE:
+                    case EntranceType::rideEntrance:
                         // The doorway (where guests enter) faces opposite the element's stored
                         // direction, which points toward the station platform.
                         parts.push_back(std::string("Ride entrance, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
                         break;
-                    case ENTRANCE_TYPE_RIDE_EXIT:
+                    case EntranceType::rideExit:
                         parts.push_back(std::string("Ride exit, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
                         break;
                 }
@@ -587,7 +587,7 @@ namespace OpenRCT2::Ui::Accessibility
                 std::string name = GetSpokenPathName(*p);
 
                 std::string label;
-                if (p->IsQueue())
+                if (p->isQueue())
                 {
                     if (name.empty())
                     {
@@ -609,7 +609,7 @@ namespace OpenRCT2::Ui::Accessibility
                 }
 
                 // A ramp reads as sloped so the player can tell a hill piece from a flat one.
-                parts.push_back(p->IsSloped() ? "Sloped " + label : label);
+                parts.push_back(p->isSloped() ? "Sloped " + label : label);
 
                 // Railings are the supports and side fencing, and they are a SEPARATE object from
                 // the surface - so a path can legitimately carry railings that look nothing like it.
@@ -617,14 +617,14 @@ namespace OpenRCT2::Ui::Accessibility
                 // went unnoticed for so long: a sighted player sees the mismatch the moment a ramp
                 // goes up, while the readout never mentioned that half of the path existed. Named
                 // only where they are visible, so flat ground paths do not gain a word on every tile.
-                if (!p->HasLegacyPathEntry())
+                if (!p->hasLegacyPathEntry())
                 {
                     auto* pathSurface = MapGetSurfaceElementAt(tile);
-                    const bool visible = p->IsSloped()
+                    const bool visible = p->isSloped()
                         || (pathSurface != nullptr && p->baseHeight > pathSurface->baseHeight);
                     if (visible)
                     {
-                        std::string rails = GetObjectName(ObjectType::footpathRailings, p->GetRailingsEntryIndex());
+                        std::string rails = GetObjectName(ObjectType::footpathRailings, p->getRailingsEntryIndex());
                         if (!rails.empty())
                             parts.push_back(std::move(rails));
                     }
@@ -633,14 +633,14 @@ namespace OpenRCT2::Ui::Accessibility
                 // Path additions are the benches, litter bins, lamps and fountains placed on a
                 // path. They live on the same element as the path; announce them as their own part
                 // so a tile reads e.g. "Bench, Tarmac path".
-                if (p->HasAddition())
+                if (p->hasAddition())
                 {
-                    std::string addition = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
+                    std::string addition = GetObjectName(ObjectType::pathAdditions, p->getAdditionEntryIndex());
                     if (addition.empty())
                         addition = "Path addition";
                     // A vandalised addition (broken bench, bin, lamp or queue TV) still occupies the
                     // tile but no longer works until a handyman fixes it; call that out.
-                    if (p->IsBroken())
+                    if (p->isBroken())
                         addition += ", vandalized";
                     parts.push_back(std::move(addition));
                 }
@@ -649,24 +649,24 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 // Banners are the signs placed on path edges to name areas or give directions; the
                 // player can type custom text on them. Read that text so it is not lost.
-                parts.push_back(DescribeSign("Sign", b->GetBanner()));
+                parts.push_back(DescribeSign("Sign", b->getBanner()));
             }
             else if (auto* w = el->asWall(); w != nullptr)
             {
-                std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
+                std::string name = GetObjectName(ObjectType::walls, w->getEntryIndex());
                 // A wall can itself be a sign carrying custom text (e.g. a wall-mounted sign).
-                parts.push_back(DescribeSign(name.empty() ? "Fence" : name, w->GetBanner()));
+                parts.push_back(DescribeSign(name.empty() ? "Fence" : name, w->getBanner()));
             }
             else if (auto* ss = el->asSmallScenery(); ss != nullptr)
             {
-                std::string name = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
+                std::string name = GetObjectName(ObjectType::smallScenery, ss->getEntryIndex());
                 parts.push_back(name.empty() ? "Scenery" : name);
             }
             else if (auto* ls = el->asLargeScenery(); ls != nullptr)
             {
-                std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
+                std::string name = GetObjectName(ObjectType::largeScenery, ls->getEntryIndex());
                 // Large scenery with a banner is a sign (the big stand-alone signs); read its text.
-                parts.push_back(DescribeSign(name.empty() ? "Scenery" : name, ls->GetBanner()));
+                parts.push_back(DescribeSign(name.empty() ? "Scenery" : name, ls->getBanner()));
             }
 
             if (el->isLastForTile())
@@ -708,7 +708,7 @@ namespace OpenRCT2::Ui::Accessibility
             if (!el->isGhost() && el->getType() != TileElementType::surface)
             {
                 auto* path = el->asPath();
-                const bool sloped = path != nullptr && path->IsSloped();
+                const bool sloped = path != nullptr && path->isSloped();
                 if (el->baseHeight > ground || sloped)
                 {
                     // Several elements often share one level (a bench on a bridge deck); that is one
@@ -786,7 +786,7 @@ namespace OpenRCT2::Ui::Accessibility
         auto parts = GatherTileFeatures(tile);
 
         auto* surface = MapGetSurfaceElementAt(tile);
-        const bool owned = surface != nullptr && (surface->GetOwnership() & OWNERSHIP_OWNED) != 0;
+        const bool owned = surface != nullptr && surface->hasOwnership(OwnershipFlag::landOwned);
 
         if (parts.empty())
         {
@@ -1119,14 +1119,14 @@ namespace OpenRCT2::Ui::Accessibility
 
         // Last, because it is the piece's most consequential property: a chain lift is what carries
         // the train up, and a slope built without one is the classic reason a coaster stalls.
-        if (element != nullptr && element->HasChain())
+        if (element != nullptr && element->hasChain())
             s += ", chain lift";
         return s;
     }
 
     std::string DescribeTrackPieceText(const TrackElement& element)
     {
-        return DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(element.GetTrackType()), &element);
+        return DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(element.getTrackType()), &element);
     }
 
     static void Move(int32_t dx, int32_t dy, const char* directionName)
@@ -1181,7 +1181,7 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 if (pathEl->isGhost())
                     continue;
-                if (pathEl->IsQueue())
+                if (pathEl->isQueue())
                 {
                     stepCat = 3;
                     stepSnd = StepSound::queue;
@@ -1201,7 +1201,7 @@ namespace OpenRCT2::Ui::Accessibility
             }
             if (stepCat == 0)
             {
-                if (auto* surf = MapGetSurfaceElementAt(_cursor); surf != nullptr && surf->GetWaterHeight() > 0)
+                if (auto* surf = MapGetSurfaceElementAt(_cursor); surf != nullptr && surf->getWaterHeight() > 0)
                 {
                     stepCat = 4;
                     stepSnd = StepSound::water;
@@ -1635,7 +1635,7 @@ namespace OpenRCT2::Ui::Accessibility
             if (auto* path = el->asPath(); path != nullptr)
             {
                 int32_t edge = path->getBaseZ();
-                if (path->IsSloped() && path->GetSlopeDirection() == dir)
+                if (path->isSloped() && path->getSlopeDirection() == dir)
                     edge += kPathHeightStep;
                 if (!best.has_value() || edge > *best)
                     best = edge;
@@ -1866,7 +1866,7 @@ namespace OpenRCT2::Ui::Accessibility
         // Matching the sighted game, a path on a water tile goes on the submerged land (the vanilla
         // path tool clicks straight through water to the bed and the engine allows it). A sighted
         // player watches it disappear under the surface, so say so.
-        if (buildSurface != nullptr && buildSurface->GetWaterHeight() > baseZ)
+        if (buildSurface != nullptr && buildSurface->getWaterHeight() > baseZ)
             what += ", underwater";
 
         const CoordsXYZ loc{ world.x, world.y, baseZ };
@@ -2097,10 +2097,10 @@ namespace OpenRCT2::Ui::Accessibility
                     if (!el->isGhost() && el->baseHeight == targetBaseHeight)
                     {
                         if (auto* ss = el->asSmallScenery(); ss != nullptr)
-                            removals.push_back({ 0, { wx, wy, el->getBaseZ(), 0 }, ss->GetSceneryQuadrant(), ss->GetEntryIndex() });
+                            removals.push_back({ 0, { wx, wy, el->getBaseZ(), 0 }, ss->getSceneryQuadrant(), ss->getEntryIndex() });
                         else if (auto* ls = el->asLargeScenery(); ls != nullptr)
                             removals.push_back(
-                                { 1, { wx, wy, el->getBaseZ(), el->getDirection() }, 0, ls->GetSequenceIndex() });
+                                { 1, { wx, wy, el->getBaseZ(), el->getDirection() }, 0, ls->getSequenceIndex() });
                         else if (el->asWall() != nullptr)
                             removals.push_back({ 2, { wx, wy, el->getBaseZ(), el->getDirection() }, 0, 0 });
                     }
@@ -2156,8 +2156,11 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
 
-        const GameActions::ClearableItems items = GameActions::CLEARABLE_ITEMS::kScenerySmall
-            | GameActions::CLEARABLE_ITEMS::kSceneryLarge;
+        // 0.5.5 split walls out of small scenery; naming them keeps the clear-scenery brush removing
+        // fences as it did before the port.
+        const GameActions::ClearableItems items{ GameActions::ClearableItem::smallScenery,
+                                                 GameActions::ClearableItem::largeScenery,
+                                                 GameActions::ClearableItem::walls };
         auto action = GameActions::ClearAction(MapRange(ax, ay, bx, by), items);
         const auto result = GameActions::Execute(&action, getGameState());
         if (result.error == GameActions::Status::ok)
@@ -2201,7 +2204,7 @@ namespace OpenRCT2::Ui::Accessibility
                     // On-terrain placement goes on the submerged land of water tiles, like the
                     // sighted path tool; count those so the summary can say where the paving sank.
                     auto* surface = MapGetSurfaceElementAt(tile);
-                    if (surface != nullptr && surface->GetWaterHeight() > placement.baseZ)
+                    if (surface != nullptr && surface->getWaterHeight() > placement.baseZ)
                         builtUnderwater++;
                 }
             }
@@ -2256,7 +2259,7 @@ namespace OpenRCT2::Ui::Accessibility
         const int32_t before = CountPathsInArea(ax, ay, bx, by);
 
         auto action = GameActions::ClearAction(
-            MapRange(ax, ay, bx, by), GameActions::CLEARABLE_ITEMS::kSceneryFootpath);
+            MapRange(ax, ay, bx, by), GameActions::ClearableItems{ GameActions::ClearableItem::footpaths });
         GameActions::Execute(&action, getGameState());
 
         // Key the message off how many paths were present before the clear, not a recount after it:
@@ -2276,18 +2279,18 @@ namespace OpenRCT2::Ui::Accessibility
     {
         if (auto* track = el->asTrack(); track != nullptr)
         {
-            auto* ride = GetRide(track->GetRideIndex());
+            auto* ride = GetRide(track->getRideIndex());
             return ride != nullptr ? std::string(ride->getName()) : std::string("Ride track");
         }
         if (auto* entrance = el->asEntrance(); entrance != nullptr)
         {
-            switch (entrance->GetEntranceType())
+            switch (entrance->getEntranceType())
             {
-                case ENTRANCE_TYPE_PARK_ENTRANCE:
+                case EntranceType::parkEntrance:
                     return "Park entrance";
-                case ENTRANCE_TYPE_RIDE_ENTRANCE:
+                case EntranceType::rideEntrance:
                     return "Ride entrance";
-                case ENTRANCE_TYPE_RIDE_EXIT:
+                case EntranceType::rideExit:
                     return "Ride exit";
             }
             return "Entrance";
@@ -2295,38 +2298,38 @@ namespace OpenRCT2::Ui::Accessibility
         if (auto* p = el->asPath(); p != nullptr)
         {
             std::string name = GetSpokenPathName(*p);
-            if (p->IsQueue())
+            if (p->isQueue())
                 name = name.empty() ? "Queue line" : name + " queue";
             else if (name.empty())
                 name = "Path";
-            if (p->HasAddition())
+            if (p->hasAddition())
             {
-                std::string addition = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
+                std::string addition = GetObjectName(ObjectType::pathAdditions, p->getAdditionEntryIndex());
                 name += ", " + (addition.empty() ? std::string("path addition") : addition);
             }
             return name;
         }
         if (auto* b = el->asBanner(); b != nullptr)
         {
-            return DescribeSign("Sign", b->GetBanner());
+            return DescribeSign("Sign", b->getBanner());
         }
         if (auto* w = el->asWall(); w != nullptr)
         {
-            std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
-            return DescribeSign(name.empty() ? "Fence" : name, w->GetBanner());
+            std::string name = GetObjectName(ObjectType::walls, w->getEntryIndex());
+            return DescribeSign(name.empty() ? "Fence" : name, w->getBanner());
         }
         if (auto* ss = el->asSmallScenery(); ss != nullptr)
         {
-            std::string name = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
+            std::string name = GetObjectName(ObjectType::smallScenery, ss->getEntryIndex());
             return name.empty() ? "Scenery" : name;
         }
         if (auto* ls = el->asLargeScenery(); ls != nullptr)
         {
-            std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
-            return DescribeSign(name.empty() ? "Scenery" : name, ls->GetBanner());
+            std::string name = GetObjectName(ObjectType::largeScenery, ls->getEntryIndex());
+            return DescribeSign(name.empty() ? "Scenery" : name, ls->getBanner());
         }
         if (auto* surface = el->asSurface(); surface != nullptr)
-            return surface->GetWaterHeight() > 0 ? "Water surface" : "Ground";
+            return surface->getWaterHeight() > 0 ? "Water surface" : "Ground";
         return "Object";
     }
 
@@ -2475,7 +2478,7 @@ namespace OpenRCT2::Ui::Accessibility
                 return;
 
             const std::string prefix = marked ? "Marked area, " : "";
-            const int32_t waterHeight = surface->GetWaterHeight();
+            const int32_t waterHeight = surface->getWaterHeight();
             if (waterHeight > 0)
             {
                 // Report the water surface on the same engine scale as everything else. This is the
@@ -2531,21 +2534,23 @@ namespace OpenRCT2::Ui::Accessibility
 
             // Nothing was bought - explain why, using the sample tile (cursor, or area centre).
             auto* surface = MapGetSurfaceElementAt(sample);
-            const int32_t ownership = surface != nullptr ? surface->GetOwnership() : 0;
+            // 0.5.5 replaced the raw OWNERSHIP_* bit mask with a FlagHolder; an absent surface has
+            // no flags set, which reads the same as unowned land here.
+            const OwnershipFlags ownership = surface != nullptr ? surface->getOwnership() : OwnershipFlags{};
             if (rights)
             {
-                if (ownership & (OWNERSHIP_OWNED | OWNERSHIP_CONSTRUCTION_RIGHTS_OWNED))
+                if (ownership.hasAny(OwnershipFlag::landOwned, OwnershipFlag::constructionRightsOwned))
                     ScreenReaderSpeak("You already have construction rights here");
-                else if (!(ownership & OWNERSHIP_CONSTRUCTION_RIGHTS_AVAILABLE))
+                else if (!ownership.has(OwnershipFlag::constructionRightsForSale))
                     ScreenReaderSpeak("Construction rights here are not for sale");
                 else
                     ScreenReaderSpeak("Nothing to buy here");
             }
             else
             {
-                if (ownership & OWNERSHIP_OWNED)
+                if (ownership.has(OwnershipFlag::landOwned))
                     ScreenReaderSpeak("You already own this land");
-                else if (!(ownership & OWNERSHIP_AVAILABLE))
+                else if (!ownership.has(OwnershipFlag::landForSale))
                     ScreenReaderSpeak("This land is not for sale");
                 else
                     ScreenReaderSpeak("Nothing to buy here");
@@ -2678,12 +2683,12 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 // The addition is offered before the path carrying it: removing the path takes the bin
                 // with it, so the narrower, less destructive choice should be the one reached first.
-                if (p->HasAddition() && !p->AdditionIsGhost())
+                if (p->hasAddition() && !p->additionIsGhost())
                 {
                     DeleteCandidate c;
                     c.kind = DeleteCandidate::Kind::pathAddition;
                     c.loc = loc;
-                    std::string name = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
+                    std::string name = GetObjectName(ObjectType::pathAdditions, p->getAdditionEntryIndex());
                     c.label = name.empty() ? "Path addition" : name;
                     out.push_back(std::move(c));
                 }
@@ -2700,9 +2705,9 @@ namespace OpenRCT2::Ui::Accessibility
                 DeleteCandidate c;
                 c.kind = DeleteCandidate::Kind::smallScenery;
                 c.loc = loc;
-                c.quadrant = ss->GetSceneryQuadrant();
-                c.entryIndex = ss->GetEntryIndex();
-                std::string name = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
+                c.quadrant = ss->getSceneryQuadrant();
+                c.entryIndex = ss->getEntryIndex();
+                std::string name = GetObjectName(ObjectType::smallScenery, ss->getEntryIndex());
                 c.label = name.empty() ? "Scenery" : name;
                 out.push_back(std::move(c));
             }
@@ -2711,8 +2716,8 @@ namespace OpenRCT2::Ui::Accessibility
                 DeleteCandidate c;
                 c.kind = DeleteCandidate::Kind::largeScenery;
                 c.loc = loc;
-                c.sequence = ls->GetSequenceIndex();
-                std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
+                c.sequence = ls->getSequenceIndex();
+                std::string name = GetObjectName(ObjectType::largeScenery, ls->getEntryIndex());
                 c.label = name.empty() ? "Large scenery" : name;
                 out.push_back(std::move(c));
             }
@@ -2721,7 +2726,7 @@ namespace OpenRCT2::Ui::Accessibility
                 DeleteCandidate c;
                 c.kind = DeleteCandidate::Kind::wall;
                 c.loc = loc;
-                std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
+                std::string name = GetObjectName(ObjectType::walls, w->getEntryIndex());
                 c.label = name.empty() ? "Wall" : name;
                 out.push_back(std::move(c));
             }
@@ -2731,7 +2736,7 @@ namespace OpenRCT2::Ui::Accessibility
                 c.kind = DeleteCandidate::Kind::banner;
                 // Banners are found by their edge position, not the element's direction - the remove
                 // action matches on GetPosition(), so passing getDirection() would silently miss.
-                c.loc = { world.x, world.y, el->getBaseZ(), b->GetPosition() };
+                c.loc = { world.x, world.y, el->getBaseZ(), b->getPosition() };
                 c.label = "Sign";
                 out.push_back(std::move(c));
             }
@@ -2739,15 +2744,15 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 // Park entrances are left out: they are removed through the park's own tools, and a
                 // stray Delete on the gate would take the entrance off a working park.
-                const uint8_t type = e->GetEntranceType();
-                if (type == ENTRANCE_TYPE_RIDE_ENTRANCE || type == ENTRANCE_TYPE_RIDE_EXIT)
+                const EntranceType type = e->getEntranceType();
+                if (type == EntranceType::rideEntrance || type == EntranceType::rideExit)
                 {
                     DeleteCandidate c;
                     c.kind = DeleteCandidate::Kind::rideEntranceExit;
                     c.loc = loc;
-                    c.rideId = e->GetRideIndex();
-                    c.station = e->GetStationIndex();
-                    c.isExit = (type == ENTRANCE_TYPE_RIDE_EXIT);
+                    c.rideId = e->getRideIndex();
+                    c.station = e->getStationIndex();
+                    c.isExit = (type == EntranceType::rideExit);
                     auto* ride = GetRide(c.rideId);
                     const std::string rideName = ride != nullptr ? std::string(ride->getName()) : std::string("Ride");
                     c.label = rideName + (c.isExit ? " exit" : " entrance");
@@ -2759,9 +2764,9 @@ namespace OpenRCT2::Ui::Accessibility
                 DeleteCandidate c;
                 c.kind = DeleteCandidate::Kind::track;
                 c.loc = loc;
-                c.trackType = t->GetTrackType();
-                c.trackSequence = t->GetSequenceIndex();
-                c.rideId = t->GetRideIndex();
+                c.trackType = t->getTrackType();
+                c.trackSequence = t->getSequenceIndex();
+                c.rideId = t->getRideIndex();
                 auto* ride = GetRide(c.rideId);
                 const std::string rideName = ride != nullptr ? std::string(ride->getName()) : std::string("Ride");
                 c.label = rideName + " track";
@@ -3242,7 +3247,7 @@ namespace OpenRCT2::Ui::Accessibility
                 // element rather than objects in their own right.
                 for (auto* pathEl : TileElementsView<PathElement>(coords))
                 {
-                    if (!pathEl->isGhost() && pathEl->HasAddition() && !pathEl->AdditionIsGhost())
+                    if (!pathEl->isGhost() && pathEl->hasAddition() && !pathEl->additionIsGhost())
                         return true;
                 }
                 return false;
@@ -3258,8 +3263,8 @@ namespace OpenRCT2::Ui::Accessibility
                     return true;
                 for (auto* pathEl : TileElementsView<PathElement>(coords))
                 {
-                    if (!pathEl->isGhost() && pathEl->HasAddition() && !pathEl->AdditionIsGhost()
-                        && pathEl->IsBroken())
+                    if (!pathEl->isGhost() && pathEl->hasAddition() && !pathEl->additionIsGhost()
+                        && pathEl->isBroken())
                         return true;
                 }
                 return false;
@@ -3427,7 +3432,7 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
                 {
-                    rideId = track->GetRideIndex();
+                    rideId = track->getRideIndex();
                     break;
                 }
                 if (el->isLastForTile())
@@ -3505,9 +3510,9 @@ namespace OpenRCT2::Ui::Accessibility
                     // Skip pairs that genuinely connect - a ramp meeting a landing sits two half
                     // steps apart and is perfectly fine, so a raw height difference proves nothing.
                     int32_t arrivalZ = here->baseHeight;
-                    if (here->IsSloped() && here->GetSlopeDirection() == dir)
+                    if (here->isSloped() && here->getSlopeDirection() == dir)
                         arrivalZ += 2;
-                    if ((here->GetEdges() & (1 << dir)) != 0 && FootpathIsZAndDirectionValid(*other, arrivalZ, dir))
+                    if ((here->getEdges() & (1 << dir)) != 0 && FootpathIsZAndDirectionValid(*other, arrivalZ, dir))
                         continue;
 
                     const int32_t diff = other->baseHeight - here->baseHeight;
@@ -3545,12 +3550,12 @@ namespace OpenRCT2::Ui::Accessibility
         for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
         {
             if (auto* track = el->asTrack(); track != nullptr)
-                return track->GetRideIndex();
+                return track->getRideIndex();
             if (auto* entrance = el->asEntrance(); entrance != nullptr)
             {
-                const auto type = entrance->GetEntranceType();
-                if (type == ENTRANCE_TYPE_RIDE_ENTRANCE || type == ENTRANCE_TYPE_RIDE_EXIT)
-                    return entrance->GetRideIndex();
+                const auto type = entrance->getEntranceType();
+                if (type == EntranceType::rideEntrance || type == EntranceType::rideExit)
+                    return entrance->getRideIndex();
             }
             if (el->isLastForTile())
                 break;
@@ -3565,7 +3570,7 @@ namespace OpenRCT2::Ui::Accessibility
         for (TileElement* el = MapGetFirstElementAt(_cursor); el != nullptr;)
         {
             if (auto* entrance = el->asEntrance();
-                entrance != nullptr && entrance->GetEntranceType() == ENTRANCE_TYPE_PARK_ENTRANCE)
+                entrance != nullptr && entrance->getEntranceType() == EntranceType::parkEntrance)
                 return true;
             if (el->isLastForTile())
                 break;
@@ -3583,19 +3588,19 @@ namespace OpenRCT2::Ui::Accessibility
         {
             if (auto* banner = el->asBanner(); banner != nullptr)
             {
-                ContextOpenDetailWindow(WindowDetail::banner, banner->GetIndex().ToUnderlying());
+                ContextOpenDetailWindow(WindowDetail::banner, banner->getIndex().ToUnderlying());
                 ScreenReaderSpeak("Banner");
                 return true;
             }
-            if (auto* wall = el->asWall(); wall != nullptr && !wall->GetBannerIndex().IsNull())
+            if (auto* wall = el->asWall(); wall != nullptr && !wall->getBannerIndex().IsNull())
             {
-                ContextOpenDetailWindow(WindowDetail::signSmall, wall->GetBannerIndex().ToUnderlying());
+                ContextOpenDetailWindow(WindowDetail::signSmall, wall->getBannerIndex().ToUnderlying());
                 ScreenReaderSpeak("Sign");
                 return true;
             }
-            if (auto* large = el->asLargeScenery(); large != nullptr && !large->GetBannerIndex().IsNull())
+            if (auto* large = el->asLargeScenery(); large != nullptr && !large->getBannerIndex().IsNull())
             {
-                ContextOpenDetailWindow(WindowDetail::sign, large->GetBannerIndex().ToUnderlying());
+                ContextOpenDetailWindow(WindowDetail::sign, large->getBannerIndex().ToUnderlying());
                 ScreenReaderSpeak("Sign");
                 return true;
             }

@@ -35,7 +35,7 @@ namespace OpenRCT2::Ui::Accessibility
 
     std::optional<Direction> GetShopFacing(const TrackElement& track)
     {
-        const auto& ted = OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track.GetTrackType());
+        const auto& ted = OpenRCT2::TrackMetadata::GetTrackElementDescriptor(track.getTrackType());
         uint8_t connectionSides = ted.sequenceData.sequences[0].getEntranceConnectionSides();
         connectionSides = OpenRCT2::Numerics::rol4(connectionSides, track.getDirection());
         for (uint8_t count = 0; count < kNumOrthogonalDirections; count++)

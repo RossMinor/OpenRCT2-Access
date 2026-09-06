@@ -211,8 +211,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (surface == nullptr)
             return -1;
         int32_t z = floor2(surface->getBaseZ(), kCoordsZStep);
-        if (surface->GetWaterHeight() > 0)
-            z = std::max<int32_t>(z, surface->GetWaterHeight());
+        if (surface->getWaterHeight() > 0)
+            z = std::max<int32_t>(z, surface->getWaterHeight());
         return z;
     }
 

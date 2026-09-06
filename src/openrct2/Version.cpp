@@ -85,14 +85,15 @@ NewVersionInfo GetLatestVersion()
     if (then < now - std::chrono::seconds(24h).count())
     {
         Http::Request request;
+        // The fork's own releases, not upstream's - this is the mod's update check.
         request.url = "https://api.github.com/repos/" kAccessUpdateRepo "/releases/latest";
-        request.method = Http::Method::GET;
+        request.method = Http::Method::get;
 
         Http::Response res;
         try
         {
             res = Do(request);
-            if (res.status != Http::Status::Ok)
+            if (res.status != Http::Status::ok)
                 throw std::runtime_error("bad http status");
         }
         catch (std::exception& e)

@@ -125,10 +125,10 @@ namespace OpenRCT2::Ui::Accessibility
         if (source == nullptr)
             return;
 
-        // MixerGroup::Accessibility: master volume only, decoupled from the game's sound slider. The
+        // MixerGroup::accessibility: master volume only, decoupled from the game's sound slider. The
         // cue-volume percentage scales the tone here so the mod's slider controls it.
         const int32_t volume = Audio::kMixerVolumeMax * pct / 100;
-        Audio::CreateAudioChannel(source, Audio::MixerGroup::Accessibility, false, volume, 0.5f, 1.0, true);
+        Audio::CreateAudioChannel(source, Audio::MixerGroup::accessibility, false, volume, 0.5f, 1.0, true);
     }
 
     // Tones still waiting to sound, in reverse order so the next one is always the back element.

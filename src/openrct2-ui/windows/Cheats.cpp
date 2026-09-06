@@ -15,9 +15,9 @@
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
-#include <openrct2/Game.h>
 #include <openrct2/GameState.h>
 #include <openrct2/OpenRCT2.h>
 #include <openrct2/SpriteIds.h>
@@ -31,8 +31,6 @@
 #include <openrct2/localisation/Currency.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Formatting.h>
-#include <openrct2/localisation/Localisation.Date.h>
-#include <openrct2/network/Network.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/util/Util.h>
 #include <openrct2/world/Park.h>
@@ -854,7 +852,7 @@ static StringId window_cheats_page_titles[] = {
                 {
                     setWidgetDisabled(WIDX_NO_MONEY, isInEditorMode());
 
-                    auto moneyDisabled = (gameState.park.flags & PARK_FLAGS_NO_MONEY) != 0;
+                    auto moneyDisabled = gameState.park.flags.has(ParkFlag::noMoney);
                     setCheckboxValue(WIDX_NO_MONEY, moneyDisabled);
                     setWidgetDisabled(WIDX_ADD_SET_MONEY_GROUP, moneyDisabled);
                     setWidgetDisabled(WIDX_MONEY_SPINNER, moneyDisabled);
@@ -875,7 +873,7 @@ static StringId window_cheats_page_titles[] = {
                 }
                 case WINDOW_CHEATS_PAGE_PARK:
                     widgets[WIDX_OPEN_CLOSE_PARK].text = STR_CHEAT_OPEN_PARK;
-                    if (gameState.park.flags & PARK_FLAGS_PARK_OPEN)
+                    if (gameState.park.flags.has(ParkFlag::parkOpen))
                         widgets[WIDX_OPEN_CLOSE_PARK].text = STR_CHEAT_CLOSE_PARK;
 
                     setCheckboxValue(WIDX_FORCE_PARK_RATING, Park::GetForcedRating() >= 0);
@@ -1248,14 +1246,14 @@ static StringId window_cheats_page_titles[] = {
                     auto setDateAction = GameActions::ParkSetDateAction(
                         _yearSpinnerValue - 1, _monthSpinnerValue - 1, _daySpinnerValue - 1);
                     GameActions::Execute(&setDateAction, gameState);
-                    windowMgr->InvalidateByClass(WindowClass::bottomToolbar);
+                    windowMgr->InvalidateByClass(WindowClass::dateInfoPanel);
                     break;
                 }
                 case WIDX_DATE_RESET:
                 {
                     auto setDateAction = GameActions::ParkSetDateAction(0, 0, 0);
                     GameActions::Execute(&setDateAction, gameState);
-                    windowMgr->InvalidateByClass(WindowClass::bottomToolbar);
+                    windowMgr->InvalidateByClass(WindowClass::dateInfoPanel);
                     invalidateWidget(WIDX_YEAR_BOX);
                     invalidateWidget(WIDX_MONTH_BOX);
                     invalidateWidget(WIDX_DAY_BOX);
@@ -1269,7 +1267,7 @@ static StringId window_cheats_page_titles[] = {
             switch (widgetIndex)
             {
                 case WIDX_NO_MONEY:
-                    CheatsSet(CheatType::noMoney, getGameState().park.flags & PARK_FLAGS_NO_MONEY ? 0 : 1);
+                    CheatsSet(CheatType::noMoney, getGameState().park.flags.has(ParkFlag::noMoney) ? 0 : 1);
                     break;
                 case WIDX_MONEY_SPINNER:
                     MoneyToString(_moneySpinnerValue, _moneySpinnerText, kMoneyStringMaxlength, false);
@@ -1330,7 +1328,7 @@ static StringId window_cheats_page_titles[] = {
 
                     WindowDropdownShowTextCustomWidth(
                         { windowPos.x + dropdownWidget->left, windowPos.y + dropdownWidget->top }, dropdownWidget->height(),
-                        colours[1], 0, Dropdown::Flag::StayOpen, 3, dropdownWidget->width() - 4);
+                        colours[1], 0, {}, 3, dropdownWidget->width() - 4);
                     gDropdown.items[EnumValue(gameState.cheats.selectedStaffSpeed)].setChecked(true);
                 }
             }
@@ -1372,7 +1370,7 @@ static StringId window_cheats_page_titles[] = {
 
                     WindowDropdownShowTextCustomWidth(
                         { windowPos.x + dropdownWidget.left, windowPos.y + dropdownWidget.bottom }, 0, colours[1], itemHeight,
-                        Dropdown::Flag::CustomHeight | Dropdown::Flag::StayOpen, std::size(kWeatherTypes), itemWidth);
+                        { Dropdown::Flag::customHeight }, std::size(kWeatherTypes), itemWidth);
                 }
             }
         }

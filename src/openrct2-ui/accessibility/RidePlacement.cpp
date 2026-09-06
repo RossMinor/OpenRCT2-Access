@@ -167,8 +167,8 @@ namespace OpenRCT2::Ui::Accessibility
             if (surface == nullptr)
                 continue;
             int32_t z = floor2(surface->getBaseZ(), kCoordsZStep);
-            if (surface->GetWaterHeight() > 0)
-                z = std::max<int32_t>(z, surface->GetWaterHeight());
+            if (surface->getWaterHeight() > 0)
+                z = std::max<int32_t>(z, surface->getWaterHeight());
             if (!haveSurface || z > baseZ)
             {
                 baseZ = z;
@@ -366,8 +366,11 @@ namespace OpenRCT2::Ui::Accessibility
     // touched. Returns the total cost, or kMoney64Undefined if nothing was clearable.
     static money64 ClearFootprintScenery(const CoordsXY& origin)
     {
-        const GameActions::ClearableItems items = GameActions::CLEARABLE_ITEMS::kScenerySmall
-            | GameActions::CLEARABLE_ITEMS::kSceneryLarge;
+        // 0.5.5 split walls out of small scenery, so they are named explicitly to keep clearing the
+        // same things it always did - a fence in a ride's footprint is exactly what this is for.
+        const GameActions::ClearableItems items{ GameActions::ClearableItem::smallScenery,
+                                                 GameActions::ClearableItem::largeScenery,
+                                                 GameActions::ClearableItem::walls };
 
         money64 total = kMoney64Undefined;
         for (const auto& o : FootprintOffsets())
@@ -497,13 +500,13 @@ namespace OpenRCT2::Ui::Accessibility
                 if (el->getBaseZ() != stationBaseZ)
                     continue;
                 const auto* track = el->asTrack();
-                if (track->GetRideIndex() != _rideId)
+                if (track->getRideIndex() != _rideId)
                     continue;
 
                 // Which side of this track piece the candidate tile is on, in the piece's frame.
                 const Direction side = (DirectionReverse(d) - el->getDirection()) & 3;
-                const auto& ted = GetTrackElementDescriptor(track->GetTrackType());
-                const auto connectionSides = ted.sequenceData.sequences[track->GetSequenceIndex()]
+                const auto& ted = GetTrackElementDescriptor(track->getTrackType());
+                const auto connectionSides = ted.sequenceData.sequences[track->getSequenceIndex()]
                                                  .getEntranceConnectionSides();
                 if (connectionSides & (1 << side))
                     return d;

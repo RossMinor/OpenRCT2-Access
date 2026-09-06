@@ -13,8 +13,8 @@
 #include <openrct2-ui/input/MouseInput.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/LandTool.h>
-#include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
 #include <openrct2/GameState.h>
@@ -27,6 +27,7 @@
 #include <openrct2/actions/terraform/SurfaceSetStyleAction.h>
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
+#include <openrct2/interface/Viewport.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/object/ObjectManager.h>
@@ -34,7 +35,6 @@
 #include <openrct2/object/TerrainSurfaceObject.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/world/MapSelection.h>
-#include <openrct2/world/Park.h>
 
 using OpenRCT2::GameActions::CommandFlag;
 
@@ -447,7 +447,7 @@ namespace OpenRCT2::Ui::Windows
 
             screenCoords = { windowPos.x + previewWidget->midX(), windowPos.y + previewWidget->bottom + 5 };
 
-            if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
+            if (!getGameState().park.flags.has(ParkFlag::noMoney))
             {
                 // Draw raise cost amount
                 if (_landToolRaiseCost != kMoney64Undefined && _landToolRaiseCost != 0)
@@ -468,7 +468,8 @@ namespace OpenRCT2::Ui::Windows
                 screenCoords.y += 50;
 
                 // Draw paint price
-                numTiles = gLandToolSize * gLandToolSize;
+                const bool mapCtrlPressed = GetInputManager().isModifierKeyPressed(ModifierKey::ctrl);
+                numTiles = mapCtrlPressed ? gLandToolSize : gLandToolSize * gLandToolSize;
                 price = 0;
                 if (gLandToolTerrainSurface != kObjectEntryIndexNull)
                 {

@@ -16,9 +16,9 @@
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
-#include <openrct2/Game.h>
 #include <openrct2/GameState.h>
 #include <openrct2/SpriteIds.h>
 #include <openrct2/actions/GameActionRunner.h>
@@ -29,17 +29,16 @@
 #include <openrct2/drawing/ColourMap.h>
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Rectangle.h>
+#include <openrct2/drawing/RenderTarget.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/network/Network.h>
-#include <openrct2/ride/RideData.h>
 #include <openrct2/ride/RideManager.hpp>
 #include <openrct2/ride/RideRatings.h>
 #include <openrct2/ride/Vehicle.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/windows/Intent.h>
-#include <openrct2/world/Park.h>
 
 using namespace OpenRCT2::Drawing;
 
@@ -330,8 +329,8 @@ namespace OpenRCT2::Ui::Windows
                 int32_t totalSeats = 0;
                 for (int32_t t = 0; t < ride->numTrains; t++)
                 {
-                    for (auto* car = getGameState().entities.GetEntity<Vehicle>(ride->vehicles[t]); car != nullptr;
-                         car = getGameState().entities.GetEntity<Vehicle>(car->next_vehicle_on_train))
+                    for (auto* car = getGameState().entities.getEntity<Vehicle>(ride->vehicles[t]); car != nullptr;
+                         car = getGameState().entities.getEntity<Vehicle>(car->next_vehicle_on_train))
                     {
                         totalSeats += car->num_seats & kVehicleSeatNumMask;
                     }
@@ -444,7 +443,8 @@ namespace OpenRCT2::Ui::Windows
                 gDropdown.items[0] = Dropdown::PlainMenuLabel(STR_CLOSE_ALL);
                 gDropdown.items[1] = Dropdown::PlainMenuLabel(STR_OPEN_ALL);
                 WindowDropdownShowText(
-                    { windowPos.x + widget.left, windowPos.y + widget.top }, widget.height() - 1, colours[1], 0, 2);
+                    { windowPos.x + widget.left, windowPos.y + widget.top }, widget.height() - 1, colours[1],
+                    { Dropdown::Flag::autoClose }, 2);
             }
             else if (widgetIndex == WIDX_HEADER_CUSTOMISE)
             {
@@ -457,7 +457,7 @@ namespace OpenRCT2::Ui::Windows
                 int32_t numItems = 0;
                 for (int32_t type = INFORMATION_TYPE_STATUS; type <= lastType; type++)
                 {
-                    if ((getGameState().park.flags & PARK_FLAGS_NO_MONEY))
+                    if (getGameState().park.flags.has(ParkFlag::noMoney))
                     {
                         if (ride_info_type_money_mapping[type])
                         {
@@ -480,7 +480,7 @@ namespace OpenRCT2::Ui::Windows
 
                 WindowDropdownShowTextCustomWidth(
                     { windowPos.x + headerWidget.left, windowPos.y + headerWidget.top }, headerWidget.height() - 1, colours[1],
-                    0, Dropdown::Flag::StayOpen, numItems, totalWidth);
+                    0, {}, numItems, totalWidth);
             }
         }
 
@@ -672,9 +672,9 @@ namespace OpenRCT2::Ui::Windows
 
             if (ThemeGetFlags() & UITHEME_FLAG_USE_LIGHTS_RIDE)
             {
-                widgets[WIDX_OPEN_CLOSE_ALL].type = WidgetType::empty;
-                widgets[WIDX_CLOSE_LIGHT].type = WidgetType::imgBtn;
-                widgets[WIDX_OPEN_LIGHT].type = WidgetType::imgBtn;
+                widgets[WIDX_OPEN_CLOSE_ALL].setHidden();
+                widgets[WIDX_CLOSE_LIGHT].setVisible();
+                widgets[WIDX_OPEN_LIGHT].setVisible();
 
                 const auto& gameState = getGameState();
                 const auto& rideManager = RideManager(gameState);
@@ -701,14 +701,13 @@ namespace OpenRCT2::Ui::Windows
             }
             else
             {
-                widgets[WIDX_OPEN_CLOSE_ALL].type = WidgetType::flatBtn;
-                widgets[WIDX_CLOSE_LIGHT].type = WidgetType::empty;
-                widgets[WIDX_OPEN_LIGHT].type = WidgetType::empty;
+                widgets[WIDX_OPEN_CLOSE_ALL].setVisible();
+                widgets[WIDX_CLOSE_LIGHT].setHidden();
+                widgets[WIDX_OPEN_LIGHT].setHidden();
                 widgets[WIDX_QUICK_DEMOLISH].top = widgets[WIDX_OPEN_CLOSE_ALL].bottom + 3;
             }
             widgets[WIDX_QUICK_DEMOLISH].bottom = widgets[WIDX_QUICK_DEMOLISH].top + 23;
-            widgets[WIDX_QUICK_DEMOLISH].type = Network::GetMode() != Network::Mode::client ? WidgetType::flatBtn
-                                                                                            : WidgetType::empty;
+            widgets[WIDX_QUICK_DEMOLISH].setVisible(Network::GetMode() != Network::Mode::client);
         }
 
         /**

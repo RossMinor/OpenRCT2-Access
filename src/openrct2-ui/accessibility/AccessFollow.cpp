@@ -85,7 +85,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_following)
             return;
 
-        auto* peep = getGameState().entities.TryGetEntity<Peep>(_followId);
+        auto* peep = getGameState().entities.tryGetEntity<Peep>(_followId);
         if (peep == nullptr)
         {
             const std::string name = _followName;
@@ -117,7 +117,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         // Read what they are doing when it changes (buying, going on a ride, being sick, etc.).
         Formatter ft;
-        peep->FormatActionTo(ft);
+        peep->formatActionTo(ft);
         std::string action = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
         if (action != _lastAction)
         {

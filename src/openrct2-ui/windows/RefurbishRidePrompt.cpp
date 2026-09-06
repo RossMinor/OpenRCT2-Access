@@ -9,18 +9,15 @@
 
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
-#include <openrct2/Game.h>
 #include <openrct2/GameState.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/ride/RideDemolishAction.h>
-#include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/ui/WindowManager.h>
-#include <openrct2/windows/Intent.h>
-#include <openrct2/world/Park.h>
 
 namespace OpenRCT2::Ui::Windows
 {
@@ -53,7 +50,7 @@ namespace OpenRCT2::Ui::Windows
             rideId = currentRide.id;
             _demolishRideCost = -RideGetRefundPrice(currentRide);
 
-            auto stringId = (getGameState().park.flags & PARK_FLAGS_NO_MONEY) ? STR_REFURBISH_RIDE_ID_NO_MONEY
+            auto stringId = getGameState().park.flags.has(ParkFlag::noMoney) ? STR_REFURBISH_RIDE_ID_NO_MONEY
                                                                               : STR_REFURBISH_RIDE_ID_MONEY;
             Formatter ft;
             currentRide.formatNameTo(ft);
@@ -98,8 +95,8 @@ namespace OpenRCT2::Ui::Windows
             auto currentRide = GetRide(rideId);
             if (currentRide != nullptr)
             {
-                auto stringId = (getGameState().park.flags & PARK_FLAGS_NO_MONEY) ? STR_REFURBISH_RIDE_ID_NO_MONEY
-                                                                                  : STR_REFURBISH_RIDE_ID_MONEY;
+                auto stringId = getGameState().park.flags.has(ParkFlag::noMoney) ? STR_REFURBISH_RIDE_ID_NO_MONEY
+                                                                                 : STR_REFURBISH_RIDE_ID_MONEY;
                 auto ft = Formatter();
                 currentRide->formatNameTo(ft);
                 ft.Add<money64>(_demolishRideCost / 2);

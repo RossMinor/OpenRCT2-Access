@@ -159,10 +159,10 @@ namespace OpenRCT2::Ui::Accessibility
         {
             Http::Request request;
             request.url = kReleasesApiUrl;
-            request.method = Http::Method::GET;
+            request.method = Http::Method::get;
 
             const auto res = Http::Do(request);
-            if (res.status == Http::Status::Ok)
+            if (res.status == Http::Status::ok)
             {
                 const auto root = Json::FromString(res.body);
                 const std::string tag = Json::GetString(root["tag_name"]);
@@ -207,10 +207,10 @@ namespace OpenRCT2::Ui::Accessibility
         {
             Http::Request request;
             request.url = kEngineReleasesApiUrl;
-            request.method = Http::Method::GET;
+            request.method = Http::Method::get;
 
             const auto res = Http::Do(request);
-            if (res.status == Http::Status::Ok)
+            if (res.status == Http::Status::ok)
             {
                 const auto root = Json::FromString(res.body);
                 std::string tag = Json::GetString(root["tag_name"]);
@@ -239,9 +239,9 @@ namespace OpenRCT2::Ui::Accessibility
         {
             Http::Request request;
             request.url = url;
-            request.method = Http::Method::GET;
+            request.method = Http::Method::get;
             const auto res = Http::Do(request);
-            if (res.status != Http::Status::Ok || res.body.empty())
+            if (res.status != Http::Status::ok || res.body.empty())
             {
                 _installError = "the download did not complete";
                 _installState = 3;

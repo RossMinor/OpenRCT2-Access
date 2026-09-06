@@ -18,14 +18,12 @@
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/Dropdown.h>
-#include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/ViewportQuery.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
-#include <openrct2/Game.h>
 #include <openrct2/GameState.h>
-#include <openrct2/Input.h>
 #include <openrct2/SpriteIds.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/peep/PeepPickupAction.h>
@@ -33,7 +31,6 @@
 #include <openrct2/actions/peep/StaffHireNewAction.h>
 #include <openrct2/actions/peep/StaffSetColourAction.h>
 #include <openrct2/config/Config.h>
-#include <openrct2/core/EnumUtils.hpp>
 #include <openrct2/core/String.hpp>
 #include <openrct2/drawing/ColourMap.h>
 #include <openrct2/drawing/Drawing.h>
@@ -44,6 +41,8 @@
 #include <openrct2/entity/EntityRegistry.h>
 #include <openrct2/entity/PatrolArea.h>
 #include <openrct2/entity/Staff.h>
+#include <openrct2/interface/Viewport.h>
+#include <openrct2/interface/WidgetIndexGlobals.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/management/Finance.h>
@@ -51,10 +50,7 @@
 #include <openrct2/object/ObjectManager.h>
 #include <openrct2/object/PeepAnimationsObject.h>
 #include <openrct2/ui/WindowManager.h>
-#include <openrct2/util/Util.h>
 #include <openrct2/windows/Intent.h>
-#include <openrct2/world/Footpath.h>
-#include <openrct2/world/Park.h>
 #include <vector>
 
 using namespace OpenRCT2::Drawing;
@@ -138,7 +134,7 @@ namespace OpenRCT2::Ui::Windows
             WindowInitScrollWidgets(*this);
             WindowSetResize(*this, kWindowSize, { kMaximumWindowWidth, kMaximumWindowHeight });
 
-            widgets[WIDX_STAFF_LIST_UNIFORM_COLOUR_PICKER].type = WidgetType::empty;
+            widgets[WIDX_STAFF_LIST_UNIFORM_COLOUR_PICKER].setHidden();
 
             RefreshList();
         }
@@ -200,10 +196,10 @@ namespace OpenRCT2::Ui::Windows
             {
                 for (auto peep : EntityList<Staff>())
                 {
-                    getGameState().entities.EntitySetFlashing(peep, false);
+                    getGameState().entities.entitySetFlashing(peep, false);
                     if (peep->assignedStaffType == GetSelectedStaffType())
                     {
-                        getGameState().entities.EntitySetFlashing(peep, true);
+                        getGameState().entities.entitySetFlashing(peep, true);
                     }
                 }
             }
@@ -277,11 +273,11 @@ namespace OpenRCT2::Ui::Windows
         std::string AccessStaffText(EntityId id, const std::string& name) const
         {
             std::string text = name;
-            const auto* peep = getGameState().entities.GetEntity<Staff>(id);
+            const auto* peep = getGameState().entities.getEntity<Staff>(id);
             if (peep != nullptr)
             {
                 Formatter ft;
-                peep->FormatActionTo(ft);
+                peep->formatActionTo(ft);
                 const auto act = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
                 if (!act.empty())
                     text += ", " + act;
@@ -297,7 +293,7 @@ namespace OpenRCT2::Ui::Windows
             static const char* kHireNames[] = { "handyman", "mechanic", "security guard", "entertainer" };
             const int32_t t = std::clamp(_selectedTab, 0, 3);
             std::string text = std::string(kTabNames[t]) + ", " + std::to_string(_staffList.size());
-            if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
+            if (!getGameState().park.flags.has(ParkFlag::noMoney))
                 text += ", wages "
                     + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, GetStaffWage(GetSelectedStaffType()))
                     + " per month";
@@ -324,7 +320,7 @@ namespace OpenRCT2::Ui::Windows
                 vt.announcements.emplace_back(
                     [this, id = entry.Id, name = entry.Name]() { return AccessStaffText(id, name); });
                 vt.onActivate = [this, id = entry.Id]() {
-                    auto* peep = getGameState().entities.GetEntity<Staff>(id);
+                    auto* peep = getGameState().entities.getEntity<Staff>(id);
                     if (peep == nullptr)
                         return;
                     auto intent = Intent(WindowClass::peep);
@@ -384,11 +380,11 @@ namespace OpenRCT2::Ui::Windows
                 if (res->error != GameActions::Status::ok)
                     return; // failures (e.g. too many staff) are spoken by the error window
                 auto actionResult = res->getData<GameActions::StaffHireNewActionResult>();
-                auto* staff = getGameState().entities.GetEntity<Staff>(actionResult.StaffEntityId);
+                auto* staff = getGameState().entities.getEntity<Staff>(actionResult.StaffEntityId);
                 if (staff == nullptr)
                     return;
                 Formatter ft;
-                staff->FormatNameTo(ft);
+                staff->formatNameTo(ft);
                 // The wage was already announced on the type header before hiring.
                 Accessibility::ScreenReaderSpeak("Hired " + OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data()));
             });
@@ -405,11 +401,11 @@ namespace OpenRCT2::Ui::Windows
             setWidgetPressed(_selectedTab + WIDX_STAFF_LIST_HANDYMEN_TAB, true);
 
             widgets[WIDX_STAFF_LIST_HIRE_BUTTON].text = GetStaffNamingConvention(GetSelectedStaffType()).ActionHire;
-            widgets[WIDX_STAFF_LIST_UNIFORM_COLOUR_PICKER].type = WidgetType::empty;
+            widgets[WIDX_STAFF_LIST_UNIFORM_COLOUR_PICKER].setHidden();
 
             if (GetSelectedStaffType() != StaffType::entertainer)
             {
-                widgets[WIDX_STAFF_LIST_UNIFORM_COLOUR_PICKER].type = WidgetType::colourBtn;
+                widgets[WIDX_STAFF_LIST_UNIFORM_COLOUR_PICKER].setVisible();
                 widgets[WIDX_STAFF_LIST_UNIFORM_COLOUR_PICKER].image = getColourButtonImage(
                     StaffGetColour(GetSelectedStaffType()));
             }
@@ -432,7 +428,7 @@ namespace OpenRCT2::Ui::Windows
             drawWidgets(rt);
             DrawTabImages(rt);
 
-            if (!(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
+            if (!getGameState().park.flags.has(ParkFlag::noMoney))
             {
                 auto ft = Formatter();
                 ft.Add<money64>(GetStaffWage(GetSelectedStaffType()));
@@ -505,7 +501,7 @@ namespace OpenRCT2::Ui::Windows
                     }
                     else
                     {
-                        auto peep = gameState.entities.GetEntity<Staff>(entry.Id);
+                        auto peep = gameState.entities.getEntity<Staff>(entry.Id);
                         if (peep != nullptr)
                         {
                             auto intent = Intent(WindowClass::peep);
@@ -544,7 +540,7 @@ namespace OpenRCT2::Ui::Windows
 
                 if (y + 11 >= rt.y)
                 {
-                    const auto* peep = getGameState().entities.GetEntity<Staff>(entry.Id);
+                    const auto* peep = getGameState().entities.getEntity<Staff>(entry.Id);
                     if (peep == nullptr)
                     {
                         continue;
@@ -564,11 +560,11 @@ namespace OpenRCT2::Ui::Windows
                     }
 
                     auto ft = Formatter();
-                    peep->FormatNameTo(ft);
+                    peep->formatNameTo(ft);
                     drawTextEllipsised(rt, { 0, y }, nameColumnSize, format, ft);
 
                     ft = Formatter();
-                    peep->FormatActionTo(ft);
+                    peep->formatActionTo(ft);
                     drawTextEllipsised(rt, { actionOffset, y }, actionColumnSize, format, ft);
 
                     // True if a patrol path is set for the worker
@@ -597,7 +593,7 @@ namespace OpenRCT2::Ui::Windows
                     }
                     else
                     {
-                        GfxDrawSprite(rt, GetCostumeInlineSprite(peep->AnimationObjectIndex), { staffOrderIcon_x, y });
+                        GfxDrawSprite(rt, GetCostumeInlineSprite(peep->animationObjectIndex), { staffOrderIcon_x, y });
                     }
                 }
 
@@ -643,14 +639,14 @@ namespace OpenRCT2::Ui::Windows
 
             for (auto* peep : EntityList<Staff>())
             {
-                getGameState().entities.EntitySetFlashing(peep, false);
+                getGameState().entities.entitySetFlashing(peep, false);
                 if (peep->assignedStaffType == GetSelectedStaffType())
                 {
-                    getGameState().entities.EntitySetFlashing(peep, true);
+                    getGameState().entities.entitySetFlashing(peep, true);
 
                     StaffEntry entry;
                     entry.Id = peep->id;
-                    entry.Name = peep->GetName();
+                    entry.Name = peep->getName();
 
                     _staffList.push_back(std::move(entry));
                 }
@@ -703,12 +699,12 @@ namespace OpenRCT2::Ui::Windows
                     return;
 
                 auto actionResult = res->getData<GameActions::StaffHireNewActionResult>();
-                auto* staff = getGameState().entities.GetEntity<Staff>(actionResult.StaffEntityId);
+                auto* staff = getGameState().entities.getEntity<Staff>(actionResult.StaffEntityId);
                 if (staff == nullptr)
                     return;
 
                 // If autoposition of staff is disabled, pickup peep and then open the staff window
-                if (staff->State == PeepState::picked)
+                if (staff->state == PeepState::picked)
                 {
                     CoordsXYZ nullLoc{};
                     nullLoc.SetNull();
@@ -720,7 +716,7 @@ namespace OpenRCT2::Ui::Windows
                             if (result->error != GameActions::Status::ok)
                                 return;
 
-                            auto* staff2 = getGameState().entities.GetEntity<Staff>(staffId);
+                            auto* staff2 = getGameState().entities.getEntity<Staff>(staffId);
                             auto intent = Intent(WindowClass::peep);
                             intent.PutExtra(INTENT_EXTRA_PEEP, staff2);
                             auto* wind = ContextOpenIntent(&intent);

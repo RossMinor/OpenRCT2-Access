@@ -14,14 +14,13 @@
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
-#include <openrct2/Game.h>
 #include <openrct2/GameState.h>
 #include <openrct2/SpriteIds.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/network/NetworkModifyGroupAction.h>
 #include <openrct2/config/Config.h>
-#include <openrct2/core/String.hpp>
 #include <openrct2/drawing/ColourMap.h>
 #include <openrct2/drawing/Drawing.String.h>
 #include <openrct2/drawing/Drawing.h>
@@ -178,7 +177,7 @@ namespace OpenRCT2::Ui::Windows
 
             WindowDropdownShowTextCustomWidth(
                 windowPos + ScreenCoordsXY{ dropdownWidget->left, dropdownWidget->top }, dropdownWidget->height(), colours[1],
-                0, 0, numItems, widget->right - dropdownWidget->left);
+                0, { Dropdown::Flag::autoClose }, numItems, widget->right - dropdownWidget->left);
 
             for (auto i = 0; i < Network::GetNumGroups(); i++)
             {
@@ -690,10 +689,7 @@ namespace OpenRCT2::Ui::Windows
                 {
                     WindowAlignTabs(this, WIDX_TAB1, WIDX_TAB4);
 
-                    if (Network::GetMode() == Network::Mode::client)
-                    {
-                        widgets[WIDX_KNOWN_KEYS_ONLY_CHECKBOX].type = WidgetType::empty;
-                    }
+                    widgets[WIDX_KNOWN_KEYS_ONLY_CHECKBOX].setHidden(Network::GetMode() == Network::Mode::client);
 
                     setCheckboxValue(WIDX_LOG_CHAT_CHECKBOX, Config::Get().network.logChat);
                     setCheckboxValue(WIDX_LOG_SERVER_ACTIONS_CHECKBOX, Config::Get().network.logServerActions);

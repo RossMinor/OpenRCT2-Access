@@ -46,9 +46,9 @@ namespace OpenRCT2::Ui::Accessibility
                 }
                 else if (auto* entrance = el->asEntrance(); entrance != nullptr)
                 {
-                    const auto type = entrance->GetEntranceType();
-                    if (type == ENTRANCE_TYPE_RIDE_ENTRANCE || type == ENTRANCE_TYPE_RIDE_EXIT
-                        || type == ENTRANCE_TYPE_PARK_ENTRANCE)
+                    const auto type = entrance->getEntranceType();
+                    if (type == EntranceType::rideEntrance || type == EntranceType::rideExit
+                        || type == EntranceType::parkEntrance)
                         top = std::max(top, el->getBaseZ());
                 }
             }

@@ -11,6 +11,8 @@
 
 #include "ShortcutIds.h"
 
+#include <SDL_events.h>
+#include <SDL_timer.h>
 #include <SDL.h>
 #include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/AccessMultiplayer.h>
@@ -29,14 +31,13 @@
 #include <openrct2-ui/interface/InGameConsole.h>
 #include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
+#include <openrct2/Context.h>
 #include <openrct2/Input.h>
 #include <openrct2/OpenRCT2.h>
 #include <openrct2/config/Config.h>
 #include <openrct2/interface/Chat.h>
 #include <openrct2/interface/Viewport.h>
-#include <openrct2/interface/Window.h>
 #include <openrct2/paint/VirtualFloor.h>
-#include <openrct2/ui/UiContext.h>
 #include <openrct2/ui/WindowManager.h>
 
 using namespace OpenRCT2::Ui;

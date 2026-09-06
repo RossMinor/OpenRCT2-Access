@@ -248,7 +248,7 @@ namespace OpenRCT2::Audio
 
     /**
      * Plays the specified sound at a virtual location on a specific mixer group. Used by the
-     * accessibility mod to route its feedback cues through MixerGroup::Accessibility, which is scaled
+     * accessibility mod to route its feedback cues through MixerGroup::accessibility, which is scaled
      * only by master volume and not by the game's sound-effect slider.
      */
     void Play3D(SoundId soundId, const CoordsXYZ& loc, int32_t volumeAdjust, MixerGroup group);

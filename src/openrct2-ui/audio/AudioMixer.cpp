@@ -146,7 +146,7 @@ void AudioMixer::GetNextAudioChunk(uint8_t* dst, size_t length)
         else
         {
             auto group = channel->GetGroup();
-            if ((group != MixerGroup::Sound || Config::Get().sound.soundEnabled) && Config::Get().sound.masterSoundEnabled
+            if ((group != MixerGroup::sound || Config::Get().sound.soundEnabled) && Config::Get().sound.masterSoundEnabled
                 && Config::Get().sound.masterVolume != 0)
             {
                 MixChannel(channel.get(), dst, length);
@@ -336,7 +336,7 @@ int32_t AudioMixer::ApplyVolume(const IAudioChannel* channel, void* buffer, size
 
     switch (channel->GetGroup())
     {
-        case MixerGroup::Sound:
+        case MixerGroup::sound:
             volumeAdjust *= _adjustSoundVolume;
 
             // On the title screen the background demo park's sound effects are scaled down so the menu
@@ -347,11 +347,11 @@ int32_t AudioMixer::ApplyVolume(const IAudioChannel* channel, void* buffer, size
                 volumeAdjust *= std::clamp<int32_t>(Config::Get().sound.titleSoundVolume, 0, 100) / 100.0f;
             }
             break;
-        case MixerGroup::RideMusic:
-        case MixerGroup::TitleMusic:
+        case MixerGroup::rideMusic:
+        case MixerGroup::titleMusic:
             volumeAdjust *= _adjustMusicVolume;
             break;
-        case MixerGroup::Accessibility:
+        case MixerGroup::accessibility:
             // Master volume only (already applied above). Intentionally NOT scaled by the game's
             // sound-effect slider so the accessibility mod's own cue-volume setting is the sole
             // in-game control over these sounds.

@@ -430,6 +430,6 @@ namespace OpenRCT2::Ui::Accessibility
 
         // Route through the accessibility mixer group so this cue is scaled only by master volume and
         // the mod's own cue-volume setting (applied via volumeAdjust), never the game's sound slider.
-        Audio::Play3D(soundId, loc, volumeAdjust, Audio::MixerGroup::Accessibility);
+        Audio::Play3D(soundId, loc, volumeAdjust, Audio::MixerGroup::accessibility);
     }
 } // namespace OpenRCT2::Ui::Accessibility

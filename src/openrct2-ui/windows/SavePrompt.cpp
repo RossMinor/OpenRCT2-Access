@@ -13,6 +13,7 @@
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
 #include <openrct2/localisation/Formatting.h>
@@ -23,6 +24,7 @@
 #include <openrct2/audio/Audio.h>
 #include <openrct2/config/Config.h>
 #include <openrct2/network/Network.h>
+#include <openrct2/ui/UiContext.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/windows/Intent.h>
 
@@ -218,7 +220,8 @@ namespace OpenRCT2::Ui::Windows
     WindowBase* SavePromptOpen()
     {
         PromptMode prompt_mode = gSavePromptMode;
-        if (prompt_mode == PromptMode::quit)
+        const bool isQuitRequest = prompt_mode == PromptMode::quit;
+        if (isQuitRequest)
         {
             prompt_mode = PromptMode::saveBeforeQuit;
         }
@@ -264,6 +267,13 @@ namespace OpenRCT2::Ui::Windows
         if (isInTrackDesignerOrManager())
         {
             windowSize = kWindowSizeQuit;
+        }
+
+        // The prompt blocks the OS quit request, so signal that the game is waiting on the user.
+        auto& uiContext = GetContext()->GetUiContext();
+        if (isQuitRequest && !uiContext.HasFocus())
+        {
+            uiContext.requestUserAttention();
         }
 
         auto savePromptWindow = std::make_unique<SavePromptWindow>(prompt_mode);

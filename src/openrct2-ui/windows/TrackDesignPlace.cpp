@@ -11,9 +11,9 @@
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
-#include <openrct2-ui/interface/Viewport.h>
 #include <openrct2-ui/interface/ViewportInteraction.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Cheats.h>
 #include <openrct2/Context.h>
@@ -30,11 +30,12 @@
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/NewDrawing.h>
 #include <openrct2/drawing/Text.h>
+#include <openrct2/interface/Viewport.h>
+#include <openrct2/interface/WidgetIndexGlobals.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/paint/VirtualFloor.h>
 #include <openrct2/ride/RideConstruction.h>
 #include <openrct2/ride/RideData.h>
-#include <openrct2/ride/Track.h>
 #include <openrct2/ride/TrackData.h>
 #include <openrct2/ride/TrackDesign.h>
 #include <openrct2/ride/TrackDesignRepository.h>
@@ -43,8 +44,6 @@
 #include <openrct2/windows/Intent.h>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/MapSelection.h>
-#include <openrct2/world/Park.h>
-#include <openrct2/world/tile_element/Slope.h>
 #include <openrct2/world/tile_element/SurfaceElement.h>
 #include <algorithm>
 #include <optional>
@@ -422,7 +421,7 @@ namespace OpenRCT2::Ui::Windows
             }
 
             // Price
-            if (_placementCost != kMoney64Undefined && !(getGameState().park.flags & PARK_FLAGS_NO_MONEY))
+            if (_placementCost != kMoney64Undefined && !getGameState().park.flags.has(ParkFlag::noMoney))
             {
                 auto ft = Formatter();
                 ft.Add<money64>(_placementCost);
@@ -705,15 +704,15 @@ namespace OpenRCT2::Ui::Windows
                 {
                     why = "off the edge of the map";
                 }
-                else if (surface->GetSlope() != 0)
+                else if (surface->getSlope() != 0)
                 {
                     why = "sloped ground";
                 }
                 else
                 {
                     int32_t top = floor2(surface->getBaseZ(), kCoordsZStep);
-                    if (surface->GetWaterHeight() > 0)
-                        top = std::max<int32_t>(top, surface->GetWaterHeight());
+                    if (surface->getWaterHeight() > 0)
+                        top = std::max<int32_t>(top, surface->getWaterHeight());
                     // findValidTrackDesignPlaceHeight only probes 7 steps up from the cursor's ground
                     // height; ground higher than that range cannot be bridged by raising the ride.
                     if ((top - cursorBaseZ) > 6 * static_cast<int32_t>(kCoordsZStep))
@@ -753,8 +752,11 @@ namespace OpenRCT2::Ui::Windows
         // ruled out, nothing clearable is left to stop it. Track elements are never touched.
         void clearFootprintScenery(const CoordsXY& origin)
         {
-            const GameActions::ClearableItems items = GameActions::CLEARABLE_ITEMS::kScenerySmall
-                | GameActions::CLEARABLE_ITEMS::kSceneryLarge;
+            // 0.5.5 split walls out of small scenery, so they are named explicitly to keep clearing
+            // the same things as before the port.
+            const GameActions::ClearableItems items{ GameActions::ClearableItem::smallScenery,
+                                                     GameActions::ClearableItem::largeScenery,
+                                                     GameActions::ClearableItem::walls };
             for (const auto& tile : validatedTiles(origin))
             {
                 auto clear = GameActions::ClearAction(MapRange(tile, tile), items);
@@ -840,8 +842,8 @@ namespace OpenRCT2::Ui::Windows
             }
 
             int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
-            if (surface->GetWaterHeight() > 0)
-                baseZ = std::max<int32_t>(baseZ, surface->GetWaterHeight());
+            if (surface->getWaterHeight() > 0)
+                baseZ = std::max<int32_t>(baseZ, surface->getWaterHeight());
             baseZ += TrackDesignGetZPlacement(
                 *_trackDesign, RideGetTemporaryForPreview(), { mapCoords, baseZ, _currentTrackPieceDirection });
 
@@ -981,8 +983,8 @@ namespace OpenRCT2::Ui::Windows
             clearProvisional();
 
             int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
-            if (surface->GetWaterHeight() > 0)
-                baseZ = std::max<int32_t>(baseZ, surface->GetWaterHeight());
+            if (surface->getWaterHeight() > 0)
+                baseZ = std::max<int32_t>(baseZ, surface->getWaterHeight());
             // Strictly follow the game's own placement height: getBaseZ (which positions the
             // construction ghost, and the mouse tool's real placement) adds this design-specific
             // offset so the design sits where the ghost shows it, instead of dropping its origin to
@@ -1145,8 +1147,8 @@ namespace OpenRCT2::Ui::Windows
                     _trackPlaceCtrlZ = floor2(surfaceElement->getBaseZ(), kCoordsZStep);
 
                     // Increase Z above water
-                    if (surfaceElement->GetWaterHeight() > 0)
-                        _trackPlaceCtrlZ = std::max(_trackPlaceCtrlZ, surfaceElement->GetWaterHeight());
+                    if (surfaceElement->getWaterHeight() > 0)
+                        _trackPlaceCtrlZ = std::max(_trackPlaceCtrlZ, surfaceElement->getWaterHeight());
                 }
                 else
                 {
@@ -1196,8 +1198,8 @@ namespace OpenRCT2::Ui::Windows
                 _trackPlaceZ = floor2(surfaceElement->getBaseZ(), kCoordsZStep);
 
                 // Increase Z above water
-                if (surfaceElement->GetWaterHeight() > 0)
-                    _trackPlaceZ = std::max(_trackPlaceZ, surfaceElement->GetWaterHeight());
+                if (surfaceElement->getWaterHeight() > 0)
+                    _trackPlaceZ = std::max(_trackPlaceZ, surfaceElement->getWaterHeight());
 
                 if (_trackPlaceShiftState)
                 {

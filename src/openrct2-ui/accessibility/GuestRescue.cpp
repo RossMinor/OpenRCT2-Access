@@ -95,14 +95,14 @@ namespace OpenRCT2::Ui::Accessibility
             if (path == nullptr)
                 continue;
 
-            uint8_t edges = path->GetEdges();
+            uint8_t edges = path->getEdges();
             for (Direction dir : kAllDirections)
             {
                 if (!(edges & (1 << dir)))
                     continue;
 
                 int32_t arrivalZ = loc.z;
-                if (path->IsSloped() && path->GetSlopeDirection() == dir)
+                if (path->isSloped() && path->getSlopeDirection() == dir)
                     arrivalZ += 2;
 
                 const TileCoordsXY neighbour{ loc.x + TileDirectionDelta[dir].x, loc.y + TileDirectionDelta[dir].y };
@@ -196,7 +196,7 @@ namespace OpenRCT2::Ui::Accessibility
                                entranceTile.z });
 
         for (const auto& candidate : candidates)
-            if (guest.Place(candidate, false).error == GameActions::Status::ok)
+            if (guest.place(candidate, false).error == GameActions::Status::ok)
                 return candidate.ToCoordsXYZ();
         return std::nullopt;
     }
@@ -377,7 +377,7 @@ namespace OpenRCT2::Ui::Accessibility
         {
             if (guest->outsideOfPark)
                 continue;
-            if (guest->State != PeepState::walking && guest->State != PeepState::sitting)
+            if (guest->state != PeepState::walking && guest->state != PeepState::sitting)
                 continue;
             if (!GuestHasLostThought(*guest))
                 continue;
@@ -388,7 +388,7 @@ namespace OpenRCT2::Ui::Accessibility
             // network we flooded out from the entrances. A guest NOT on any footpath (wandered onto
             // grass, marooned by deleted paths) has nothing to walk on at all, so they are stranded
             // by definition - teleport them too.
-            const TileCoordsXYZ guestTile{ guest->NextLoc };
+            const TileCoordsXYZ guestTile{ guest->nextLoc };
             const auto* pathAtGuest = MapGetPathElementAt(guestTile);
             if (pathAtGuest != nullptr && reachable.count(PackTileKey(guestTile.x, guestTile.y, guestTile.z)) != 0)
                 continue; // on a path that still reaches an exit on its own

@@ -17,14 +17,13 @@
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/FileBrowser.h>
 #include <openrct2-ui/interface/Widget.h>
+#include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Diagnostic.h>
 #include <openrct2/FileClassifier.h>
 #include <openrct2/Game.h>
-#include <openrct2/GameState.h>
 #include <openrct2/OpenRCT2.h>
 #include <openrct2/ParkImporter.h>
-#include <openrct2/PlatformEnvironment.h>
 #include <openrct2/SpriteIds.h>
 #include <openrct2/audio/Audio.h>
 #include <openrct2/config/Config.h>
@@ -45,16 +44,10 @@
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Localisation.Date.h>
 #include <openrct2/network/Network.h>
-#include <openrct2/object/ObjectRepository.h>
 #include <openrct2/park/ParkPreview.h>
 #include <openrct2/platform/Platform.h>
-#include <openrct2/rct2/T6Exporter.h>
-#include <openrct2/ride/TrackDesign.h>
-#include <openrct2/scenes/title/TitleScene.h>
 #include <openrct2/ui/UiContext.h>
 #include <openrct2/ui/WindowManager.h>
-#include <openrct2/windows/Intent.h>
-#include <openrct2/world/Park.h>
 #include <string>
 #include <vector>
 
@@ -555,11 +548,7 @@ namespace OpenRCT2::Ui::Windows
             _accessIndex = -1;
 
             const auto& uiContext = GetContext()->GetUiContext();
-            if (!uiContext.HasFilePicker())
-            {
-                setWidgetDisabled(WIDX_SYSTEM_BROWSER, true);
-                widgets[WIDX_SYSTEM_BROWSER].type = WidgetType::empty;
-            }
+            widgets[WIDX_SYSTEM_BROWSER].setVisible(uiContext.HasFilePicker());
 
             const bool isSave = action == LoadSaveAction::save;
 
@@ -570,22 +559,18 @@ namespace OpenRCT2::Ui::Windows
                 Audio::StopAll();
             }
 
+            widgets[WIDX_FILENAME_TEXTBOX].setVisible(isSave);
+            widgets[WIDX_SAVE].setVisible(isSave);
+
             if (isSave)
             {
-                widgets[WIDX_FILENAME_TEXTBOX].type = WidgetType::textBox;
                 widgets[WIDX_FILENAME_TEXTBOX].string = _currentFilename;
-                widgets[WIDX_SAVE].type = WidgetType::button;
 
                 // Set current filename
                 String::set(_currentFilename, sizeof(_currentFilename), _defaultPath.c_str());
 
                 // Focus textbox
                 WindowStartTextbox(*this, WIDX_FILENAME_TEXTBOX, _currentFilename, sizeof(_currentFilename));
-            }
-            else
-            {
-                widgets[WIDX_FILENAME_TEXTBOX].type = WidgetType::empty;
-                widgets[WIDX_SAVE].type = WidgetType::empty;
             }
 
             // Populate file list
@@ -679,7 +664,7 @@ namespace OpenRCT2::Ui::Windows
             {
                 // Date column on the right
                 Widget& dateWidget = widgets[WIDX_SORT_DATE];
-                dateWidget.type = WidgetType::tableHeader;
+                dateWidget.setVisible();
                 dateWidget.right = customiseWidget.left - 1;
                 dateWidget.left = dateWidget.right - (maxDateWidth + maxTimeWidth + (4 * kDateTimeGap) + (kScrollBarWidth + 1));
 
@@ -687,7 +672,7 @@ namespace OpenRCT2::Ui::Windows
                 {
                     // File size column in the middle
                     Widget& sizeWidget = widgets[WIDX_SORT_SIZE];
-                    sizeWidget.type = WidgetType::tableHeader;
+                    sizeWidget.setVisible();
                     sizeWidget.right = dateWidget.left - 1;
                     sizeWidget.left = sizeWidget.right - 65;
 
@@ -698,7 +683,7 @@ namespace OpenRCT2::Ui::Windows
                 {
                     // Hide file size header
                     Widget& sizeWidget = widgets[WIDX_SORT_SIZE];
-                    sizeWidget.type = WidgetType::empty;
+                    sizeWidget.setHidden();
 
                     // Name column is next to date column
                     widgets[WIDX_SORT_NAME].right = dateWidget.left - 1;
@@ -708,11 +693,11 @@ namespace OpenRCT2::Ui::Windows
             {
                 // Hide date header
                 Widget& dateWidget = widgets[WIDX_SORT_DATE];
-                dateWidget.type = WidgetType::empty;
+                dateWidget.setHidden();
 
                 // File size column on the right
                 Widget& sizeWidget = widgets[WIDX_SORT_SIZE];
-                sizeWidget.type = WidgetType::tableHeader;
+                sizeWidget.setVisible();
                 sizeWidget.right = customiseWidget.left - 1;
                 sizeWidget.left = sizeWidget.right - 65;
 
@@ -725,21 +710,21 @@ namespace OpenRCT2::Ui::Windows
                 widgets[WIDX_SORT_NAME].right = customiseWidget.left - 1;
 
                 // Hide other columns
-                widgets[WIDX_SORT_SIZE].type = WidgetType::empty;
-                widgets[WIDX_SORT_DATE].type = WidgetType::empty;
+                widgets[WIDX_SORT_SIZE].setHidden();
+                widgets[WIDX_SORT_DATE].setHidden();
             }
 
             if (action == LoadSaveAction::save)
             {
-                widgets[WIDX_SCROLL].bottom -= 18;
+                widgets[WIDX_SCROLL].bottom -= kButtonFaceHeight + 7;
 
                 // Get 'Save' button string width
                 auto saveLabel = LanguageGetString(STR_FILEBROWSER_SAVE_BUTTON);
                 auto saveLabelWidth = getStringWidth(saveLabel, FontStyle::medium) + 12;
 
-                widgets[WIDX_SAVE].type = WidgetType::button;
-                widgets[WIDX_SAVE].top = height - paddingBottom - 15;
-                widgets[WIDX_SAVE].bottom = height - paddingBottom - 3;
+                widgets[WIDX_SAVE].setVisible();
+                widgets[WIDX_SAVE].bottom = height - paddingBottom - 2;
+                widgets[WIDX_SAVE].top = widgets[WIDX_SAVE].bottom - kButtonFaceHeight;
                 widgets[WIDX_SAVE].right = widgets[WIDX_SCROLL].right;
                 widgets[WIDX_SAVE].left = widgets[WIDX_SAVE].right - saveLabelWidth;
 
@@ -747,16 +732,16 @@ namespace OpenRCT2::Ui::Windows
                 auto filenameLabel = LanguageGetString(STR_FILENAME_LABEL);
                 auto filenameLabelWidth = getStringWidth(filenameLabel, FontStyle::medium);
 
-                widgets[WIDX_FILENAME_TEXTBOX].type = WidgetType::textBox;
-                widgets[WIDX_FILENAME_TEXTBOX].top = height - paddingBottom - 15;
-                widgets[WIDX_FILENAME_TEXTBOX].bottom = height - paddingBottom - 3;
+                widgets[WIDX_FILENAME_TEXTBOX].setVisible();
+                widgets[WIDX_FILENAME_TEXTBOX].bottom = height - paddingBottom - 2;
+                widgets[WIDX_FILENAME_TEXTBOX].top = widgets[WIDX_FILENAME_TEXTBOX].bottom - kButtonFaceHeight;
                 widgets[WIDX_FILENAME_TEXTBOX].left = 4 + filenameLabelWidth + 6;
                 widgets[WIDX_FILENAME_TEXTBOX].right = widgets[WIDX_SAVE].left - 5;
             }
             else
             {
-                widgets[WIDX_SAVE].type = WidgetType::empty;
-                widgets[WIDX_FILENAME_TEXTBOX].type = WidgetType::empty;
+                widgets[WIDX_SAVE].setHidden();
+                widgets[WIDX_FILENAME_TEXTBOX].setHidden();
             }
         }
 
@@ -817,7 +802,7 @@ namespace OpenRCT2::Ui::Windows
             if (action == LoadSaveAction::save)
             {
                 auto& widget = widgets[WIDX_FILENAME_TEXTBOX];
-                drawText(rt, windowPos + ScreenCoordsXY{ 5, widget.top + 2 }, STR_FILENAME_LABEL, { Drawing::Colour::grey });
+                drawText(rt, windowPos + ScreenCoordsXY{ 5, widget.top + 1 }, STR_FILENAME_LABEL, { Drawing::Colour::grey });
             }
         }
 
@@ -943,8 +928,7 @@ namespace OpenRCT2::Ui::Windows
             Widget* widget = &widgets[WIDX_SORT_CUSTOMISE];
 
             WindowDropdownShowTextCustomWidth(
-                { windowPos.x + widget->left - 70, windowPos.y + widget->top }, widget->height(), colours[1], 0,
-                Dropdown::Flag::StayOpen, 7, 90);
+                { windowPos.x + widget->left - 70, windowPos.y + widget->top }, widget->height(), colours[1], 0, {}, 7, 90);
 
             auto& config = Config::Get().general;
 
