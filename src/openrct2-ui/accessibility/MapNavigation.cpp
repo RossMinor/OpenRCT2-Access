@@ -66,6 +66,7 @@
 #include <openrct2/entity/Guest.h>
 #include <openrct2/entity/Litter.h>
 #include <openrct2/entity/Peep.h>
+#include <openrct2/entity/Staff.h>
 #include <openrct2/Game.h>
 #include <openrct2/GameState.h>
 #include <openrct2/Input.h>
@@ -3614,6 +3615,46 @@ namespace OpenRCT2::Ui::Accessibility
     // Enter on the map cursor: open the information window of the ride/stall under the cursor, the
     // edit window of a banner/sign, or park information for the park entrance gate. Announces when
     // there is nothing to open.
+    // Opens whatever entity is standing on the cursor's tile - a guest, a staff member, a ride
+    // vehicle. Returns true if a window was opened.
+    //
+    // Two deliberate departures from the game's own left click. It looks per-TILE rather than at the
+    // pixel under the cursor, so what opens is always something the tile readout actually named; the
+    // pixel test can land on a guest drawn over the cursor while standing on the next tile along. And
+    // it runs LAST rather than first: the game puts entities on top because that is what a mouse
+    // visibly clicks, but a keyboard player navigated to a tile for what is built there, and a guest
+    // may have walked off between hearing them and pressing Enter. Guests and staff also have better
+    // routes of their own through the guest and staff lists.
+    static bool OpenEntityAtCursor()
+    {
+        const auto coords = _cursor.ToCoordsXY();
+
+        for (auto* peep : EntityTileList<Peep>(coords))
+        {
+            Formatter ft;
+            peep->formatNameTo(ft);
+            const std::string name = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
+            if (peep->is<Staff>())
+                Windows::StaffOpen(peep);
+            else
+                Windows::GuestOpen(peep);
+            ScreenReaderSpeak(name);
+            return true;
+        }
+
+        for (auto* vehicle : EntityTileList<Vehicle>(coords))
+        {
+            auto intent = Intent(WindowDetail::vehicle);
+            intent.PutExtra(INTENT_EXTRA_VEHICLE, vehicle);
+            ContextOpenIntent(&intent);
+            auto* ride = GetRide(vehicle->ride);
+            ScreenReaderSpeak(ride != nullptr ? std::string(ride->getName()) + " train" : std::string("Ride vehicle"));
+            return true;
+        }
+
+        return false;
+    }
+
     static void OpenRideOrGateInfoAtCursor()
     {
         if (!_initialised)
@@ -3636,7 +3677,9 @@ namespace OpenRCT2::Ui::Accessibility
             OpenGameWindow(WindowClass::parkInformation, "Park information");
             return;
         }
-        ScreenReaderSpeak("No ride, sign, or gate here");
+        if (OpenEntityAtCursor())
+            return;
+        ScreenReaderSpeak("Nothing here to open");
     }
 
     // Ctrl+Enter on the map cursor: open the ride/stall under the cursor in construction mode, using
@@ -3700,6 +3743,7 @@ namespace OpenRCT2::Ui::Accessibility
                     Windows::WindowTrackPlaceUpdateGhost(CoordsXY{ rWorld.x, rWorld.y });
                     return true;
                 }
+                case SDLK_SPACE:
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER:
                 {
@@ -3723,10 +3767,10 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
 
-        // Shop/stall/flat-ride placement: cursor positions the footprint, R rotates. Enter is
-        // two-stage - the first freezes a preview the player can arrow around to inspect, the second
-        // builds it; Backspace picks a frozen preview back up to reposition. Escape cancels. Arrows
-        // fall through to move the cursor (so the preview can be explored).
+        // Shop/stall/flat-ride placement: cursor positions the footprint, R rotates. Space (or Enter,
+        // kept as an alias) is two-stage - the first freezes a preview the player can arrow around to
+        // inspect, the second builds it; Backspace picks a frozen preview back up to reposition.
+        // Escape cancels. Arrows fall through to move the cursor (so the preview can be explored).
         if (IsAccessibleRidePlacementActive())
         {
             switch (key)
@@ -3734,6 +3778,7 @@ namespace OpenRCT2::Ui::Accessibility
                 case SDLK_r:
                     AccessibleRidePlacementRotate();
                     return true;
+                case SDLK_SPACE:
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER:
                 {
@@ -3752,8 +3797,8 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
 
-        // Scenery placement: cursor positions the object, R rotates (small/large), Enter places,
-        // Escape finishes. Shift+W/A/S/D picks the tile edge (walls/banners) and Shift+Q/E/Z/C picks
+        // Scenery placement: cursor positions the object, R rotates (small/large), Space places
+        // (Enter still does too, so nothing already learned breaks), Escape finishes. Shift+W/A/S/D picks the tile edge (walls/banners) and Shift+Q/E/Z/C picks
         // the corner (small scenery), as the player sees the tile - top/bottom/left/right. Plain
         // arrows fall through to move the cursor.
         if (IsAccessibleSceneryPlacementActive())
@@ -3795,6 +3840,7 @@ namespace OpenRCT2::Ui::Accessibility
                     return true;
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER:
+                case SDLK_SPACE:
                 {
                     if (!_initialised)
                         InitialiseCursor();
@@ -3856,9 +3902,13 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
 
-        // Enter opens the information window of the ride/stall/gate under the cursor. Shift+Enter
-        // rotates the camera (like Shift+arrows); Ctrl+Enter opens the ride/stall in construction
-        // mode. Placement modes handle Enter themselves above, so this only runs on the free cursor.
+        // Enter opens whatever is under the cursor - ride, stall, sign, park gate, or failing those a
+        // guest, staff member or ride vehicle standing there. Shift+Enter rotates the camera (like
+        // Shift+arrows); Ctrl+Enter opens the ride/stall in construction mode. Placement modes handle
+        // Enter themselves above, so this only runs on the free cursor.
+        //
+        // Enter opens, Space builds, Delete removes. Keeping those three verbs distinct is why Enter
+        // no longer doubles as "place" anywhere except as an alias of Space in the placement modes.
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER)
         {
             if (!_initialised)
@@ -4273,11 +4323,13 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(
             "Map cursor. Arrow keys move around the park. C reads the current tile and coordinates. "
             "T opens the status readout, M reads your cash. "
-            "Space builds a footpath, D removes one, L cycles the path slope, End and Home lower and "
+            "Space builds: a footpath here, or whatever you are placing when you are placing something. "
+            "D removes a path, L cycles the path slope, End and Home lower and "
             "raise the build height for bridges. "
             "Page Up and Page Down raise and lower land, hold Control for water or Shift to zoom. "
             "X clears scenery, O buys land, B changes the brush size, K places markers. "
-            "Enter opens the ride, stall, or gate under the cursor, Control Enter starts building it. "
+            "Enter opens whatever is under the cursor - a ride, stall, sign, gate, guest, staff member "
+            "or ride vehicle - and Control Enter starts building on a ride. "
             "Shift with a number sets a waypoint, Control with a number jumps to it. "
             "Shift with F, R, P, G, S, D, or M opens finances, rides, park, guests, staff, research, or "
             "messages. Tab opens the toolbar menu. Shift F1 opens the land tool. "
