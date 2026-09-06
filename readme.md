@@ -22,7 +22,7 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 - Windows.
 - A screen reader. The mod speaks through [Prism](https://github.com/ethindp/prism), a library that hands the mod's speech to whichever reader you already run, so NVDA, JAWS, Narrator, System Access, ZDSR and others all work. [NVDA](https://www.nvaccess.org/download/) is free and is the one the mod is developed and tested against, so it is still the safest choice.
 - The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/).
-- [OpenRCT2](https://openrct2.io/download) itself. The mod installs into a copy of OpenRCT2 that you already have, rather than bringing its own.
+- [OpenRCT2](https://openrct2.io/download) itself. The mod installs into the copy of OpenRCT2 you already have rather than setting up a second one, and any version will do - the download brings the game files it needs, so an older OpenRCT2 is brought up to date as part of installing.
 
 ---
 
@@ -74,7 +74,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - F: Read the direction you are currently facing.
 - Shift + Left or Right: Snaps the camera 90 degrees in either direction.
 - E: Jumps focus to the entrance of the park.
-- Control + arrow keys: Jumps to the nearest ride or stall in that direction.
+- Control + arrow keys: Jumps to the nearest object in that direction and reads the coordinates it lands on. What it looks for is set by the filter below.
+- Control + Shift + Up or Down: Chooses what Control + arrows jump to: rides and stalls, scenery, footpath objects (bins, benches, lamps), or hazards (litter, vomit, and vandalised objects). It starts on rides and stalls.
 - Control + E: Jumps between the entrance and exit of the ride you are hovering over.
 - Shift + 1 ... 9, 0: Place a waypoint at the current location.
 - Control + 1 ... 9, 0: Jump to the waypoint of that number.
@@ -87,7 +88,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - T: Open the park stats window.
 - M: Report your cash amount.
 - []: Moves back or forward through game announcements.
-- Enter: While hovering over a ride or stall, it will open that ride/stall's information page.
+- Enter: Opens whatever is under the cursor - a ride or stall's information page, a sign, the park gates, or a guest, staff member or ride vehicle standing there.
 - Shift + C: Opens the Construct a New Ride window.
 - Shift + F: Open the Finances window.
 - Shift + R: Opens the Rides window.
@@ -99,10 +100,11 @@ At any point, you can press F1 to hear what commands you currently have at your 
 
 ### Building
 
-- Space: Builds a footpath of the selected type on the current tile.
+- Space: Places whatever you are placing. With nothing selected that means a footpath of the current type on the current tile; while placing a ride, stall or scenery it places that instead. Enter also still works for placing, so either key will do.
+- Delete: Removes one thing on the current tile - a path, a bin or bench, scenery, a fence, a sign, a ride entrance or exit, or a piece of track. If there is only one thing there it just goes. If there are several, the mod reads them out and you choose with the up and down arrows, then press Enter. Track always asks you to confirm first, because the game has no undo.
 - Control + P: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location.
 - F4: Opens the path menu.
-- D: Deletes the path on the current tile and elivation.
+- D: Deletes the path on the current tile and elivation. Unlike Delete, this works across a whole marked area.
 - L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path. The sloped path will build int he direction you are facing. So if you are facing north and have slope set to up, the path will gain elivation going north.
 - Home or End: Raise and lower the elivation you are working on. This is useful for building elivated paths.
 - Shift + Home or End: Snaps the cursor to any objects above or below you, respectively.
@@ -128,7 +130,7 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 
 - Arrow Keys: Moves the ride you are wanting to construct around the map.
 - R: Rotate the ride you are constructing 90 degrees right.
-- Enter: Attempts to place the ride. If there is scenery in the location area where the ride will be placed, it will automatically remove the scenery. If there is scenery in the area, but it is still an invalid construction area, the scenery will stay and the game will report the error that is preventing you from constructing and tell you how and where it needs to be fixed.
+- Space or Enter: Attempts to place the ride. If there is scenery in the location area where the ride will be placed, it will automatically remove the scenery. If there is scenery in the area, but it is still an invalid construction area, the scenery will stay and the game will report the error that is preventing you from constructing and tell you how and where it needs to be fixed.
 - Escape: Cancels construction or exits build mode.
 - Shift + W, A, S, or D: Focusses the scenery you are building on the tile's edge of that direction. For example, if you are placing a bench, you can press shift + W to put it on the north side of the tile you are currently on and then press space to place it.
 - Shift + Q, E, Z, or C: Focusses the scenery you are building on the tile's corner you are currently on. For example, if you were placing flowers, you can press shift + Q to point a flower at the top left corner of the tile you are on and then can press space to place the flower.
@@ -146,6 +148,7 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 - Control + - or =: Speeds up or slows down time.
 - Control + H: Teleports all stranded guests on the map back to the entrance and onto a path.
 - Control + Space: Toggle between keyboard and mouse mode. When in keyboard mode, the mouse is modified to not interfere with the keyboard focus. With mouse mode on, it allows the mouse to behave as it would in Open RCT2 normally.
+- / (slash): Opens the chat box in multiplayer. This is C in stock OpenRCT2, but C is the coordinate read-out here, so the mod moves chat to slash. You can change it back under Options, Controls and Interface, Shortcut keys.
 
 ## Tips for Playing the Game
 

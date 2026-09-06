@@ -4,6 +4,17 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.0 (2026-09-06)
+------------------------------------------------------------------------
+New Features and Improvements
+- Updated the mod to work with the latest version of ORCT (5.5).
+- All file dialogues are now accessible.
+- The mod now says which version it is when the game starts.
+- The Delete key now removes one thing at the cursor: a path, a bin or bench, scenery, a fence, a sign, a ride entrance or exit, or a piece of track. When several things share the tile it reads them out and lets you pick with the arrow keys.
+- Streamlined deleting, placing, and interacting with objects. Delete was explain above. Space is now used to place any object: paths, scenery, rides, etc. Enter now interacts: rides, park entrances, etc.
+- Control + shift + up or down arrows now filters between type of objects to jump to: rides and stalls, hazards, scenery, or footpath objects. Control + arrows will then jump to whatever is selected.
+- The multiplayer chat key has moved from C to the slash key. C is the coordinate read-out, so on a server every position check was opening the chat box instead. You can change it back in Options if you prefer.
+
 0.99.2 (2026-09-05)
 ------------------------------------------------------------------------
 Bug Fixes
