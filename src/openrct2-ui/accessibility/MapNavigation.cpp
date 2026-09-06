@@ -81,6 +81,7 @@
 #include <openrct2/object/ObjectLimits.h>
 #include <openrct2/object/ObjectManager.h>
 #include <openrct2/object/ObjectTypes.h>
+#include <openrct2/object/PathAdditionEntry.h>
 #include <openrct2/ride/Ride.h>
 #include <openrct2/ride/RideConstruction.h>
 #include <openrct2/ride/RideData.h>
@@ -477,6 +478,35 @@ namespace OpenRCT2::Ui::Accessibility
         }
         for (auto& [name, n] : counts)
             parts.push_back(n > 1 ? std::to_string(n) + " " + name : name);
+    }
+
+    // True if a litter bin stands on this tile. Bins are path additions rather than objects in their
+    // own right, so they hang off the path element, sharing that slot with benches, lamps and
+    // fountains - the IS_BIN flag is what tells them apart. A ghost addition is a placement preview
+    // that is not really there yet, so it does not count.
+    static bool TileHasTrashBin(const TileCoordsXY& tile)
+    {
+        for (auto* pathEl : TileElementsView<PathElement>(tile.ToCoordsXY()))
+        {
+            if (pathEl->isGhost() || !pathEl->HasAddition() || pathEl->AdditionIsGhost())
+                continue;
+            const auto* entry = pathEl->GetAdditionEntry();
+            if (entry != nullptr && (entry->flags & PATH_ADDITION_FLAG_IS_BIN))
+                return true;
+        }
+        return false;
+    }
+
+    // True if there is vomit on this tile. Vomit is a litter entity rather than a tile element, and
+    // the game stores it as two visual variants that mean the same thing to a player, so both count.
+    static bool TileHasVomit(const TileCoordsXY& tile)
+    {
+        for (auto* litter : EntityTileList<Litter>(tile.ToCoordsXY()))
+        {
+            if (litter->subType == Litter::Type::vomit || litter->subType == Litter::Type::vomitAlt)
+                return true;
+        }
+        return false;
     }
 
     // Gathers the spoken feature parts on a tile, ordered top-down (topmost feature first), with
@@ -1184,6 +1214,21 @@ namespace OpenRCT2::Ui::Accessibility
             }
             _lastStepCat = stepCat;
         }
+
+        // Object cues for two things a sighted player spots at a glance but that are easy to lose in
+        // the middle of a spoken tile readout: a litter bin, and vomit on the ground. Between them
+        // they answer "is this path being kept clean, and is there a bin here to keep it clean with",
+        // which is otherwise several tiles' worth of listening to find out.
+        //
+        // Unlike the footstep cues these are not governed by the step-sound mode. That setting is
+        // about the surface underfoot, which is continuous and quickly becomes noise when repeated;
+        // these mark discrete objects the player is actively sweeping the cursor to find, so
+        // suppressing them on repeats would hide exactly the tiles being searched for. Each sounds at
+        // most once per tile no matter how many bins or vomit piles are on it.
+        if (TileHasTrashBin(_cursor))
+            PlayAccessSound(AccessSound::trashBin);
+        if (TileHasVomit(_cursor))
+            PlayAccessSound(AccessSound::vomit);
 
         // Announce crossing the park boundary in either direction. The tile description (below)
         // already labels unowned land "Outside park", but this gives an explicit, symmetric cue
@@ -2735,12 +2780,134 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(target.label + ", " + SpokenTileCoordsText(_cursor));
     }
 
-    // Jumps the cursor to the nearest ride or stall in the pressed screen direction (Ctrl+arrow). Only
-    // rides within a 90-degree cone of that direction are considered - so "right" ignores something
-    // that is mostly north of you - and among those the closest is chosen. The ride the cursor is
-    // already on is skipped entirely, so a multi-tile ride counts as one target rather than a run of
-    // tiles. Announces the ride landed on, or the compass direction with no ride.
-    static void JumpToNearestRide(uint32_t key)
+    // What Ctrl+arrows jump between. Ctrl+Shift+Up/Down cycles this. It starts on rides and stalls,
+    // which is what the jump always did before the filter existed, so the keys behave as before until
+    // the player deliberately changes category.
+    enum class JumpCategory : uint8_t
+    {
+        ridesAndStalls,
+        scenery,
+        footpathObjects,
+        hazards,
+    };
+    static constexpr int32_t kJumpCategoryCount = 4;
+    static JumpCategory _jumpCategory = JumpCategory::ridesAndStalls;
+
+    // Spoken name of a category, announced when cycling.
+    static const char* JumpCategoryName(JumpCategory category)
+    {
+        switch (category)
+        {
+            case JumpCategory::scenery:
+                return "Scenery";
+            case JumpCategory::footpathObjects:
+                return "Footpath objects";
+            case JumpCategory::hazards:
+                return "Hazards";
+            case JumpCategory::ridesAndStalls:
+                break;
+        }
+        return "Rides and stalls";
+    }
+
+    // How a category is named inside "No <this> to the north", which wants lowercase and plural.
+    static const char* JumpCategoryPluralName(JumpCategory category)
+    {
+        switch (category)
+        {
+            case JumpCategory::scenery:
+                return "scenery";
+            case JumpCategory::footpathObjects:
+                return "footpath objects";
+            case JumpCategory::hazards:
+                return "hazards";
+            case JumpCategory::ridesAndStalls:
+                break;
+        }
+        return "rides";
+    }
+
+    // True if this tile holds something in the given category.
+    //
+    // Rides are the exception: the caller tests them by ride identity rather than through here, so a
+    // multi-tile coaster counts as one target instead of a run of tiles. Nothing in the other three
+    // categories spans tiles that way - a tree, a bench and a pile of vomit each occupy their own
+    // tile - so for those a per-tile test is what "the next one" actually means.
+    static bool TileMatchesJumpCategory(const TileCoordsXY& tile, JumpCategory category)
+    {
+        const auto coords = tile.ToCoordsXY();
+        switch (category)
+        {
+            case JumpCategory::scenery:
+            {
+                // Trees, flowers, shrubs and statues are small scenery; gazebos and the larger props
+                // are large scenery. Both are "scenery" to a player, so both count.
+                for (auto* el : TileElementsView<SmallSceneryElement>(coords))
+                {
+                    if (!el->isGhost())
+                        return true;
+                }
+                for (auto* el : TileElementsView<LargeSceneryElement>(coords))
+                {
+                    if (!el->isGhost())
+                        return true;
+                }
+                return false;
+            }
+
+            case JumpCategory::footpathObjects:
+            {
+                // Bins, benches, lamps and fountains are all path additions hanging off the path
+                // element rather than objects in their own right.
+                for (auto* pathEl : TileElementsView<PathElement>(coords))
+                {
+                    if (!pathEl->isGhost() && pathEl->HasAddition() && !pathEl->AdditionIsGhost())
+                        return true;
+                }
+                return false;
+            }
+
+            case JumpCategory::hazards:
+            {
+                // Dropped litter of every kind - vomit, wrappers, cans, cups - plus vandalised path
+                // additions, which are the broken benches, bins and lamps a handyman has to repair.
+                // These are the things that quietly drag a park rating down, and the whole point of
+                // this category is finding them without sweeping the map tile by tile.
+                for ([[maybe_unused]] auto* litter : EntityTileList<Litter>(coords))
+                    return true;
+                for (auto* pathEl : TileElementsView<PathElement>(coords))
+                {
+                    if (!pathEl->isGhost() && pathEl->HasAddition() && !pathEl->AdditionIsGhost()
+                        && pathEl->IsBroken())
+                        return true;
+                }
+                return false;
+            }
+
+            case JumpCategory::ridesAndStalls:
+                break;
+        }
+        return !GetRideAtTile(tile).IsNull();
+    }
+
+    // Ctrl+Shift+Up/Down: choose what Ctrl+arrows jump between, wrapping at both ends so either key
+    // reaches every category.
+    static void CycleJumpCategory(int32_t delta)
+    {
+        int32_t idx = static_cast<int32_t>(_jumpCategory) + delta;
+        idx = ((idx % kJumpCategoryCount) + kJumpCategoryCount) % kJumpCategoryCount;
+        _jumpCategory = static_cast<JumpCategory>(idx);
+        ScreenReaderSpeak(std::string("Jump filter, ") + JumpCategoryName(_jumpCategory));
+    }
+
+    // Jumps the cursor to the nearest target of the current filter category in the pressed screen
+    // direction (Ctrl+arrow). Only
+    // targets within a 90-degree cone of that direction are considered - so "right" ignores something
+    // that is mostly north of you - and among those the closest is chosen. On rides, the ride the
+    // cursor is already on is skipped entirely, so a multi-tile ride counts as one target rather than
+    // a run of tiles; on the other categories the cursor's own tile is skipped instead. Announces the
+    // tile landed on, or the compass direction when the category has nothing that way.
+    static void JumpToNearest(uint32_t key)
     {
         if (!_initialised)
             InitialiseCursor();
@@ -2785,11 +2952,13 @@ namespace OpenRCT2::Ui::Accessibility
         else if (wdx > 0)
             worldDir = 2; // west
 
+        const bool byRide = (_jumpCategory == JumpCategory::ridesAndStalls);
+
         // Skip the ride the cursor is currently on so the whole ride counts as one, not tile by tile.
-        const RideId currentRide = GetRideAtTile(_cursor);
+        const RideId currentRide = byRide ? GetRideAtTile(_cursor) : RideId::GetNull();
 
         const auto mapSize = getGameState().mapSize;
-        RideId bestRide = RideId::GetNull();
+        bool found = false;
         TileCoordsXY bestTile{};
         int64_t bestDist = std::numeric_limits<int64_t>::max();
 
@@ -2797,9 +2966,20 @@ namespace OpenRCT2::Ui::Accessibility
         {
             for (int32_t x = 1; x <= mapSize.x - 2; x++)
             {
-                const RideId rid = GetRideAtTile(TileCoordsXY{ x, y });
-                if (rid.IsNull() || rid == currentRide)
-                    continue;
+                const TileCoordsXY candidate{ x, y };
+                if (byRide)
+                {
+                    const RideId rid = GetRideAtTile(candidate);
+                    if (rid.IsNull() || rid == currentRide)
+                        continue;
+                }
+                else
+                {
+                    if (x == _cursor.x && y == _cursor.y)
+                        continue; // the tile we are standing on is not "the next one"
+                    if (!TileMatchesJumpCategory(candidate, _jumpCategory))
+                        continue;
+                }
                 const int64_t dispx = x - _cursor.x;
                 const int64_t dispy = y - _cursor.y;
                 const int64_t along = dispx * wdx + dispy * wdy; // distance in the pressed direction
@@ -2812,23 +2992,42 @@ namespace OpenRCT2::Ui::Accessibility
                 if (dist < bestDist)
                 {
                     bestDist = dist;
-                    bestRide = rid;
-                    bestTile = TileCoordsXY{ x, y };
+                    found = true;
+                    bestTile = candidate;
                 }
             }
         }
 
-        if (bestRide.IsNull())
+        if (!found)
         {
-            ScreenReaderSpeak(std::string("No rides to the ") + GetWorldDirectionName(worldDir));
+            ScreenReaderSpeak(
+                std::string("No ") + JumpCategoryPluralName(_jumpCategory) + " to the "
+                + GetWorldDirectionName(worldDir));
             return;
         }
 
         _cursor = bestTile;
         _menuMode = false;
         CentreViewportOnCursor();
+
+        // Same bookkeeping every deliberate jump does (see the marker and waypoint jumps): sound the
+        // elevation tone so the landing is audible, and re-seat the focus elevation on the ground so
+        // C - and anything built here - refers to where the cursor now is rather than the height it
+        // left behind. This jump was the one place that skipped it.
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            SoundElevationOnChange(_cursor);
+            _scanHeight = surface->baseHeight;
+            _scanLocked = false;
+        }
+
+        // The description alone does not say where you have landed, and a jump can cross the whole
+        // map - so read the coordinates after it, the same way the marker and waypoint jumps do.
+        // _lastTileDescription keeps the bare description: it is what the "announce on change" mode
+        // compares against, and coordinates differ on every tile, so folding them in would make every
+        // tile look like a change and defeat that setting.
         _lastTileDescription = GetTileDescription(_cursor);
-        ScreenReaderSpeak(_lastTileDescription);
+        ScreenReaderSpeak(_lastTileDescription + ", " + SpokenTileCoordsText(_cursor));
     }
 
     static bool IsRideConstructionWindowOpen();
@@ -3689,7 +3888,8 @@ namespace OpenRCT2::Ui::Accessibility
             "Shift with F, R, P, G, S, D, or M opens finances, rides, park, guests, staff, research, or "
             "messages. Tab opens the toolbar menu. Shift F1 opens the land tool. "
             "Control H rescues guests stranded on cut-off paths, teleporting them to the park entrance. "
-            "Control with an arrow jumps to the nearest ride in that direction. "
+            "Control with an arrow jumps to the nearest object in that direction, and Control Shift up "
+            "and down choose what it looks for: rides and stalls, scenery, footpath objects, or hazards. "
             "Control E jumps between the entrance and exit of the ride you are on. Control P checks whether "
             "the current tile connects to the park entrance. P pauses. Control equals and Control minus "
             "speed the game up and down. Control F1 opens the accessibility settings.");
@@ -3930,15 +4130,28 @@ namespace OpenRCT2::Ui::Accessibility
             return true;
         }
 
-        // Ctrl+arrows jump the free map cursor to the nearest ride or stall in that direction. Skipped
-        // in mouse/menu/status mode and during any placement (there Ctrl+arrows and the cursor mean
-        // something else); ride construction already consumed its Ctrl+arrows above.
+        // Ctrl+Shift+Up/Down chooses what Ctrl+arrows jump between. Guarded identically to the jump
+        // itself below, so the filter can never be changed in a mode where the jump does not run -
+        // otherwise the setting would silently drift while the keys were doing something else.
+        if ((e.modifiers & KMOD_CTRL) && (e.modifiers & KMOD_SHIFT) && !(e.modifiers & KMOD_ALT)
+            && (key == SDLK_UP || key == SDLK_DOWN) && !_mouseMode && !_menuMode && !_statusMode
+            && !Windows::WindowTrackPlaceIsActive() && !IsAccessibleRidePlacementActive()
+            && !IsAccessibleSceneryPlacementActive())
+        {
+            CycleJumpCategory(key == SDLK_DOWN ? 1 : -1);
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // Ctrl+arrows jump the free map cursor to the nearest target of the current filter category in
+        // that direction. Skipped in mouse/menu/status mode and during any placement (there Ctrl+arrows
+        // and the cursor mean something else); ride construction already consumed its Ctrl+arrows above.
         if ((e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT))
             && (key == SDLK_UP || key == SDLK_DOWN || key == SDLK_LEFT || key == SDLK_RIGHT) && !_mouseMode
             && !_menuMode && !_statusMode && !Windows::WindowTrackPlaceIsActive() && !IsAccessibleRidePlacementActive()
             && !IsAccessibleSceneryPlacementActive())
         {
-            JumpToNearestRide(key);
+            JumpToNearest(key);
             _lastHandledKey = key;
             return true;
         }

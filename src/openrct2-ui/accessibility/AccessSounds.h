@@ -41,6 +41,8 @@ namespace OpenRCT2::Ui::Accessibility
         place,       // placing any object (ride, scenery, path)
         drownFemale, // a guest drowning (female clip)
         drownMale,   // a guest drowning (male clip)
+        trashBin,    // the map cursor moved onto a path carrying a litter bin
+        vomit,       // the map cursor moved onto a tile with vomit on the ground
     };
 
     // Footstep-style cues for the tile the map cursor moves onto. Each category has up to three

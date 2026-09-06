@@ -31,7 +31,7 @@ namespace OpenRCT2::Ui::Accessibility
 {
     using namespace OpenRCT2::Audio;
 
-    static constexpr size_t kCount = 5;
+    static constexpr size_t kCount = 7;
 
     // Single-clip cue filenames, in AccessSound enum order.
     static constexpr const char* kFileNames[kCount] = {
@@ -40,6 +40,8 @@ namespace OpenRCT2::Ui::Accessibility
         "PlaceObject.wav",      // place
         "WaterDeathFemale.wav", // drownFemale
         "WaterDeathMale.wav",   // drownMale
+        "TrashBin.wav",         // trashBin
+        "Vomit.wav",            // vomit
     };
 
     // Footstep cues, in StepSound enum order. Each category has up to three variations played at
