@@ -800,7 +800,11 @@ void ShortcutManager::registerDefaultShortcuts()
     registerShortcut(ShortcutId::kInterfaceSceneryPicker, STR_SHORTCUT_OPEN_SCENERY_PICKER, ShortcutOpenSceneryPicker);
     registerShortcut(
         ShortcutId::kInterfaceDisableClearance, STR_SHORTCUT_TOGGLE_CLEARANCE_CHECKS, ShortcutToggleClearanceChecks);
-    registerShortcut(ShortcutId::kInterfaceMultiplayerChat, STR_SHORTCUT_SEND_MESSAGE, "C", []() {
+    // Chat opens on "/" in this fork rather than upstream's "C". C is the map cursor's read-out key -
+    // the one a blind player presses constantly to hear where they are - so on a multiplayer server
+    // every coordinate check opened the chat box instead. "/" is unclaimed by any other shortcut, and
+    // is the key most multiplayer games use for chat anyway.
+    registerShortcut(ShortcutId::kInterfaceMultiplayerChat, STR_SHORTCUT_SEND_MESSAGE, "/", []() {
         if (gLegacyScene != LegacyScene::titleSequence && ChatAvailable())
         {
             ChatToggle();
