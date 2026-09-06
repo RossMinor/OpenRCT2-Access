@@ -33,17 +33,23 @@
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/UiStringIds.h>
 #include <openrct2-ui/input/ShortcutManager.h>
+#include "ListNavigation.h"
+
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/footpath/FootpathPlaceAction.h>
 #include <openrct2/actions/general/GameSetSpeedAction.h>
 #include <openrct2/actions/general/PauseToggleAction.h>
+#include <openrct2/actions/footpath/FootpathAdditionRemoveAction.h>
 #include <openrct2/actions/footpath/FootpathRemoveAction.h>
 #include <openrct2/actions/terraform/ClearAction.h>
+#include <openrct2/actions/ride/RideEntranceExitRemoveAction.h>
+#include <openrct2/actions/scenery/BannerRemoveAction.h>
 #include <openrct2/actions/scenery/LargeSceneryRemoveAction.h>
 #include <openrct2/actions/scenery/SmallSceneryRemoveAction.h>
 #include <openrct2/actions/scenery/WallRemoveAction.h>
+#include <openrct2/actions/track/TrackRemoveAction.h>
 #include <openrct2/actions/park/LandBuyRightsAction.h>
 #include <openrct2/actions/peep/PeepPickupAction.h>
 #include <openrct2/actions/terraform/LandLowerAction.h>
@@ -2607,6 +2613,381 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    // ---- Delete: remove one thing at the cursor -------------------------------------------------
+    //
+    // Delete is the scalpel; D and X remain the area sweeps, working at the focus elevation across a
+    // marked rectangle. Where several removable things share the tile - a bin on a path, a fence
+    // beside a tree - Delete lists them and lets the player choose, rather than guessing. The game
+    // has no undo, so a wrong guess is unrecoverable; a list costs one keypress and cannot be wrong.
+    //
+    // Unlike D and X this deliberately ignores the focus elevation and offers everything on the tile.
+    // The list is the disambiguator, so the player never has to get Home/End right before deleting.
+
+    struct DeleteCandidate
+    {
+        enum class Kind : uint8_t
+        {
+            pathAddition,
+            path,
+            smallScenery,
+            largeScenery,
+            wall,
+            banner,
+            rideEntranceExit,
+            track,
+        };
+
+        Kind kind{};
+        std::string label;
+        CoordsXYZD loc{};
+        uint8_t quadrant = 0;                // small scenery
+        ObjectEntryIndex entryIndex = 0;     // small scenery
+        uint16_t sequence = 0;               // large scenery
+        RideId rideId = RideId::GetNull();
+        StationIndex station = StationIndex::GetNull();
+        bool isExit = false;
+        TrackElemType trackType{};
+        int32_t trackSequence = 0;
+    };
+
+    // Removing a ride's track is the one entry that cannot simply be rebuilt, so it is confirmed
+    // before it happens. Everything else in the list is cheap to put back.
+    static bool DeleteNeedsConfirmation(const DeleteCandidate& c)
+    {
+        return c.kind == DeleteCandidate::Kind::track;
+    }
+
+    static std::vector<DeleteCandidate> GatherDeleteCandidates(const TileCoordsXY& tile)
+    {
+        std::vector<DeleteCandidate> out;
+        const auto world = TileCoordsXYZ(tile.x, tile.y, 0).ToCoordsXYZ();
+
+        for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
+        {
+            if (el->isGhost())
+            {
+                if (el->isLastForTile())
+                    break;
+                el++;
+                continue;
+            }
+
+            const CoordsXYZD loc{ world.x, world.y, el->getBaseZ(), el->getDirection() };
+
+            if (auto* p = el->asPath(); p != nullptr)
+            {
+                // The addition is offered before the path carrying it: removing the path takes the bin
+                // with it, so the narrower, less destructive choice should be the one reached first.
+                if (p->HasAddition() && !p->AdditionIsGhost())
+                {
+                    DeleteCandidate c;
+                    c.kind = DeleteCandidate::Kind::pathAddition;
+                    c.loc = loc;
+                    std::string name = GetObjectName(ObjectType::pathAdditions, p->GetAdditionEntryIndex());
+                    c.label = name.empty() ? "Path addition" : name;
+                    out.push_back(std::move(c));
+                }
+
+                DeleteCandidate c;
+                c.kind = DeleteCandidate::Kind::path;
+                c.loc = loc;
+                std::string name = GetSpokenPathName(*p);
+                c.label = name.empty() ? "Path" : name;
+                out.push_back(std::move(c));
+            }
+            else if (auto* ss = el->asSmallScenery(); ss != nullptr)
+            {
+                DeleteCandidate c;
+                c.kind = DeleteCandidate::Kind::smallScenery;
+                c.loc = loc;
+                c.quadrant = ss->GetSceneryQuadrant();
+                c.entryIndex = ss->GetEntryIndex();
+                std::string name = GetObjectName(ObjectType::smallScenery, ss->GetEntryIndex());
+                c.label = name.empty() ? "Scenery" : name;
+                out.push_back(std::move(c));
+            }
+            else if (auto* ls = el->asLargeScenery(); ls != nullptr)
+            {
+                DeleteCandidate c;
+                c.kind = DeleteCandidate::Kind::largeScenery;
+                c.loc = loc;
+                c.sequence = ls->GetSequenceIndex();
+                std::string name = GetObjectName(ObjectType::largeScenery, ls->GetEntryIndex());
+                c.label = name.empty() ? "Large scenery" : name;
+                out.push_back(std::move(c));
+            }
+            else if (auto* w = el->asWall(); w != nullptr)
+            {
+                DeleteCandidate c;
+                c.kind = DeleteCandidate::Kind::wall;
+                c.loc = loc;
+                std::string name = GetObjectName(ObjectType::walls, w->GetEntryIndex());
+                c.label = name.empty() ? "Wall" : name;
+                out.push_back(std::move(c));
+            }
+            else if (auto* b = el->asBanner(); b != nullptr)
+            {
+                DeleteCandidate c;
+                c.kind = DeleteCandidate::Kind::banner;
+                // Banners are found by their edge position, not the element's direction - the remove
+                // action matches on GetPosition(), so passing getDirection() would silently miss.
+                c.loc = { world.x, world.y, el->getBaseZ(), b->GetPosition() };
+                c.label = "Sign";
+                out.push_back(std::move(c));
+            }
+            else if (auto* e = el->asEntrance(); e != nullptr)
+            {
+                // Park entrances are left out: they are removed through the park's own tools, and a
+                // stray Delete on the gate would take the entrance off a working park.
+                const uint8_t type = e->GetEntranceType();
+                if (type == ENTRANCE_TYPE_RIDE_ENTRANCE || type == ENTRANCE_TYPE_RIDE_EXIT)
+                {
+                    DeleteCandidate c;
+                    c.kind = DeleteCandidate::Kind::rideEntranceExit;
+                    c.loc = loc;
+                    c.rideId = e->GetRideIndex();
+                    c.station = e->GetStationIndex();
+                    c.isExit = (type == ENTRANCE_TYPE_RIDE_EXIT);
+                    auto* ride = GetRide(c.rideId);
+                    const std::string rideName = ride != nullptr ? std::string(ride->getName()) : std::string("Ride");
+                    c.label = rideName + (c.isExit ? " exit" : " entrance");
+                    out.push_back(std::move(c));
+                }
+            }
+            else if (auto* t = el->asTrack(); t != nullptr)
+            {
+                DeleteCandidate c;
+                c.kind = DeleteCandidate::Kind::track;
+                c.loc = loc;
+                c.trackType = t->GetTrackType();
+                c.trackSequence = t->GetSequenceIndex();
+                c.rideId = t->GetRideIndex();
+                auto* ride = GetRide(c.rideId);
+                const std::string rideName = ride != nullptr ? std::string(ride->getName()) : std::string("Ride");
+                c.label = rideName + " track";
+                out.push_back(std::move(c));
+            }
+
+            if (el->isLastForTile())
+                break;
+            el++;
+        }
+
+        // Match the tile readout's order, so the list arrives in the order the player just heard the
+        // tile described. Elements are stored lowest-first, which is the default reading order.
+        if (Config::Get().sound.accessibilityTileReadingOrder != 0)
+            std::reverse(out.begin(), out.end());
+
+        return out;
+    }
+
+    // Runs the removal for one candidate. Returns true if the game accepted it; failures are spoken
+    // by the game's own error window, so nothing extra is said here.
+    static bool ExecuteDelete(const DeleteCandidate& c)
+    {
+        auto& gs = getGameState();
+        switch (c.kind)
+        {
+            case DeleteCandidate::Kind::pathAddition:
+            {
+                auto a = GameActions::FootpathAdditionRemoveAction(CoordsXYZ{ c.loc.x, c.loc.y, c.loc.z });
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::path:
+            {
+                auto a = GameActions::FootpathRemoveAction(CoordsXYZ{ c.loc.x, c.loc.y, c.loc.z });
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::smallScenery:
+            {
+                auto a = GameActions::SmallSceneryRemoveAction(
+                    CoordsXYZ{ c.loc.x, c.loc.y, c.loc.z }, c.quadrant, c.entryIndex);
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::largeScenery:
+            {
+                auto a = GameActions::LargeSceneryRemoveAction(c.loc, c.sequence);
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::wall:
+            {
+                auto a = GameActions::WallRemoveAction(c.loc);
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::banner:
+            {
+                auto a = GameActions::BannerRemoveAction(c.loc);
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::rideEntranceExit:
+            {
+                auto a = GameActions::RideEntranceExitRemoveAction(
+                    CoordsXY{ c.loc.x, c.loc.y }, c.rideId, c.station, c.isExit);
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::track:
+            {
+                auto a = GameActions::TrackRemoveAction(c.trackType, c.trackSequence, c.loc);
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+        }
+        return false;
+    }
+
+    // Non-empty exactly while the picker owns the keyboard.
+    static std::vector<DeleteCandidate> _deleteCandidates;
+    static int32_t _deleteIndex = 0;
+    static bool _deleteConfirming = false;   // showing the yes/no guard on a track entry
+    static int32_t _deleteConfirmChoice = 1; // 0 = Yes, 1 = No; starts on No so a stray Enter is safe
+
+    static bool IsDeletePickerActive()
+    {
+        return !_deleteCandidates.empty();
+    }
+
+    static void CloseDeletePicker()
+    {
+        _deleteCandidates.clear();
+        _deleteIndex = 0;
+        _deleteConfirming = false;
+    }
+
+    static void SpeakDeleteChoice()
+    {
+        if (_deleteIndex < 0 || _deleteIndex >= static_cast<int32_t>(_deleteCandidates.size()))
+            return;
+        ScreenReaderSpeakItem(
+            _deleteCandidates[_deleteIndex].label, _deleteIndex, static_cast<int32_t>(_deleteCandidates.size()));
+    }
+
+    static void PerformDelete(const DeleteCandidate& candidate)
+    {
+        // Copy the label first: the candidate may reference state the removal invalidates.
+        const std::string label = candidate.label;
+        if (ExecuteDelete(candidate))
+        {
+            _lastTileDescription.clear();
+            ScreenReaderSpeak(label + " removed");
+        }
+        // A refusal already opens the game's own error window, which speaks itself; saying anything
+        // more here would talk over it.
+    }
+
+    static void BeginDeleteConfirm(size_t index)
+    {
+        _deleteIndex = static_cast<int32_t>(index);
+        _deleteConfirming = true;
+        _deleteConfirmChoice = 1; // default No
+        ScreenReaderSpeak(
+            "Delete " + _deleteCandidates[index].label
+            + "? This cannot be undone. Up and down to choose, Enter to confirm, Escape to cancel. No.");
+    }
+
+    // Delete on the free map cursor.
+    static void DeleteAtCursor()
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        auto candidates = GatherDeleteCandidates(_cursor);
+        if (candidates.empty())
+        {
+            ScreenReaderSpeak("Nothing here to remove");
+            return;
+        }
+
+        if (candidates.size() == 1 && !DeleteNeedsConfirmation(candidates[0]))
+        {
+            // Nothing to disambiguate, so do not make the player answer a question about it.
+            PerformDelete(candidates[0]);
+            return;
+        }
+
+        _deleteCandidates = std::move(candidates);
+        if (_deleteCandidates.size() == 1)
+        {
+            // A lone track piece still confirms: that guard is about how costly the mistake is, not
+            // about which thing was meant.
+            BeginDeleteConfirm(0);
+            return;
+        }
+
+        _deleteIndex = 0;
+        _deleteConfirming = false;
+        ScreenReaderSpeak(
+            std::to_string(_deleteCandidates.size())
+            + " things here. Up and down to choose, Enter to delete, Escape to cancel.");
+        SpeakDeleteChoice();
+    }
+
+    // The picker owns the keyboard while open, so every key is answered here.
+    static bool HandleDeletePickerKey(uint32_t key)
+    {
+        const int32_t count = static_cast<int32_t>(_deleteCandidates.size());
+        switch (key)
+        {
+            case SDLK_ESCAPE:
+                CloseDeletePicker();
+                ScreenReaderSpeak("Cancelled");
+                return true;
+
+            case SDLK_UP:
+            case SDLK_LEFT:
+            case SDLK_DOWN:
+            case SDLK_RIGHT:
+            {
+                const int32_t delta = (key == SDLK_UP || key == SDLK_LEFT) ? -1 : 1;
+                if (_deleteConfirming)
+                {
+                    _deleteConfirmChoice = ((_deleteConfirmChoice + delta) % 2 + 2) % 2;
+                    ScreenReaderSpeak(_deleteConfirmChoice == 0 ? "Yes" : "No");
+                }
+                else
+                {
+                    _deleteIndex = ListNav::wrap(_deleteIndex, delta, count);
+                    SpeakDeleteChoice();
+                }
+                return true;
+            }
+
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER:
+            {
+                if (_deleteIndex < 0 || _deleteIndex >= count)
+                {
+                    CloseDeletePicker();
+                    return true;
+                }
+                // Taken by value: closing the picker destroys the vector it lives in.
+                const DeleteCandidate chosen = _deleteCandidates[_deleteIndex];
+
+                if (_deleteConfirming)
+                {
+                    const bool confirmed = (_deleteConfirmChoice == 0);
+                    CloseDeletePicker();
+                    if (confirmed)
+                        PerformDelete(chosen);
+                    else
+                        ScreenReaderSpeak("Cancelled");
+                    return true;
+                }
+
+                if (DeleteNeedsConfirmation(chosen))
+                {
+                    BeginDeleteConfirm(static_cast<size_t>(_deleteIndex));
+                    return true;
+                }
+
+                CloseDeletePicker();
+                PerformDelete(chosen);
+                return true;
+            }
+
+            default:
+                return true; // modal: swallow everything else until the player chooses
+        }
+    }
+
     static void GoToEntrance()
     {
         const auto& entrances = getGameState().park.entrances;
@@ -3525,7 +3906,7 @@ namespace OpenRCT2::Ui::Accessibility
             && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET
             && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
             && key != SDLK_k && key != SDLK_HOME && key != SDLK_END && key != SDLK_PAGEUP
-            && key != SDLK_PAGEDOWN)
+            && key != SDLK_PAGEDOWN && key != SDLK_DELETE)
             return false;
 
         if (!_initialised)
@@ -3552,6 +3933,14 @@ namespace OpenRCT2::Ui::Accessibility
                 break;
             case SDLK_x:
                 ClearSceneryAtCursor();
+                break;
+            case SDLK_DELETE:
+                // Removes one thing at the cursor, asking which when the tile holds several. Skipped
+                // while a placement mode owns the cursor: there Delete would act on the map beneath
+                // the thing being positioned, which is never what is meant.
+                if (!Windows::WindowTrackPlaceIsActive() && !IsAccessibleRidePlacementActive()
+                    && !IsAccessibleSceneryPlacementActive())
+                    DeleteAtCursor();
                 break;
             case SDLK_o:
                 // O buys land ownership over the brush area; Shift+O buys construction rights. The
@@ -3890,6 +4279,8 @@ namespace OpenRCT2::Ui::Accessibility
             "Control H rescues guests stranded on cut-off paths, teleporting them to the park entrance. "
             "Control with an arrow jumps to the nearest object in that direction, and Control Shift up "
             "and down choose what it looks for: rides and stalls, scenery, footpath objects, or hazards. "
+            "Delete removes one thing at the cursor, asking which if there are several; D and X clear "
+            "paths and scenery across a whole marked area. "
             "Control E jumps between the entrance and exit of the ride you are on. Control P checks whether "
             "the current tile connects to the park entrance. P pauses. Control equals and Control minus "
             "speed the game up and down. Control F1 opens the accessibility settings.");
@@ -4005,6 +4396,16 @@ namespace OpenRCT2::Ui::Accessibility
         // it captures the new binding (Escape-to-cancel is handled earlier in HandleMenuNavigationKey).
         if (GetShortcutManager().isPendingShortcutChange())
             return false;
+
+        // The Delete picker is modal: while it is open it answers every key, so nothing underneath
+        // can act on a keystroke meant for choosing what to remove. Checked before everything else
+        // for that reason.
+        if (IsDeletePickerActive())
+        {
+            HandleDeletePickerKey(key);
+            _lastHandledKey = key;
+            return true;
+        }
 
         // Ctrl+F1 opens the accessibility mod's own settings window.
         if (key == SDLK_F1 && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)))
