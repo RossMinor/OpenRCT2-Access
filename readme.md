@@ -33,7 +33,7 @@ The mod installs itself into your existing OpenRCT2, so your saved parks, settin
 1. Make sure your screen reader is installed and running.
 2. Install [OpenRCT2](https://openrct2.io/download) if you do not already have it.
 3. Launch Rollercoaster Tycoon 2 from Steam once to generate any needed files, then close it. It will likely ask you if you would like to install Direct Play, which you want to do.
-4. Download the latest release of the mod under the **Releases** heading. Each release names the OpenRCT2 version it is for, so pick the one matching yours.
+4. Download the latest release of the mod under the **Releases** heading.
 5. Unzip the download somewhere that is **not** your OpenRCT2 folder. Your Downloads folder is fine.
 6. Close OpenRCT2 if it is running.
 7. Run **Install-OpenRCT2Access.bat**. It finds your OpenRCT2, tells you exactly what it is going to change, and asks you to type `yes` before it touches anything.
@@ -41,13 +41,15 @@ The mod installs itself into your existing OpenRCT2, so your saved parks, settin
 
 If it says it cannot write to the folder, close the window, then right-click **Install-OpenRCT2Access.bat** and choose **Run as administrator**. That happens when OpenRCT2 is installed under Program Files.
 
-To remove the mod, run **Uninstall-OpenRCT2Access.bat**. It puts your original OpenRCT2 back exactly as it was and deletes everything the installer added.
+To remove the mod, run **Uninstall-OpenRCT2Access.bat**. It puts your original OpenRCT2 back and deletes everything the installer added. The exception is if the installer also updated your OpenRCT2 version: in that case there is no matching original to put back, and the uninstaller will tell you to reinstall OpenRCT2 instead.
 
 ### About versions
 
-Each mod release works with one specific version of OpenRCT2, and the installer will refuse to install onto any other. This is not fussiness: the game's graphics file is checked against a list built into the program itself, so mixing a mod build with a different version of OpenRCT2 gives you missing or wrong graphics instead of a clear error. If the refusal happens, it names both versions so you know which download you need.
+Each mod release is built against one specific version of OpenRCT2, and the download carries that version's game files with it. So if your OpenRCT2 is older than the release, the installer simply brings it up to date at the same time - there is nothing extra to download and nothing to choose. Your saved parks, settings and RollerCoaster Tycoon 2 files are not touched; they live outside the game folder.
 
-Because of this, **updating OpenRCT2 will remove the mod** - the update replaces the program file the mod lives in. If speech stops working after OpenRCT2 updates itself, download the mod release for your new version and run the installer again.
+The one case it will not handle is an OpenRCT2 **newer** than the mod release. It stops rather than moving your game backwards, because a park you saved with the newer version might not open afterwards. When that happens, wait for a mod release built for your version - the message names both versions so you know what to look for.
+
+Also worth knowing: **updating OpenRCT2 yourself will remove the mod**, because the update replaces the program file the mod lives in. If speech stops working after OpenRCT2 updates, run the mod installer again.
 
 The mod also has its own updater and will tell you in-game when a new version is out.
 

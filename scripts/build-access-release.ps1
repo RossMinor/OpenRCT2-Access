@@ -1,33 +1,25 @@
 # Packages an OpenRCT2-Access release.
 #
-# The package installs the mod into an OpenRCT2 the player already has, so it deliberately does NOT
-# contain the game: no data/ tree beyond the mod's own sound cues, no g2.dat, no objects, no
-# scenarios. That is the difference between this and the pre-1.0 packages, which shipped a whole
-# second copy of OpenRCT2 and left players running an older game than the one they had installed.
+# The package carries the mod's executable AND the matching game data\ tree - g2.dat, objects,
+# scenarios, language files, the lot. That is deliberate, and it is what makes version mismatches
+# impossible: the executable is version-locked to data\ (g2.dat is validated against a sprite count
+# compiled into the exe), so shipping them together means an install can never end up with an
+# executable from one OpenRCT2 release sitting beside another release's data.
 #
-# The zip is named for BOTH versions, because a build works with exactly one OpenRCT2 release - the
-# installer refuses any other - so the filename has to say which one it is for.
+# The alternative - shipping only the executable, at about 8 MB - was tried, and it pushed that
+# version-matching problem onto the player: their data\ came from whichever OpenRCT2 they happened
+# to have installed, and any mismatch had to be detected, explained and repaired. 80 MB is a cheap
+# price for deleting that entire class of failure.
+#
+# The zip is still named for BOTH versions, because a build is built against exactly one OpenRCT2
+# release and the filename should say which.
 #
 # Run from anywhere. Windows PowerShell 5.1: no ternary, no null-coalescing, no && chaining.
 
 [CmdletBinding()]
 param(
     # Where to write the zip. Defaults to the repository's artifacts folder.
-    [string] $OutputDir,
-
-    # Also include the whole built data\ tree, making the package a working standalone game as well
-    # as an installer. This exists for ONE release - the first installer-shaped one.
-    #
-    # Every already-released build updates itself by blind-copying the release zip over its own
-    # folder (the old FinishInstall did "xcopy /e /y staging\* installDir\"). Those builds are
-    # standalone portable copies, so an installer-only package would give them a new executable on
-    # top of their older data\ - mismatched g2.dat, broken graphics, for players who cannot see the
-    # result. Shipping data\ alongside means that blind copy lands a self-consistent set instead.
-    #
-    # Builds from the first installer release onward install through the installer and version-check
-    # properly, so once no one is plausibly still running an older build this switch should stop
-    # being used and packages go back to ~8 MB.
-    [switch] $IncludeGameData
+    [string] $OutputDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,32 +67,29 @@ foreach ($w in Get-ChildItem (Join-Path $repo 'data\sounds\access') -Filter *.wa
     $files[$w.FullName] = "data/sounds/access/$($w.Name)"
 }
 
-if ($IncludeGameData) {
-    # The built data tree, so a blind copy of this package over an older standalone build produces a
-    # matching executable and data set. portable-data is excluded: it holds the player's own config
-    # and saved parks, and overwriting those would be the worst kind of "upgrade".
-    $dataRoot = Join-Path $bin 'data'
-    if (-not (Test-Path -LiteralPath $dataRoot)) { Fail "-IncludeGameData needs a built data tree at $dataRoot." }
-    $prefix = (Resolve-Path -LiteralPath $dataRoot).Path.Length + 1
+# The built data tree. This travels with the executable so the two can never disagree - see the
+# header. portable-data is excluded: it holds the player's own config and saved parks, and
+# overwriting those would be the worst kind of "upgrade".
+$dataRoot = Join-Path $bin 'data'
+if (-not (Test-Path -LiteralPath $dataRoot)) { Fail "No built data tree at $dataRoot. Build the solution first." }
+$prefix = (Resolve-Path -LiteralPath $dataRoot).Path.Length + 1
 
-    # Dedupe on the ZIP ENTRY NAME, not the source path. The mod's cues are staged above from the
-    # repository while bin\data holds build-output copies of the same files: different paths, same
-    # destination. Keyed by path they would both be added and the zip would carry two entries called
-    # data/sounds/access/DirtStep1.wav. Keeping the repository copy also drops anything stale that
-    # is sitting in bin\data but no longer in the repository.
-    $used = New-Object 'System.Collections.Generic.HashSet[string]'
-    foreach ($n in $files.Values) { [void] $used.Add($n) }
+# Dedupe on the ZIP ENTRY NAME, not the source path. The mod's cues are staged above from the
+# repository while bin\data holds build-output copies of the same files: different paths, same
+# destination. Keyed by path they would both be added and the zip would carry two entries called
+# data/sounds/access/DirtStep1.wav. Keeping the repository copy also drops anything stale that
+# is sitting in bin\data but no longer in the repository.
+$used = New-Object 'System.Collections.Generic.HashSet[string]'
+foreach ($n in $files.Values) { [void] $used.Add($n) }
 
-    foreach ($f in Get-ChildItem $dataRoot -Recurse -File) {
-        $rel = 'data/' + $f.FullName.Substring($prefix).Replace([char]92, [char]47)
-        # Skip the mod's sound folder wholesale rather than relying on the name check. bin\data is
-        # build output that accumulates: it still holds a misspelled Vommit.wav no longer in the
-        # repository, and the folder's developer README, neither of which belongs in a player's
-        # install. The repository copies staged above are the authoritative set.
-        if ($rel.StartsWith('data/sounds/access/')) { continue }
-        if ($used.Add($rel)) { $files[$f.FullName] = $rel }
-    }
-    Write-Host '  including the full game data tree (migration package)'
+foreach ($f in Get-ChildItem $dataRoot -Recurse -File) {
+    $rel = 'data/' + $f.FullName.Substring($prefix).Replace([char]92, [char]47)
+    # Skip the mod's sound folder wholesale rather than relying on the name check. bin\data is
+    # build output that accumulates: it still holds a misspelled Vommit.wav no longer in the
+    # repository, and the folder's developer README, neither of which belongs in a player's
+    # install. The repository copies staged above are the authoritative set.
+    if ($rel.StartsWith('data/sounds/access/')) { continue }
+    if ($used.Add($rel)) { $files[$f.FullName] = $rel }
 }
 
 foreach ($src in $files.Keys) {
@@ -140,15 +129,14 @@ foreach ($required in 'openrct2.exe', 'prism.dll', 'Install-OpenRCT2Access.bat',
 if (($names | Where-Object { $_ -like 'data/sounds/access/*' }).Count -lt 1) { $problems += 'no sound cues' }
 if ($names | Where-Object { $_ -like '*.pdb' -or $_ -like '*.lib' -or $_ -like '*portable-data*' }) { $problems += 'development files leaked in' }
 if (($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { $problems += 'duplicate entry names' }
-if ($IncludeGameData) {
-    # A migration package is only useful to an old build if the data it copies actually matches the
-    # executable beside it, so check the files that pair with the engine rather than trusting a count.
-    foreach ($required in 'data/g2.dat', 'data/fonts.dat', 'data/tracks.dat') {
-        if ($names -notcontains $required) { $problems += "missing $required (needed for the migration package)" }
-    }
-    if (($names | Where-Object { $_ -like 'data/language/*' }).Count -lt 1) { $problems += 'no language files' }
-    if (($names | Where-Object { $_ -like 'data/object/*' }).Count -lt 1) { $problems += 'no object data' }
+# The data tree is the whole point of the package shape, so check the files that pair with the
+# executable rather than trusting a file count. A package missing these would install an executable
+# with nothing to match it, which is exactly the failure this design exists to prevent.
+foreach ($required in 'data/g2.dat', 'data/fonts.dat', 'data/tracks.dat') {
+    if ($names -notcontains $required) { $problems += "missing $required" }
 }
+if (($names | Where-Object { $_ -like 'data/language/*' }).Count -lt 1) { $problems += 'no language files' }
+if (($names | Where-Object { $_ -like 'data/object/*' }).Count -lt 1) { $problems += 'no object data' }
 
 if ($problems.Count -gt 0) {
     Write-Host 'Package FAILED verification:'

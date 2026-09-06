@@ -12,7 +12,6 @@
 #include "ScreenReader.h"
 
 #include <SDL.h>
-#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <filesystem>
@@ -27,7 +26,6 @@
 #include <openrct2/platform/Platform.h>
 #include <openrct2/ui/UiContext.h>
 #include <string>
-#include <vector>
 
 namespace OpenRCT2::Ui::Accessibility
 {
@@ -38,14 +36,6 @@ namespace OpenRCT2::Ui::Accessibility
     static constexpr const char* kReleasesApiUrl =
         "https://api.github.com/repos/" kAccessUpdateRepo "/releases/latest";
 
-    // Upstream OpenRCT2, checked separately from the mod's own releases. Nothing in the game can act
-    // on the result - the mod IS the executable, so moving to a newer OpenRCT2 means a new mod build,
-    // not a download - but without this a player has no way to tell that the engine under them has
-    // stopped keeping pace, and the mod pinning them to an old version looks like the game going
-    // stale on its own.
-    static constexpr const char* kEngineReleasesApiUrl =
-        "https://api.github.com/repos/OpenRCT2/OpenRCT2/releases/latest";
-
     static std::future<void> _checkFuture;
     static std::atomic<bool> _started{ false };
     static std::atomic<bool> _ready{ false }; // release/acquire gate for the strings written below
@@ -54,11 +44,6 @@ namespace OpenRCT2::Ui::Accessibility
     static std::string _tag;
     static std::string _name;
     static std::string _downloadUrl;
-
-    // Latest upstream OpenRCT2, and whether it is ahead of the engine this build was compiled
-    // against. Written by the same worker as the fields above, under the same _ready gate.
-    static std::string _engineLatest;
-    static bool _engineBehind = false;
 
     // Install pipeline. _installState: 0 idle, 1 downloading/extracting, 2 staged (ready to swap),
     // 3 failed, 4 swapping (helper launched, quitting). Strings are written by the worker before
@@ -102,54 +87,6 @@ namespace OpenRCT2::Ui::Accessibility
     static std::filesystem::path InstallLogPath()
     {
         return std::filesystem::temp_directory_path() / "openrct2-access-update.log";
-    }
-
-    // Splits "0.5.4" into { 0, 5, 4 }, stopping at anything that is not a digit or a dot so a tag
-    // like "v0.5.4-rc1" still yields the numbers in front of the suffix.
-    static std::vector<int> SplitVersion(const std::string& version)
-    {
-        std::vector<int> parts;
-        int current = 0;
-        bool anyDigits = false;
-        for (const char c : version)
-        {
-            if (c >= '0' && c <= '9')
-            {
-                current = current * 10 + (c - '0');
-                anyDigits = true;
-            }
-            else if (c == '.')
-            {
-                parts.push_back(anyDigits ? current : 0);
-                current = 0;
-                anyDigits = false;
-            }
-            else
-            {
-                break;
-            }
-        }
-        if (anyDigits)
-            parts.push_back(current);
-        return parts;
-    }
-
-    // Negative when a is older than b, 0 when equal, positive when newer. Compared component by
-    // component rather than as strings, or "0.5.10" would sort below "0.5.4" and the check would
-    // start claiming the engine had gone backwards.
-    static int CompareVersions(const std::string& a, const std::string& b)
-    {
-        const auto pa = SplitVersion(a);
-        const auto pb = SplitVersion(b);
-        const size_t count = std::max(pa.size(), pb.size());
-        for (size_t i = 0; i < count; i++)
-        {
-            const int va = i < pa.size() ? pa[i] : 0;
-            const int vb = i < pb.size() ? pb[i] : 0;
-            if (va != vb)
-                return va < vb ? -1 : 1;
-        }
-        return 0;
     }
 
     static void RunCheck()
@@ -199,34 +136,6 @@ namespace OpenRCT2::Ui::Accessibility
         catch (const std::exception&)
         {
             // Network/parse failure: silently leave _available false so we never nag on bad data.
-        }
-
-        // Now the engine. Kept in its own try so a failure here cannot discard the mod-update result
-        // gathered above - the actionable one of the two.
-        try
-        {
-            Http::Request request;
-            request.url = kEngineReleasesApiUrl;
-            request.method = Http::Method::get;
-
-            const auto res = Http::Do(request);
-            if (res.status == Http::Status::ok)
-            {
-                const auto root = Json::FromString(res.body);
-                std::string tag = Json::GetString(root["tag_name"]);
-                if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V'))
-                    tag.erase(0, 1);
-
-                if (!tag.empty() && CompareVersions(kOpenRCT2Version, tag) < 0)
-                {
-                    _engineLatest = tag;
-                    _engineBehind = true;
-                }
-            }
-        }
-        catch (const std::exception&)
-        {
-            // Same reasoning as above: on bad data, say nothing at all.
         }
 #endif
         _ready = true;
@@ -479,24 +388,6 @@ namespace OpenRCT2::Ui::Accessibility
                 ScreenReaderSpeak(
                     "Accessibility mod update available, version " + _tag
                     + ". Press F5 to download and install it.");
-            }
-            else if (_engineBehind)
-            {
-                // Only when there is no mod update to offer. A mod update is the actionable one, and
-                // it may well be the very build that moves to this engine, so leading with the engine
-                // notice would send the player after the wrong thing.
-                //
-                // The warning not to update OpenRCT2 by hand is the point of the message: the mod is
-                // the executable, so installing stock OpenRCT2 over it removes the mod entirely, and
-                // this is exactly the moment a player would be tempted to do that.
-                ScreenReaderSpeak(
-                    "OpenRCT2 " + _engineLatest + " has been released. This accessibility build is for OpenRCT2 "
-                    + kOpenRCT2Version
-                    + ". Updating OpenRCT2 yourself would remove the accessibility mod, so wait for a mod update "
-                      "instead.");
-                LogAnnouncement(
-                    "OpenRCT2 " + _engineLatest + " is available; this accessibility build is for "
-                    + kOpenRCT2Version + ".");
             }
         }
 
