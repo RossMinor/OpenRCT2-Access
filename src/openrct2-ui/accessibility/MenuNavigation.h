@@ -31,10 +31,6 @@ namespace OpenRCT2::Ui::Accessibility
     // be processed further (e.g. by the shortcut manager).
     bool HandleMenuNavigationKey(const InputEvent& e);
 
-    // Focuses and announces the first item of the given menu window (generic widget
-    // navigation), so a menu can default to its first item when it opens.
-    void FocusFirstItem(WindowBase& w);
-
     // Polled once per frame. Announces "Menu closed" when the front-most accessible window closes and
     // focus returns to the game, so every top-level window gives the same cue the toolbar menu does.
     void TickMenuClosedAnnounce();
