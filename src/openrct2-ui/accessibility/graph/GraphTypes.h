@@ -137,6 +137,11 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         // Asynchronous/game-driven changes ride `live` parts instead.
         std::function<std::string()> stateText;
 
+        // Called whenever focus settles on this node, for side effects OUTSIDE the graph that have
+        // to track the keyboard - e.g. telling the engine which dropdown row to draw highlighted.
+        // Must not speak: announcements are the announcer's job.
+        std::function<void()> onFocus;
+
         // Type-ahead matching text; null = the first announcement part (the label).
         std::function<std::string()> searchText;
 

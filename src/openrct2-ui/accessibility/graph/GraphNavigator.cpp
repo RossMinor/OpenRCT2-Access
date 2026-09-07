@@ -116,14 +116,28 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    // Called on every focus landing, so it is also where a node's out-of-graph focus side effect
+    // runs (NodeVtable::onFocus).
     static void UpdateFocusRect(const GraphNode* node)
     {
         _focusRect.reset();
-        if (node != nullptr && node->vtable.focusRect)
+        if (node == nullptr)
+            return;
+        if (node->vtable.focusRect)
         {
             try
             {
                 _focusRect = node->vtable.focusRect();
+            }
+            catch (...)
+            {
+            }
+        }
+        if (node->vtable.onFocus)
+        {
+            try
+            {
+                node->vtable.onFocus();
             }
             catch (...)
             {
@@ -422,6 +436,15 @@ namespace OpenRCT2::Ui::Accessibility
                     DoTabKey(kg, screen, w, shift ? -1 : 1);
                     return true;
                 }
+                if (screen.tabMovesBetweenItems)
+                {
+                    const auto dir = shift ? GraphDir::up : GraphDir::down;
+                    auto r = kg.Move(dir);
+                    if (!r.moved && r.to != nullptr && screen.wrapArrows)
+                        r = kg.MoveToEdge(shift ? GraphDir::down : GraphDir::up);
+                    AnnounceMove(kg, r);
+                    return true;
+                }
                 return false; // no pages: fall through (Tab still opens the tools menu)
             case SDLK_HOME:
             case SDLK_END:
@@ -520,7 +543,7 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         auto* front = FrontNavigableWindow();
-        if (front == nullptr || !GraphOwnsWindowClass(front->classification))
+        if (front == nullptr || !GraphScreenHoldsKeyboard(front->classification))
             return false;
 
         // Key-up: swallow the key we consumed on key-down.
@@ -552,7 +575,7 @@ namespace OpenRCT2::Ui::Accessibility
         DropGraphStatesForClosedWindows();
 
         auto* front = FrontNavigableWindow();
-        const bool graphFront = front != nullptr && GraphOwnsWindowClass(front->classification);
+        const bool graphFront = front != nullptr && GraphScreenHoldsKeyboard(front->classification);
 
         if (!graphFront)
         {

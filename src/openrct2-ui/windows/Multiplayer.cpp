@@ -950,6 +950,9 @@ namespace OpenRCT2::Ui::Windows
                     if (gDropdown.items[k].isChecked())
                         vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
                     vt.onActivate = [this, k]() { accessCommitDropdown(k); };
+                    // Keep the engine's drawn highlight on the row the keyboard is on; it clears
+                    // that field from the mouse every tick, so it has to be re-asserted.
+                    vt.onFocus = [k]() { Accessibility::SetKeyboardDropdownIndex(k); };
                     b.AddItem(ControlId::Structural("dd:" + std::to_string(k)), std::move(vt));
                 }
                 b.PopContext();

@@ -431,6 +431,9 @@ namespace OpenRCT2::Ui::Windows
                     if (item.isDisabled())
                         vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
                     vt.onActivate = [this, i]() { sxCommitDropdown(i); };
+                                        // Keep the engine's drawn highlight on the row the keyboard is on; it clears
+                    // that field from the mouse every tick, so it has to be re-asserted.
+                    vt.onFocus = [i]() { Accessibility::SetKeyboardDropdownIndex(i); };
                     b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
                 }
                 b.PopContext();

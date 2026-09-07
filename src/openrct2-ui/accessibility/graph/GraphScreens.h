@@ -64,6 +64,21 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         // switch instead silently teleports the player to another page, taking the control they
         // were on with it. Pages are still reached with Tab/Shift+Tab either way.
         bool sideArrowsChangePage = true;
+
+        // When set, the screen only holds the keyboard while this returns true - AND only as a
+        // fallback, when no ordinary window wants the keyboard (see FrontNavigableWindow).
+        //
+        // Ownership is otherwise decided by z-order, which works because every other screen takes
+        // focus by OPENING and gives it up by CLOSING. The top toolbar does neither: it is always
+        // open, and is entered deliberately with Tab. So it needs both halves - the gate, or it
+        // would hold the keyboard even after the player left it for the map; and fallback ranking,
+        // or (being WindowFlag::stickToFront) it would outrank the very window it just opened.
+        std::function<bool()> isActive;
+
+        // Tab/Shift+Tab step between items on a screen with no pages. Default off: elsewhere Tab
+        // means "change page", and where there are no pages it falls through to the game. The
+        // toolbar wants it because Tab is also what got the player there.
+        bool tabMovesBetweenItems = false;
     };
 
     // Register a screen recipe. Call once per window class (typically from that window's source
@@ -74,8 +89,14 @@ namespace OpenRCT2::Ui::Accessibility::Graph
     void EnsureGraphScreensRegistered();
 
     // THE ownership gate (spec 10.5): does the graph own this window class? Consulted by every
-    // legacy accessibility path so exactly one model acts on each window.
+    // legacy accessibility path so exactly one model acts on each window. This is REGISTRATION
+    // only - it stays true for a gated screen that is not currently active, because "the legacy
+    // layer must not touch this window" is true either way.
     bool GraphOwnsWindowClass(WindowClass wc);
+
+    // Registration AND the isActive gate: whether this class may hold the keyboard right now.
+    // Use this for "who gets this keypress", never GraphOwnsWindowClass.
+    bool GraphScreenHoldsKeyboard(WindowClass wc);
 
     // The registered screen for a class, or null.
     const GraphScreen* GraphScreenForClass(WindowClass wc);

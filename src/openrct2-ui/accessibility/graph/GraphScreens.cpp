@@ -98,6 +98,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterFootpathGraphScreen();
         Windows::RegisterTrackListGraphScreen();
         Windows::RegisterTitleMenuGraphScreen();
+        Windows::RegisterTopToolbarGraphScreen();
 
         // Modal confirmation prompts share one generic button-driven recipe. demolishRidePrompt is
         // used by both the demolish and refurbish prompts (different C++ classes, same window class).
@@ -135,6 +136,26 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         {
             if (s.windowClass == wc)
                 return true;
+        }
+        return false;
+    }
+
+    bool GraphScreenHoldsKeyboard(WindowClass wc)
+    {
+        for (const auto& s : _screens)
+        {
+            if (s.windowClass != wc)
+                continue;
+            if (!s.isActive)
+                return true;
+            try
+            {
+                return s.isActive();
+            }
+            catch (...)
+            {
+                return false; // a throwing gate must not strand the keyboard in this screen
+            }
         }
         return false;
     }
@@ -181,11 +202,34 @@ namespace OpenRCT2::Ui::Accessibility::Graph
 
         // WindowVisitEach walks the window list back-to-front, so the last navigable window it
         // visits is the one currently in front - the real z-order, not a hand-authored ranking.
+        //
+        // A GATED screen (GraphScreen::isActive) is a FALLBACK, never a competitor: it takes the
+        // keyboard only when no ordinary window wants it. Ranking it by z-order instead would be
+        // wrong in both directions. The top toolbar is stickToFront, so it would beat every window
+        // the player deliberately opened - press Rides from the toolbar and the arrows would stay
+        // on the toolbar with the ride list sitting unreachable behind it. Ranking it low by
+        // z-order would be no better, because it is also always OPEN, so it must not win merely by
+        // being there once the player has left it.
+        //
+        // Fallback is what "the toolbar is where you are when you are not somewhere else" actually
+        // means, and it restores the pre-migration behaviour: opening a window from the toolbar
+        // moves you into it, closing it puts you back on the toolbar button you used, and menu mode
+        // survives the whole trip.
         WindowBase* result = nullptr;
-        WindowVisitEach([&result](WindowBase* w) {
-            if (GraphOwnsWindowClass(w->classification) || IsLegacyNavigableAccessibleClass(w->classification))
+        WindowBase* gatedFallback = nullptr;
+        WindowVisitEach([&result, &gatedFallback](WindowBase* w) {
+            const auto* screen = GraphScreenForClass(w->classification);
+            if (screen != nullptr && static_cast<bool>(screen->isActive))
+            {
+                if (GraphScreenHoldsKeyboard(w->classification))
+                    gatedFallback = w;
+                return;
+            }
+            if (GraphScreenHoldsKeyboard(w->classification)
+                || (!GraphOwnsWindowClass(w->classification)
+                    && IsLegacyNavigableAccessibleClass(w->classification)))
                 result = w;
         });
-        return result;
+        return result != nullptr ? result : gatedFallback;
     }
 } // namespace OpenRCT2::Ui::Accessibility::Graph

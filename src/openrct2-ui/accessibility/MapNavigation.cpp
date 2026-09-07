@@ -1463,6 +1463,11 @@ namespace OpenRCT2::Ui::Accessibility
         return windowMgr != nullptr ? windowMgr->FindByClass(WindowClass::topToolbar) : nullptr;
     }
 
+    // Tab from the map steps INTO the toolbar. The toolbar is a graph screen whose isActive gate is
+    // exactly this flag, so setting it hands the keyboard over; the graph's differ then announces
+    // the landing. Focus is reset to the first button, matching how Tab has always behaved -
+    // returning from a child window keeps its place instead, because the graph's cursor for the
+    // toolbar survives.
     static bool EnterMenuMode()
     {
         auto* toolbar = GetToolbar();
@@ -1470,25 +1475,12 @@ namespace OpenRCT2::Ui::Accessibility
             return false;
 
         _menuMode = true;
-        toolbar->onAccessibilityAction(AccessibilityAction::cancel);   // reset focus to start
-        toolbar->onAccessibilityAction(AccessibilityAction::moveDown); // focus + announce first item
+        Windows::TopToolbarFocusFirstAccessibleItem();
         return true;
-    }
-
-    static void ExitMenuMode()
-    {
-        if (auto* toolbar = GetToolbar(); toolbar != nullptr)
-            toolbar->onAccessibilityAction(AccessibilityAction::cancel);
-        _menuMode = false;
-        ScreenReaderSpeak("Menu closed");
     }
 
     void LeaveMenuMode()
     {
-        if (!_menuMode)
-            return;
-        if (auto* toolbar = GetToolbar(); toolbar != nullptr)
-            toolbar->onAccessibilityAction(AccessibilityAction::cancel);
         _menuMode = false;
     }
 
@@ -1573,50 +1565,17 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    static bool HandleMenuModeKey(uint32_t key)
+    // While the toolbar holds focus its keys belong to the graph navigator, which has already had
+    // this key by the time we get here (it runs first in InputManager::process). So there is
+    // nothing left to do but make sure the key does NOT reach the map cursor underneath.
+    static bool HandleMenuModeKey()
     {
-        auto* toolbar = GetToolbar();
-        if (toolbar == nullptr)
+        if (GetToolbar() == nullptr)
         {
-            _menuMode = false;
+            _menuMode = false; // no toolbar to be inside; fall back to the map
             return false;
         }
-
-        switch (key)
-        {
-            case SDLK_ESCAPE:
-            {
-                // If a dropdown sub-menu is open, Escape closes just that and stays in the
-                // toolbar menu; otherwise it leaves menu mode entirely.
-                auto* windowMgr = GetWindowManager();
-                const bool dropdownOpen = windowMgr != nullptr
-                    && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
-                if (dropdownOpen)
-                    toolbar->onAccessibilityAction(AccessibilityAction::cancel);
-                else
-                    ExitMenuMode();
-                return true;
-            }
-            case SDLK_TAB:
-            case SDLK_DOWN:
-            case SDLK_RIGHT:
-                toolbar->onAccessibilityAction(AccessibilityAction::moveDown);
-                return true;
-            case SDLK_UP:
-            case SDLK_LEFT:
-                toolbar->onAccessibilityAction(AccessibilityAction::moveUp);
-                return true;
-            case SDLK_RETURN:
-            case SDLK_KP_ENTER:
-                toolbar->onAccessibilityAction(AccessibilityAction::activate);
-                return true;
-            default:
-                // First-letter navigation: jump to the next toolbar item starting with this
-                // letter. Also swallows other letters so they don't leak to the map cursor.
-                if (key >= SDLK_a && key <= SDLK_z)
-                    return toolbar->onAccessibilityTypeahead(key);
-                return false;
-        }
+        return false; // declined keys fall through to the shortcut manager, as they always have
     }
 
     // Connecting height of the path on the tile behind the cursor (opposite the facing direction
@@ -4639,7 +4598,7 @@ namespace OpenRCT2::Ui::Accessibility
                 || IsAccessibleRidePlacementActive() || IsAccessibleSceneryPlacementActive()))
             _menuMode = false;
 
-        const bool handled = _menuMode ? HandleMenuModeKey(key) : HandleMapCursorKey(key, e.modifiers);
+        const bool handled = _menuMode ? HandleMenuModeKey() : HandleMapCursorKey(key, e.modifiers);
         _lastHandledKey = handled ? key : 0;
         return handled;
     }
@@ -4683,12 +4642,12 @@ namespace OpenRCT2::Ui::Accessibility
         return "X " + std::to_string(x) + ", Y " + std::to_string(y);
     }
 
+    // Kept for callers that close a window and want the toolbar spoken again underneath it. Since
+    // the toolbar became a graph screen this needs to do nothing: closing the window makes the
+    // toolbar the front navigable screen again (as the gated fallback), and the graph's own differ
+    // announces the button focus lands on. Speaking here as well would say it twice.
     void ReannounceToolbarItemIfMenuMode()
     {
-        if (!_menuMode)
-            return;
-        if (auto* toolbar = GetToolbar(); toolbar != nullptr)
-            toolbar->onAccessibilityAction(AccessibilityAction::announce);
     }
 
     bool IsMapCursorActive()

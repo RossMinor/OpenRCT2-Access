@@ -13,6 +13,7 @@
 
 #include <iterator>
 #include <limits>
+#include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -279,7 +280,7 @@ namespace OpenRCT2::Ui::Windows
     {
     private:
         bool _waitingForPause{ false };
-        int32_t _accessibilityIndex = -1; // focus position within the accessible toolbar items
+        // The focus cursor lives in the graph screen manager, not here.
         bool _accessibilityDropdownOpen = false; // navigating an open dropdown sub-menu
         WidgetIndex _accessibilityDropdownParent = 0; // toolbar button that opened the dropdown
         // Set while the keyboard accessibility path drives onMouseDown/onMouseUp synthetically,
@@ -1065,249 +1066,202 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        bool onAccessibilityTypeahead(uint32_t key) override
+    public:
+        // ---- graph accessibility recipe ----
+
+        // Declare the toolbar's buttons, or - while one of them has a dropdown open - that
+        // dropdown's items instead. Immediate mode makes the dropdown a plain modal sub-list.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            // Re-derive the dropdown state from reality every build: the list can be dismissed
+            // behind our back, and a stale flag would strand navigation inside a menu that is gone.
+            auto* windowMgr = GetWindowManager();
+            if (_accessibilityDropdownOpen
+                && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessibilityDropdownOpen = false;
+
+            if (_accessibilityDropdownOpen)
+            {
+                b.PushContext(getToolbarItemName(_accessibilityDropdownParent), "menu");
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
+                {
+                    if (gDropdown.items[i].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
+                    // LIVE: a toolbar cheat toggle is a game action, and the engine ENQUEUES a game
+                    // action raised from the UI, so its new state is not readable until the next
+                    // tick. Watching it here is what finally reports "checked" after you check it.
+                    vt.announcements.emplace_back(
+                        [i]() -> std::string {
+                            if (i >= gDropdown.numItems)
+                                return {};
+                            return gDropdown.items[i].isChecked() ? "checked" : "";
+                        },
+                        true, AnnouncementKinds::kValue);
+                    if (gDropdown.items[i].isDisabled())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
+                    vt.onActivate = [this, i]() { accessCommitDropdown(i); };
+                                        // Keep the engine's drawn highlight on the row the keyboard is on; it clears
+                    // that field from the mouse every tick, so it has to be re-asserted.
+                    vt.onFocus = [i]() { Accessibility::SetKeyboardDropdownIndex(i); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
+                }
+                b.PopContext();
+                return;
+            }
+
+            for (const WidgetIndex w : getAccessibleToolbarItems())
+            {
+                NodeVtable vt;
+                // LIVE label: Pause and Mute rename themselves with their state ("Pause game" /
+                // "Resume game"), so the label has to be re-read rather than captured once.
+                vt.announcements.emplace_back([w]() -> std::string { return getToolbarItemName(w); }, true);
+                vt.onActivate = [this, w]() { accessActivateItem(w); };
+                vt.focusRect = [this, w]() -> std::optional<GraphRect> {
+                    if (w >= widgets.size())
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+                };
+                b.AddItem(ControlId::Structural(accessItemKey(w)), std::move(vt));
+            }
+        }
+
+        // Escape closes an open sub-menu and stays on the button that owned it. With none open it
+        // leaves the toolbar and hands the keyboard back to the map cursor - it must NOT fall
+        // through to the navigator's default, which closes the focused window: the toolbar is
+        // always open and closing it would take the whole menu bar away.
+        bool AccessEscape()
         {
             if (_accessibilityDropdownOpen)
-                return true; // not inside an open dropdown
-            const auto items = getAccessibleToolbarItems();
-            const int32_t count = static_cast<int32_t>(items.size());
-            if (count == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t start = (_accessibilityIndex < 0) ? 0 : _accessibilityIndex;
-            for (int32_t i = 1; i <= count; i++)
             {
-                const int32_t idx = (start + i) % count;
-                const char* name = getToolbarItemName(items[idx]);
-                char first = (name != nullptr && name[0] != '\0') ? name[0] : '\0';
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
-                {
-                    _accessibilityIndex = idx;
-                    Accessibility::ScreenReaderSpeakItem(getToolbarItemName(items[idx]), idx, count);
-                    return true;
-                }
+                const WidgetIndex parent = _accessibilityDropdownParent;
+                closeAccessibilityDropdown();
+                accessSuggestFocus(parent);
+                return true;
             }
+            Accessibility::LeaveMenuMode();
+            Accessibility::ScreenReaderSpeak("Menu closed");
             return true;
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+        // Entering the toolbar with Tab starts at the first button, matching the behaviour the mod
+        // has always had. (Coming back from a child window keeps its place instead, because the
+        // graph's cursor for this window survives - which is what re-announces where you were.)
+        void AccessFocusFirstItem()
         {
             const auto items = getAccessibleToolbarItems();
-            if (_accessibilityIndex < 0 || _accessibilityIndex >= static_cast<int32_t>(items.size()))
-                return std::nullopt;
-            const auto& wd = widgets[items[_accessibilityIndex]];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+            if (!items.empty())
+                accessSuggestFocus(items.front());
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+    private:
+        static std::string accessItemKey(WidgetIndex w)
         {
-            // While a dropdown sub-menu is open, route everything to it.
-            if (_accessibilityDropdownOpen)
-                return handleAccessibilityDropdown(action);
+            return "tb:" + std::to_string(w);
+        }
 
-            const auto items = getAccessibleToolbarItems();
-            if (items.empty())
-                return false;
+        // Ask the graph to land on this button at its next render.
+        void accessSuggestFocus(WidgetIndex w)
+        {
+            Accessibility::Graph::GraphStateForClass(WindowClass::topToolbar).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(accessItemKey(w));
+        }
 
-            const int32_t count = static_cast<int32_t>(items.size());
-
-            switch (action)
+        void accessActivateItem(WidgetIndex widgetIndex)
+        {
+            // The build-tool buttons open mouse-only tool windows. Rather than dump a keyboard user
+            // into an unusable window, explain the map-cursor controls that do the same job.
+            if (const char* guidance = getCursorToolGuidance(widgetIndex); guidance != nullptr)
             {
-                case AccessibilityAction::cancel:
-                    // Used by the menu-mode layer to reset focus when (re)entering.
-                    _accessibilityIndex = -1;
-                    return true;
+                Accessibility::ScreenReaderSpeak(guidance);
+                return;
+            }
 
-                case AccessibilityAction::activate:
-                    if (_accessibilityIndex >= 0 && _accessibilityIndex < count)
-                    {
-                        const auto widgetIndex = items[_accessibilityIndex];
+            // Pause is applied asynchronously, so capture the state before activating and announce
+            // the state we are heading for.
+            const bool wasPausedBefore = GameIsPaused();
 
-                        // The build-tool buttons open mouse-only tool windows. Rather than dump a
-                        // keyboard user into an unusable window, explain the map-cursor controls
-                        // that do the same job.
-                        if (const char* guidance = getCursorToolGuidance(widgetIndex); guidance != nullptr)
-                        {
-                            Accessibility::ScreenReaderSpeak(guidance);
-                            return true;
-                        }
+            // onMouseDown opens dropdown buttons; onMouseUp handles toggles and window-opening
+            // buttons. Exactly one acts for any given button. Suppress their click-announce: this
+            // path announces itself. The claim keeps a dropdown alive past the next input tick -
+            // without it the engine finds no widget owning the open list and closes it immediately.
+            Accessibility::ClaimWidgetPressForKeyboard(*this, widgetIndex);
+            _suppressClickAnnounce = true;
+            onMouseDown(widgetIndex);
+            onMouseUp(widgetIndex);
+            _suppressClickAnnounce = false;
 
-                        // The pause toggle is applied asynchronously, so capture the state
-                        // before activating and announce the intended new state.
-                        const bool wasPausedBefore = GameIsPaused();
+            auto* windowMgr = GetWindowManager();
+            const bool dropdownOpened = windowMgr != nullptr
+                && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
+            if (!dropdownOpened)
+                Accessibility::ReleaseWidgetPressForKeyboard(); // no list; drop the claim
 
-                        // onMouseDown opens dropdown buttons; onMouseUp handles toggles and
-                        // window-opening buttons. Exactly one acts for any given button.
-                        // Suppress their click-announce: this keyboard path announces itself.
-                        // Claim the press before activating: if this button opens a dropdown, the
-                        // engine's dropdown-active state machine will look for the widget that
-                        // opened it on the very next tick and close the list if it finds none.
-                        Accessibility::ClaimWidgetPressForKeyboard(*this, widgetIndex);
-                        _suppressClickAnnounce = true;
-                        onMouseDown(widgetIndex);
-                        onMouseUp(widgetIndex);
-                        _suppressClickAnnounce = false;
+            if (dropdownOpened)
+            {
+                // The rebuild now declares the dropdown's items and the differ announces the
+                // landing, so there is nothing to speak here.
+                _accessibilityDropdownOpen = true;
+                _accessibilityDropdownParent = widgetIndex;
+                return;
+            }
 
-                        auto* windowMgr = GetWindowManager();
-                        const bool dropdownOpened = windowMgr != nullptr
-                            && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
-                        if (!dropdownOpened)
-                            Accessibility::ReleaseWidgetPressForKeyboard(); // no list; drop the claim
+            if (widgetIndex == WIDX_PAUSE)
+            {
+                Accessibility::ScreenReaderSpeak(wasPausedBefore ? "Game running" : "Game paused");
+                return;
+            }
+            if (widgetIndex == WIDX_MUTE)
+            {
+                // ToggleAllSounds applies immediately, so report the resulting state.
+                Accessibility::ScreenReaderSpeak(Audio::gGameSoundsOff ? "Sound muted" : "Sound on");
+                return;
+            }
 
-                        if (dropdownOpened)
-                        {
-                            // A dropdown opened: switch into dropdown navigation.
-                            _accessibilityDropdownOpen = true;
-                            _accessibilityDropdownParent = widgetIndex;
-                            moveDropdownHighlight(1); // focus + announce first item
-                        }
-                        else if (widgetIndex == WIDX_PAUSE)
-                        {
-                            Accessibility::ScreenReaderSpeak(wasPausedBefore ? "Game running" : "Game paused");
-                        }
-                        else if (widgetIndex == WIDX_MUTE)
-                        {
-                            // ToggleAllSounds applies immediately, so report the resulting state.
-                            Accessibility::ScreenReaderSpeak(Audio::gGameSoundsOff ? "Sound muted" : "Sound on");
-                        }
-                        else
-                        {
-                            // If a navigable window opened, focus and announce its first item;
-                            // otherwise just announce the window's name. Graph-owned windows
-                            // announce themselves through the graph screen manager - poking or
-                            // speaking here would double-announce (migration seam, spec 10.5).
-                            const WindowClass wc = getToolbarWindowClass(widgetIndex);
-                            WindowBase* opened = (windowMgr != nullptr && wc != WindowClass::null)
-                                ? windowMgr->FindByClass(wc)
-                                : nullptr;
-                            if (opened != nullptr && Accessibility::Graph::GraphOwnsWindowClass(wc))
-                            {
-                                // The graph manager speaks the screen name and landing.
-                            }
-                            else if (
-                                opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
-                                Accessibility::ScreenReaderSpeak(getToolbarItemName(widgetIndex));
-                        }
-                    }
-                    return true;
+            // If a navigable window opened, let its own announcement stand; otherwise confirm the
+            // button so the keypress is never silent. A graph-owned window announces itself through
+            // the screen manager, and speaking here would double-announce.
+            const WindowClass wc = getToolbarWindowClass(widgetIndex);
+            WindowBase* opened = (windowMgr != nullptr && wc != WindowClass::null)
+                ? windowMgr->FindByClass(wc)
+                : nullptr;
+            if (opened != nullptr && Accessibility::Graph::GraphOwnsWindowClass(wc))
+                return;
+            if (opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
+                Accessibility::ScreenReaderSpeak(getToolbarItemName(widgetIndex));
+        }
 
-                case AccessibilityAction::announce:
-                    // Re-speak the focused item, e.g. when returning from a child window.
-                    if (_accessibilityIndex >= 0 && _accessibilityIndex < count)
-                        Accessibility::ScreenReaderSpeakItem(getToolbarItemName(items[_accessibilityIndex]), _accessibilityIndex, count);
-                    return true;
+        void accessCommitDropdown(int32_t idx)
+        {
+            const WidgetIndex parent = _accessibilityDropdownParent;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            const std::string selectedText = valid ? std::string(gDropdown.items[idx].text) : std::string();
 
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveRight:
+            closeAccessibilityDropdown();
+
+            if (valid)
+            {
+                // Announce the chosen item first, so any speech the action itself produces
+                // (a confirmation, or a window that announces on open) is heard last.
+                if (!selectedText.empty())
+                    Accessibility::ScreenReaderSpeak(selectedText);
+                onDropdown(parent, idx);
+
+                // Keep focus inside the File menu after an in-place action (e.g. screenshot or
+                // quick-save). Defer the reopen to the next frame: some actions open their
+                // dialog on a later tick, and reopening now would put the menu in front of it.
+                if (parent == WIDX_FILE_MENU)
                 {
-                    const bool forward = (action == AccessibilityAction::moveDown
-                                          || action == AccessibilityAction::moveRight);
-                    if (_accessibilityIndex < 0 || _accessibilityIndex >= count)
-                        _accessibilityIndex = forward ? 0 : count - 1;
-                    else if (forward)
-                        _accessibilityIndex = (_accessibilityIndex + 1) % count;
-                    else
-                        _accessibilityIndex = (_accessibilityIndex - 1 + count) % count;
-
-                    Accessibility::ScreenReaderSpeak(getToolbarItemName(items[_accessibilityIndex]));
-                    return true;
+                    _pendingFileMenuReopen = true;
+                    _fileMenuReopenIndex = idx;
                 }
-
-                default:
-                    return false;
             }
-        }
-
-        bool handleAccessibilityDropdown(AccessibilityAction action)
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveLeft:
-                    moveDropdownHighlight(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveRight:
-                    moveDropdownHighlight(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    commitAccessibilityDropdown();
-                    return true;
-                case AccessibilityAction::announce:
-                    // Re-speak the current item, e.g. when a window opened over this dropdown closes.
-                    announceDropdownHighlight();
-                    return true;
-                case AccessibilityAction::cancel:
-                {
-                    // Closing the sub-menu returns to the parent toolbar item; announce it.
-                    const WidgetIndex parent = _accessibilityDropdownParent;
-                    closeAccessibilityDropdown();
-                    Accessibility::ScreenReaderSpeak(getToolbarItemName(parent));
-                    return true;
-                }
-                default:
-                    return false;
-            }
-        }
-
-        void moveDropdownHighlight(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-
-            // Read the mod's own cursor, NOT gDropdown.highlightedIndex - the engine rewrites that
-            // from the mouse every input tick while a dropdown is open, so it reads back as -1 and
-            // every move would restart from the same end of the list.
-            int32_t idx = Accessibility::GetKeyboardDropdownIndex();
-            for (int32_t steps = 0; steps < n; steps++)
-            {
-                idx += delta;
-                if (idx < 0)
-                    idx = n - 1;
-                else if (idx >= n)
-                    idx = 0;
-                if (!gDropdown.items[idx].isSeparator())
-                    break;
-            }
-            if (gDropdown.items[idx].isSeparator())
-                return;
-
-            Accessibility::SetKeyboardDropdownIndex(idx); // also mirrors into gDropdown for drawing
-            announceDropdownHighlight();
-        }
-
-        // Speaks the currently highlighted dropdown item and its position, without moving the
-        // highlight. Used both when the highlight moves and when re-announcing the dropdown on return
-        // from a window opened over it (so returning to a reopened menu speaks where you land).
-        void announceDropdownHighlight()
-        {
-            const int32_t idx = Accessibility::GetKeyboardDropdownIndex();
-            if (idx < 0 || idx >= gDropdown.numItems || gDropdown.items[idx].isSeparator())
-                return;
-
-            std::string text = gDropdown.items[idx].text;
-            if (gDropdown.items[idx].isChecked())
-                text += ", checked";
-            if (gDropdown.items[idx].isDisabled())
-                text += ", unavailable";
-
-            // Position among the selectable (non-separator) items.
-            int32_t total = 0, pos = 0;
-            for (int32_t j = 0; j < gDropdown.numItems; j++)
-            {
-                if (gDropdown.items[j].isSeparator())
-                    continue;
-                if (j == idx)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(text, pos, total);
+            accessSuggestFocus(parent);
         }
 
         // After a File-menu action, returns true if focus should stay in the menu (the action
@@ -1334,37 +1288,6 @@ namespace OpenRCT2::Ui::Windows
             return true;
         }
 
-        void commitAccessibilityDropdown()
-        {
-            const int32_t idx = Accessibility::GetKeyboardDropdownIndex();
-            const WidgetIndex parent = _accessibilityDropdownParent;
-            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
-                && !gDropdown.items[idx].isDisabled();
-            const std::string selectedText = valid ? std::string(gDropdown.items[idx].text) : std::string();
-
-            closeAccessibilityDropdown();
-
-            if (valid)
-            {
-                // Announce the chosen item first, so any speech the action itself produces
-                // (a confirmation, or a window that announces on open) is heard last.
-                if (!selectedText.empty())
-                    Accessibility::ScreenReaderSpeak(selectedText);
-                onDropdown(parent, idx);
-
-                // Keep focus inside the File menu after an in-place action (e.g. screenshot or
-                // quick-save). Defer the reopen to the next frame: some actions open their
-                // dialog on a later tick, and reopening now would put the menu in front of it
-                // (and reopening a dropdown mid-event is fragile). onUpdate handles it once the
-                // dust has settled and any dialog is reliably detectable.
-                if (parent == WIDX_FILE_MENU)
-                {
-                    _pendingFileMenuReopen = true;
-                    _fileMenuReopenIndex = idx;
-                }
-            }
-        }
-
         void onUpdate() override
         {
             if (_pendingFileMenuReopen)
@@ -1378,10 +1301,13 @@ namespace OpenRCT2::Ui::Windows
                     _accessibilityDropdownOpen = true;
                     _accessibilityDropdownParent = WIDX_FILE_MENU;
                     // Restore focus to the item just used; the next arrow press reads from here.
-                    // Left unspoken so the action's own confirmation isn't talked over.
                     if (_fileMenuReopenIndex >= 0 && _fileMenuReopenIndex < gDropdown.numItems
                         && !gDropdown.items[_fileMenuReopenIndex].isSeparator())
-                        Accessibility::SetKeyboardDropdownIndex(_fileMenuReopenIndex);
+                    {
+                        Accessibility::Graph::GraphStateForClass(WindowClass::topToolbar).nextSuggestedMove
+                            = Accessibility::Graph::ControlId::Structural(
+                                "dd:" + std::to_string(_fileMenuReopenIndex));
+                    }
                 }
             }
         }
@@ -1963,5 +1889,29 @@ namespace OpenRCT2::Ui::Windows
         WindowInitScrollWidgets(*window);
 
         return window;
+    }
+
+    void TopToolbarFocusFirstAccessibleItem()
+    {
+        auto* windowMgr = GetWindowManager();
+        auto* w = windowMgr != nullptr ? windowMgr->FindByClass(WindowClass::topToolbar) : nullptr;
+        if (w != nullptr)
+            static_cast<TopToolbar*>(w)->AccessFocusFirstItem();
+    }
+
+    void RegisterTopToolbarGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::topToolbar;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<TopToolbar&>(w).BuildAccessGraph(b); };
+        screen.onEscape = [](WindowBase& w) { return static_cast<TopToolbar&>(w).AccessEscape(); };
+        // The toolbar is always open, so it only holds the keyboard while the player has actually
+        // stepped into it with Tab. Without this it would outrank every window (stickToFront) and
+        // swallow the arrow keys the map cursor and every other screen need.
+        screen.isActive = []() { return Accessibility::IsInMenuMode(); };
+        // Tab is what got the player here, so Tab keeps stepping along the buttons.
+        screen.tabMovesBetweenItems = true;
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows
