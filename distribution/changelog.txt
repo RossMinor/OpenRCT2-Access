@@ -4,6 +4,13 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.0.2 (2026-09-07)
+------------------------------------------------------------------------
+Bug Fixes
+- Fixed combo boxes not working properly. Left and right arrows now open a combo box's list the same way Enter does, instead of jumping you to a different tab, and the list stays open long enough to move through it. This affected every combo box in the game: Options, Cheats, Staff, the ride window, multiplayer groups and the rest.
+- Fixed some other menu bugs. Checkboxes in the Cheats window announced the state they had before you pressed Enter rather than the new one. Left and right arrows on a checkbox or button no longer move you to another tab. Cheats now says "slider" for its number controls, matching the other windows.
+- More of the toolbar's Cheats menu now works. Enable sandbox mode, Disable clearance checks and Disable support limits now say whether they turned on or off, so you can tell they did something. Tile inspector, Object selection, Inventions list and Scenario options are still not accessible - they open, but cannot be read or navigated yet.
+
 1.01 (2026-09-06)
 ------------------------------------------------------------------------
 New Features and Improvements

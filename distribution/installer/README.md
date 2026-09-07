@@ -61,7 +61,7 @@ version to keep in step, because this folder carries its own.
   mod reports it on the next launch, telling the player to unzip the release over the folder by hand
   (a part-finished copy is not safe to leave silent).
 - Both version numbers are read out of the executables as text where anything needs them - the
-  engine stamps `OpenRCT2, v0.5.5` into its binary and the mod stamps `OpenRCT2-Access, v1.01`
+  engine stamps `OpenRCT2, v0.5.5` into its binary and the mod stamps `OpenRCT2-Access, v1.0.2`
   beside it (`kAccessVersionBanner` in [Version.h](../../src/openrct2/Version.h)). That works on any
   build, official or self-compiled, without running it, and without trusting the Windows file version
   resource - OpenRCT2 leaves that at `0.0.0.0` on builds made outside its release pipeline. If you
