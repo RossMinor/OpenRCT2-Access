@@ -222,6 +222,37 @@ function Compare-EngineVersion {
     return 0
 }
 
+# Puts an "OpenRCT2" entry in the Start Menu pointing at the installation we just created.
+#
+# Only for installations this installer set up. Someone who already had OpenRCT2 already has a Start
+# Menu entry from its own installer, and that entry now launches the modded executable, so adding a
+# second one would be duplicate clutter. This exists so both cases end up the same way: OpenRCT2 in
+# the Start Menu, accessible, launched however the player normally launches things.
+function New-StartMenuShortcut {
+    param([Parameter(Mandatory)] [string] $Target)
+
+    $exe = Join-Path $Target $script:PayloadExe
+    $dir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    $lnk = Join-Path $dir 'OpenRCT2.lnk'
+    try {
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($lnk)
+        $shortcut.TargetPath = $exe
+        $shortcut.WorkingDirectory = $Target
+        $shortcut.Description = 'OpenRCT2 with the OpenRCT2-Access accessibility mod'
+        $shortcut.Save()
+        Write-Info 'Added OpenRCT2 to your Start Menu.'
+        return $lnk
+    } catch {
+        # A missing shortcut is a papercut, not a failed install - the game is already in place and
+        # the folder is named in the closing message either way.
+        Write-Info "Could not create the Start Menu shortcut: $($_.Exception.Message)"
+        Write-Info 'The game is installed regardless - launch openrct2.exe from the folder named below.'
+        return $null
+    }
+}
+
 function Assert-GameClosed {
     $running = Get-Process -Name 'openrct2' -ErrorAction SilentlyContinue
     if ($running) {
@@ -395,16 +426,22 @@ function Invoke-Install {
         }
     }
 
+    # A fresh installation has no Start Menu entry yet; an existing one already has its own, now
+    # pointing at the modded executable. Either way the player ends up launching OpenRCT2 the same
+    # way, which is the point.
+    if ($script:IsFreshInstall) {
+        New-StartMenuShortcut -Target $Target | Out-Null
+    }
+
     $now = Get-ExeVersions (Join-Path $Target $script:PayloadExe)
     Write-Step 'Done'
     Write-Info "OpenRCT2 $($now.Engine) with OpenRCT2-Access $($now.Mod) is installed."
+    Write-Info 'Start your screen reader, then launch OpenRCT2 from your Start Menu.'
     if ($script:IsFreshInstall) {
-        Write-Info "It is at: $Target"
-        Write-Info 'Start your screen reader, then run openrct2.exe from that folder. The first launch will'
-        Write-Info 'look for your RollerCoaster Tycoon 2 files and should find them automatically if you own'
-        Write-Info 'the game on Steam.'
-    } else {
-        Write-Info 'Start your screen reader, then launch OpenRCT2 as you normally would.'
+        Write-Info ''
+        Write-Info "The game itself is at: $Target"
+        Write-Info 'The first launch looks for your RollerCoaster Tycoon 2 files and finds them automatically'
+        Write-Info 'if you own the game on Steam.'
     }
 }
 
@@ -433,6 +470,11 @@ function Invoke-Uninstall {
         Write-Info ''
         Write-Info 'To remove it, delete this folder:'
         Write-Info "  $Target"
+        $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\OpenRCT2.lnk'
+        if (Test-Path -LiteralPath $lnk) {
+            Remove-Item -LiteralPath $lnk -Force -ErrorAction SilentlyContinue
+            Write-Info 'The Start Menu entry has been removed for you.'
+        }
         Write-Info 'Your saved parks and settings live elsewhere (Documents\OpenRCT2) and are not affected.'
         throw 'Nothing to restore - delete the folder to remove it.'
     }

@@ -27,34 +27,21 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 
 ## Installing and updating
 
-You do **not** need to install OpenRCT2 first - the download is a complete copy of the game with the mod already in it. Which of these two you want depends on whether you already have OpenRCT2.
-
-### If you do not have OpenRCT2
-
-There is nothing to install. Unzip and play.
+You do **not** need to install OpenRCT2 first - the download includes it. The same steps work whether or not you already have the game, and you end up in the same place either way: OpenRCT2 in your Start Menu, accessible.
 
 1. Make sure your screen reader is installed and running.
 2. Launch Rollercoaster Tycoon 2 from Steam once to generate any needed files, then close it. It will likely ask you if you would like to install Direct Play, which you want to do.
 3. Download the latest release of the mod under the **Releases** heading.
-4. Unzip it wherever you would like to keep the game.
-5. Run **openrct2.exe** from that folder. The first launch looks for your RollerCoaster Tycoon 2 files and finds them automatically if you own the game on Steam.
+4. Unzip the download somewhere that is **not** your OpenRCT2 folder. Your Downloads folder is fine.
+5. Close OpenRCT2 if it is running.
+6. Run **Install-OpenRCT2Access.bat**. It tells you exactly what it is going to change and asks you to type `yes` before it touches anything.
+7. Start your screen reader and launch **OpenRCT2** from your Start Menu.
 
-That is all. Ignore the .bat files in the download - those are only for adding the mod to an OpenRCT2 you already have. You can move the folder wherever you like, and make a shortcut to openrct2.exe if you want one.
-
-### If you already have OpenRCT2
-
-Use the installer instead, so the mod goes into the copy you already play and your existing setup is left where it is.
-
-1. Make sure your screen reader is installed and running.
-2. Download the latest release of the mod under the **Releases** heading.
-3. Unzip the download somewhere that is **not** your OpenRCT2 folder. Your Downloads folder is fine.
-4. Close OpenRCT2 if it is running.
-5. Run **Install-OpenRCT2Access.bat**. It finds your OpenRCT2, tells you exactly what it is going to change, and asks you to type `yes` before it touches anything.
-6. Launch OpenRCT2 the way you normally do. It will now be accessible.
+You do not need to know which of the two situations you were in - the installer works it out. If you already had OpenRCT2 the mod goes into that copy, so your existing shortcut, saves and settings all keep working. If you did not, it sets the game up for you and adds it to your Start Menu.
 
 If it says it cannot write to the folder, close the window, then right-click **Install-OpenRCT2Access.bat** and choose **Run as administrator**. That happens when OpenRCT2 is installed under Program Files.
 
-To remove the mod, run **Uninstall-OpenRCT2Access.bat**. It puts your original OpenRCT2 back and deletes everything the installer added. If you installed by just unzipping, there is nothing to uninstall - delete the folder. And if the installer had to update your OpenRCT2 version as part of installing, there is no matching original to put back, so it will say to reinstall OpenRCT2 instead. Your saved parks and settings live in Documents\OpenRCT2 in every case and are not affected.
+To remove the mod, run **Uninstall-OpenRCT2Access.bat**. It puts your original OpenRCT2 back and deletes everything the installer added. Two cases have nothing to put back, and it tells you which applies: if the installer set the game up for you there was never a separate unmodded copy, so it removes the Start Menu entry and tells you to delete the folder; and if it had to update your OpenRCT2 version as part of installing, the saved original no longer matches the new game files, so it says to reinstall OpenRCT2 instead. Your saved parks and settings live in Documents\OpenRCT2 in every case and are not affected.
 
 ### About versions
 

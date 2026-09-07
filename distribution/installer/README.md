@@ -1,31 +1,20 @@
 # OpenRCT2-Access
 
-This download is a complete copy of OpenRCT2 with the accessibility mod built into it, plus an
-installer for adding the mod to an OpenRCT2 you already have. Which one you want depends on whether
-you already play OpenRCT2.
+This download is a complete copy of OpenRCT2 with the accessibility mod built into it. You do not
+need OpenRCT2 already - these steps are the same either way, and end in the same place: OpenRCT2 in
+your Start Menu, accessible.
 
-## If you do not have OpenRCT2
-
-There is nothing to install.
-
-1. Unzip this download wherever you would like to keep the game.
-2. Start your screen reader.
-3. Run **openrct2.exe**.
-
-The first launch looks for your RollerCoaster Tycoon 2 files and finds them automatically if you own
-the game on Steam. Ignore the `.bat` files - they are only for the case below. Move the folder
-wherever you like, and make a shortcut to `openrct2.exe` if you want one.
-
-## If you already have OpenRCT2
-
-Use the installer instead, so the mod goes into the copy you already play and your existing setup
-stays where it is.
+## Installing
 
 1. Unzip this download somewhere that is **not** your OpenRCT2 folder - your Downloads folder is fine.
 2. Close OpenRCT2 if it is running.
-3. Run **Install-OpenRCT2Access.bat**. It finds your installation, tells you what it is about to
-   change, and asks you to type `yes` before touching anything.
-4. Start your screen reader and launch OpenRCT2 the way you normally do.
+3. Run **Install-OpenRCT2Access.bat**. It tells you what it is about to change and asks you to type
+   `yes` before touching anything.
+4. Start your screen reader and launch **OpenRCT2** from your Start Menu.
+
+You do not need to know whether you already had OpenRCT2 - the installer works it out. If you did,
+the mod goes into that copy and your existing shortcut, saves and settings keep working. If you did
+not, it sets the game up under your AppData folder and adds it to your Start Menu.
 
 To remove it again, run **Uninstall-OpenRCT2Access.bat**. That puts your original `openrct2.exe`
 back and deletes everything the installer added.
