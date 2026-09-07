@@ -45,6 +45,16 @@ $script:PayloadDlls   = @('prism.dll', 'tolk.dll', 'nvdaControllerClient64.dll')
 $script:PayloadDirs   = @('data\sounds\access')
 $script:BackupName    = 'openrct2.exe.pre-access-backup'
 
+# Where OpenRCT2 goes when the player does not have one. Under LOCALAPPDATA rather than Program
+# Files so no elevation is needed, and it is already one of the folders Find-OpenRCT2Install looks
+# in, so a later re-install or update finds it without being told.
+$script:FreshInstallPath = Join-Path $env:LOCALAPPDATA 'Programs\OpenRCT2'
+
+# Dropped into an installation this installer created from scratch. Uninstalling one of those has no
+# original to restore - the whole folder is ours - so the uninstaller needs to know the difference.
+$script:FreshMarker   = 'installed-by-openrct2-access.txt'
+$script:IsFreshInstall = $false
+
 function Write-Step { param([string] $Text) Write-Host ''; Write-Host $Text }
 function Write-Info { param([string] $Text) Write-Host "  $Text" }
 
@@ -125,14 +135,23 @@ function Test-Writable {
 
 function Resolve-Target {
     if ($TargetPath) {
-        if (-not (Test-Path -LiteralPath $TargetPath)) {
-            throw "No such folder: $TargetPath"
+        $exists = Test-Path -LiteralPath $TargetPath
+        if ($exists -and (Test-Path -LiteralPath (Join-Path $TargetPath $script:PayloadExe))) {
+            return (Resolve-Path -LiteralPath $TargetPath).Path
         }
-        $full = (Resolve-Path -LiteralPath $TargetPath).Path
-        if (-not (Test-Path -LiteralPath (Join-Path $full $script:PayloadExe))) {
-            throw "That folder does not contain $($script:PayloadExe): $full"
+        if ($Uninstall) {
+            if (-not $exists) { throw "No such folder: $TargetPath" }
+            throw "That folder does not contain $($script:PayloadExe): $TargetPath"
         }
-        return $full
+        # A named folder with no OpenRCT2 in it means "set one up here", but only when it is new or
+        # empty. A folder with other files in it is far more likely to be a mistyped path than a
+        # deliberate choice, and quietly unpacking a game into it would be the wrong guess.
+        if ($exists -and (Get-ChildItem -LiteralPath $TargetPath -Force | Select-Object -First 1)) {
+            throw "That folder is not empty and does not contain $($script:PayloadExe): $TargetPath"
+        }
+        New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+        $script:IsFreshInstall = $true
+        return (Resolve-Path -LiteralPath $TargetPath).Path
     }
 
     $found = Find-OpenRCT2Install
@@ -151,14 +170,45 @@ function Resolve-Target {
         throw 'That was not one of the listed numbers.'
     }
 
-    Write-Info 'OpenRCT2 was not found in any of the usual places.'
-    $typed = Read-Host 'Type the full path of the folder containing openrct2.exe'
-    if ([string]::IsNullOrWhiteSpace($typed)) { throw 'No folder given.' }
-    $typed = $typed.Trim('"')
-    if (-not (Test-Path -LiteralPath (Join-Path $typed $script:PayloadExe))) {
-        throw "That folder does not contain $($script:PayloadExe): $typed"
+    # Uninstalling something that is not there: nothing to resolve, and certainly nothing to set up.
+    if ($Uninstall) {
+        Write-Info 'OpenRCT2 was not found in any of the usual places.'
+        $typed = Read-Host 'Type the full path of the folder containing openrct2.exe'
+        if ([string]::IsNullOrWhiteSpace($typed)) { throw 'No folder given.' }
+        $typed = $typed.Trim('"')
+        if (-not (Test-Path -LiteralPath (Join-Path $typed $script:PayloadExe))) {
+            throw "That folder does not contain $($script:PayloadExe): $typed"
+        }
+        return (Resolve-Path -LiteralPath $typed).Path
     }
-    return (Resolve-Path -LiteralPath $typed).Path
+
+    # Nothing found. The download carries a complete OpenRCT2 - the executable and the whole data\
+    # tree - so there is no reason to send the player away to install one first. Setting it up here
+    # also keeps them inside an accessible installer, rather than making them get through stock
+    # OpenRCT2's own first run unaided.
+    Write-Host ''
+    Write-Host 'OpenRCT2 was not found on this computer.'
+    Write-Info 'That is fine - this download includes it, so it can be set up for you now.'
+    Write-Info "It will be installed to: $($script:FreshInstallPath)"
+    Write-Info 'This folder does not need administrator rights, and RollerCoaster Tycoon 2 itself is'
+    Write-Info 'found automatically if you own it on Steam.'
+    Write-Host ''
+
+    if (-not $Yes) {
+        $answer = Read-Host 'Type yes to set up OpenRCT2 there, or type the path to an OpenRCT2 you already have'
+        $answer = $answer.Trim().Trim('"')
+        if ($answer.ToLower() -ne 'yes') {
+            if ([string]::IsNullOrWhiteSpace($answer)) { throw 'Cancelled - nothing was changed.' }
+            if (-not (Test-Path -LiteralPath (Join-Path $answer $script:PayloadExe))) {
+                throw "That folder does not contain $($script:PayloadExe): $answer"
+            }
+            return (Resolve-Path -LiteralPath $answer).Path
+        }
+    }
+
+    New-Item -ItemType Directory -Path $script:FreshInstallPath -Force | Out-Null
+    $script:IsFreshInstall = $true
+    return (Resolve-Path -LiteralPath $script:FreshInstallPath).Path
 }
 
 # -1 when $A is older than $B, 0 when equal, 1 when newer. The direction matters: an older game can
@@ -187,21 +237,26 @@ function Invoke-Install {
 
     Write-Step 'Versions'
     Write-Info "This mod build is for OpenRCT2 $($payloadVer.Engine) and is mod version $($payloadVer.Mod)."
-    if ($targetVer.Mod) {
+    if ($script:IsFreshInstall) {
+        Write-Info 'OpenRCT2 is not installed here yet, so it will be set up from this download.'
+    } elseif ($targetVer.Mod) {
         Write-Info "The installed game is OpenRCT2 $($targetVer.Engine) with mod version $($targetVer.Mod) already installed."
     } else {
         Write-Info "The installed game is OpenRCT2 $($targetVer.Engine), unmodded."
     }
 
     if (-not $payloadVer.Engine) { throw 'Could not read a version from this mod build. The download may be damaged.' }
-    if (-not $targetVer.Engine)  { throw "Could not read a version from $Target\$($script:PayloadExe). Is that really OpenRCT2?" }
+    if (-not $targetVer.Engine -and -not $script:IsFreshInstall) {
+        throw "Could not read a version from $Target\$($script:PayloadExe). Is that really OpenRCT2?"
+    }
 
     # The executable is version-locked to data\ - g2.dat is validated against a sprite count compiled
     # into the exe - so the two must always come from the same OpenRCT2 release. This package carries
     # both, so when the versions differ the fix is simply to install both, with nothing to download
-    # and nothing to ask.
-    $engineChanged = $false
-    if ($payloadVer.Engine -ne $targetVer.Engine) {
+    # and nothing to ask. A fresh install is the same thing with nothing to compare against: every
+    # file comes from this download, so it is self-consistent by construction.
+    $engineChanged = $script:IsFreshInstall
+    if (-not $script:IsFreshInstall -and $payloadVer.Engine -ne $targetVer.Engine) {
         if ((Compare-EngineVersion $targetVer.Engine $payloadVer.Engine) -gt 0) {
             # Their OpenRCT2 is NEWER. Installing would technically work, since matching data ships
             # here - but it would roll their game back, and a park saved by a newer engine may not
@@ -237,19 +292,24 @@ function Invoke-Install {
     }
 
     Write-Step 'About to change'
-    if ($engineChanged) {
+    if ($script:IsFreshInstall) {
+        Write-Info "$Target\  (a new OpenRCT2 $($payloadVer.Engine) installation, with the mod)"
+        Write-Info 'Nothing existing is touched, because there was nothing here.'
+    } elseif ($engineChanged) {
         Write-Info "$Target\$($script:PayloadExe)  (replaced)"
     } else {
         Write-Info "$Target\$($script:PayloadExe)  (replaced; the original is kept as $($script:BackupName))"
     }
-    foreach ($d in $script:PayloadDlls) { Write-Info "$Target\$d  (added)" }
-    foreach ($d in $script:PayloadDirs) { Write-Info "$Target\$d\  (added)" }
-    if ($engineChanged) {
-        Write-Info "$Target\data\  (updated to OpenRCT2 $($payloadVer.Engine))"
-        Write-Info ''
-        Write-Info 'Because the game data is being updated too, uninstalling later will not be able to put'
-        Write-Info "your old OpenRCT2 $($targetVer.Engine) back - the saved executable would no longer match"
-        Write-Info 'the new data. Reinstall OpenRCT2 if you ever want to return to the unmodded game.'
+    if (-not $script:IsFreshInstall) {
+        foreach ($d in $script:PayloadDlls) { Write-Info "$Target\$d  (added)" }
+        foreach ($d in $script:PayloadDirs) { Write-Info "$Target\$d\  (added)" }
+        if ($engineChanged) {
+            Write-Info "$Target\data\  (updated to OpenRCT2 $($payloadVer.Engine))"
+            Write-Info ''
+            Write-Info 'Because the game data is being updated too, uninstalling later will not be able to put'
+            Write-Info "your old OpenRCT2 $($targetVer.Engine) back - the saved executable would no longer match"
+            Write-Info 'the new data. Reinstall OpenRCT2 if you ever want to return to the unmodded game.'
+        }
     }
 
     if (-not $Yes) {
@@ -267,8 +327,17 @@ function Invoke-Install {
     # the OpenRCT2 version being replaced, so restoring it would put an old exe beside new data -
     # exactly the mismatch this installer exists to prevent, and a silent one. Better to have no
     # backup and say so than a backup that breaks the game when used.
+    #
+    # A fresh install has nothing to back up at all: every file in the folder came from this
+    # download, so there is no "original" to return to. A marker records that, so the uninstaller
+    # can say "delete this folder" rather than "reinstall OpenRCT2".
     $backupPath = Join-Path $Target $script:BackupName
-    if ($engineChanged) {
+    if ($script:IsFreshInstall) {
+        [System.IO.File]::WriteAllText(
+            (Join-Path $Target $script:FreshMarker),
+            "This OpenRCT2 was installed by the OpenRCT2-Access installer." + [Environment]::NewLine +
+            "There is no separate unmodded copy to restore - to remove it, delete this whole folder." + [Environment]::NewLine)
+    } elseif ($engineChanged) {
         if (Test-Path -LiteralPath $backupPath) {
             Remove-Item -LiteralPath $backupPath -Force
             Write-Info 'Removed the old backup - it belonged to the previous OpenRCT2 version.'
@@ -329,7 +398,14 @@ function Invoke-Install {
     $now = Get-ExeVersions (Join-Path $Target $script:PayloadExe)
     Write-Step 'Done'
     Write-Info "OpenRCT2 $($now.Engine) with OpenRCT2-Access $($now.Mod) is installed."
-    Write-Info 'Start your screen reader, then launch OpenRCT2 as you normally would.'
+    if ($script:IsFreshInstall) {
+        Write-Info "It is at: $Target"
+        Write-Info 'Start your screen reader, then run openrct2.exe from that folder. The first launch will'
+        Write-Info 'look for your RollerCoaster Tycoon 2 files and should find them automatically if you own'
+        Write-Info 'the game on Steam.'
+    } else {
+        Write-Info 'Start your screen reader, then launch OpenRCT2 as you normally would.'
+    }
 }
 
 function Invoke-Uninstall {
@@ -344,6 +420,21 @@ function Invoke-Uninstall {
     if (-not $targetVer.Mod) {
         Write-Info 'The accessibility mod is not installed here.'
         if (-not (Test-Path -LiteralPath $backupPath)) { return }
+    }
+
+    # An installation this installer created has no unmodded copy to fall back to - every file in it
+    # came from the mod download - so "restore the original" is meaningless. Say what actually
+    # removes it instead of sending them to reinstall OpenRCT2 over the top.
+    if (Test-Path -LiteralPath (Join-Path $Target $script:FreshMarker)) {
+        Write-Host ''
+        Write-Host 'This OpenRCT2 was installed by the accessibility mod itself.'
+        Write-Info 'There is no separate unmodded copy to put back, because the whole installation came'
+        Write-Info 'from the mod download.'
+        Write-Info ''
+        Write-Info 'To remove it, delete this folder:'
+        Write-Info "  $Target"
+        Write-Info 'Your saved parks and settings live elsewhere (Documents\OpenRCT2) and are not affected.'
+        throw 'Nothing to restore - delete the folder to remove it.'
     }
 
     if (-not (Test-Path -LiteralPath $backupPath)) {

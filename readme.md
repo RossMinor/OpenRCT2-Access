@@ -6,14 +6,13 @@ OpenRCT2-Access adds screen-reader support and full keyboard control to
 OpenRCT2, so blind and low-vision players can play Rollercoaster Tycoon 2
 without a mouse or sight. It speaks the interface through whichever screen
 reader you already use and lets you navigate the game's menus, windows, and
-map entirely from the keyboard. It installs into a copy of OpenRCT2 you
-already have.
+map entirely from the keyboard. 
 
 ## Important Note About This Page
 
-This repository is a fork of Open RCT2. Below are instructions on how to use the mod, but I would still research the game on your own and how to play. I will explain how certain aspects of the game works to illustrate how they interact with the mod itself, but it would be too much for me to write detailed walkthroughs on how the game itself works.
+This repository is a fork of Open RCT2. Below are instructions on how to use the mod, but I would still research the game on your own and how to play. I've done my best to explain the parts I struggled to grasp and I will continuously update the documentation, so please give feedback if you think it could be improved.
 
-A great place to start is the **[Getting Started page](https://docs.openrct2.io/en/latest/playing/getting_started/index.html)** on the Open RCT 2 [website](https://openrct2.io). While the documentation will be oriented toward sighted players that use a mouse, it does explain in detail how the game works, where you can then apply that knowledge to the mod documentation here.
+A great place to start is the **[Getting Started page](https://docs.openrct2.io/en/latest/playing/getting_started/index.html)** on the Open RCT 2 [website](https://openrct2.io). While the documentation will be oriented toward sighted players that use a mouse, it does explain in detail how the game works, where you can then apply that knowledge to the mod documentation here. Otherwise scrolls down for a few tutorials I made myself.
 
 ---
 
@@ -22,26 +21,27 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 - Windows.
 - A screen reader. The mod speaks through [Prism](https://github.com/ethindp/prism), a library that hands the mod's speech to whichever reader you already run, so NVDA, JAWS, Narrator, System Access, ZDSR and others all work. [NVDA](https://www.nvaccess.org/download/) is free and is the one the mod is developed and tested against, so it is still the safest choice.
 - The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/).
-- [OpenRCT2](https://openrct2.io/download) itself. The mod installs into the copy of OpenRCT2 you already have rather than setting up a second one, and any version will do - the download brings the game files it needs, so an older OpenRCT2 is brought up to date as part of installing.
+- The rest is handled completely by the mod.
 
 ---
 
 ## Installing and updating
 
-The mod installs itself into your existing OpenRCT2, so your saved parks, settings and scenarios stay exactly where they are and you keep playing the same copy of the game you already had.
+You do **not** need to install OpenRCT2 first. The download includes it, so the installer either adds the mod to an OpenRCT2 you already have, or sets one up for you if you have none.
 
 1. Make sure your screen reader is installed and running.
-2. Install [OpenRCT2](https://openrct2.io/download) if you do not already have it.
-3. Launch Rollercoaster Tycoon 2 from Steam once to generate any needed files, then close it. It will likely ask you if you would like to install Direct Play, which you want to do.
-4. Download the latest release of the mod under the **Releases** heading.
-5. Unzip the download somewhere that is **not** your OpenRCT2 folder. Your Downloads folder is fine.
-6. Close OpenRCT2 if it is running.
-7. Run **Install-OpenRCT2Access.bat**. It finds your OpenRCT2, tells you exactly what it is going to change, and asks you to type `yes` before it touches anything.
-8. Launch OpenRCT2 the way you normally do. It will now be accessible.
+2. Launch Rollercoaster Tycoon 2 from Steam once to generate any needed files, then close it. It will likely ask you if you would like to install Direct Play, which you want to do.
+3. Download the latest release of the mod under the **Releases** heading.
+4. Unzip the download somewhere that is **not** your OpenRCT2 folder. Your Downloads folder is fine.
+5. Close OpenRCT2 if it is running.
+6. Run **Install-OpenRCT2Access.bat**. It tells you exactly what it is going to change and asks you to type `yes` before it touches anything.
+   - If you already have OpenRCT2, it finds it and installs into it.
+   - If you do not, it offers to set one up under your AppData folder. Type `yes` to accept, or type the path to an OpenRCT2 you have somewhere unusual.
+7. Launch OpenRCT2. It will now be accessible. If the installer set it up for you, it tells you the folder at the end - run **openrct2.exe** from there. The first launch looks for your RollerCoaster Tycoon 2 files and finds them automatically if you own the game on Steam.
 
-If it says it cannot write to the folder, close the window, then right-click **Install-OpenRCT2Access.bat** and choose **Run as administrator**. That happens when OpenRCT2 is installed under Program Files.
+If it says it cannot write to the folder, close the window, then right-click **Install-OpenRCT2Access.bat** and choose **Run as administrator**. That happens when OpenRCT2 is installed under Program Files. An OpenRCT2 the installer set up for you never needs this.
 
-To remove the mod, run **Uninstall-OpenRCT2Access.bat**. It puts your original OpenRCT2 back and deletes everything the installer added. The exception is if the installer also updated your OpenRCT2 version: in that case there is no matching original to put back, and the uninstaller will tell you to reinstall OpenRCT2 instead.
+To remove the mod, run **Uninstall-OpenRCT2Access.bat**. It puts your original OpenRCT2 back and deletes everything the installer added. There are two exceptions, and it tells you which one applies: if the installer also updated your OpenRCT2 version there is no matching original to put back, so reinstall OpenRCT2 instead; and if the installer set up OpenRCT2 for you in the first place, there is no separate unmodded copy at all, so just delete that folder. Your saved parks and settings live in Documents\OpenRCT2 either way and are not affected.
 
 ### About versions
 
@@ -51,7 +51,7 @@ The one case it will not handle is an OpenRCT2 **newer** than the mod release. I
 
 Also worth knowing: **updating OpenRCT2 yourself will remove the mod**, because the update replaces the program file the mod lives in. If speech stops working after OpenRCT2 updates, run the mod installer again.
 
-The mod also has its own updater and will tell you in-game when a new version is out.
+The mod also has its own updater and will tell you in-game when a new version is out and install it for you.
 
 ---
 
@@ -63,9 +63,9 @@ At any point, you can press F1 to hear what commands you currently have at your 
 
 ### Currently Not Accessible or Not Fully Tested
 
-- Online Multiplayer
 - Importing extensions.
 - MacOS compatibility
+- Probably some other fringe cases I haven't thought of yet.
 
 ### Navigation
 
@@ -101,11 +101,11 @@ At any point, you can press F1 to hear what commands you currently have at your 
 ### Building
 
 - Space: Places whatever you are placing. With nothing selected that means a footpath of the current type on the current tile; while placing a ride, stall or scenery it places that instead. Enter also still works for placing, so either key will do.
-- Delete: Removes one thing on the current tile - a path, a bin or bench, scenery, a fence, a sign, a ride entrance or exit, or a piece of track. If there is only one thing there it just goes. If there are several, the mod reads them out and you choose with the up and down arrows, then press Enter. Track always asks you to confirm first, because the game has no undo.
-- Control + P: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location.
-- F4: Opens the path menu.
+- Delete: Removes an object on the current tile: paths, bins or benches, scenery, ride pieces, etc.
+- Control + P: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location. If there is a break, the mod will tell you were it is and why it's there.
+- F4: Opens the path menu. Allows you to choose path or queues type, color, type of railings, and more.
 - D: Deletes the path on the current tile and elivation. Unlike Delete, this works across a whole marked area.
-- L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path. The sloped path will build int he direction you are facing. So if you are facing north and have slope set to up, the path will gain elivation going north.
+- L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path. The sloped path will build in the direction you are facing. So if you are facing north and have slope set to up, the path will gain elivation going north. The elevation cursor will also move up each tile to make things quick while placing slopes.
 - Home or End: Raise and lower the elivation you are working on. This is useful for building elivated paths.
 - Shift + Home or End: Snaps the cursor to any objects above or below you, respectively.
 - Page up or down: Raises and lower the land tile you are currently on. **Note:** There is a sound that plays with terrain to indicate elevation. The higher pitch, the higher the elevation. The lower the pitch, the lower the elevation.
@@ -114,7 +114,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.
 - O: Buy land ownership over the tile you're on.
 - Shift + O: Buy construction rights over the tile you're on.
-- K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights.
+- K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights. Press K a third time will reset the markers.
 - Shift + K: Snaps your focus between the two markers.
 - Control + Enter: If hovering over a ride or stall, it will open its construction/build menu.
 - Shift + B: Report the break status of the custom ride tile you are hovering over.
@@ -122,7 +122,6 @@ At any point, you can press F1 to hear what commands you currently have at your 
 ### About elevation numbers
 
 Elevations are spoken as the same numbers the game itself uses on its height markers, so they match what a sighted player sees on screen. Sea level (the default water level) is elevation 0, and land below it reads as a minus number. When the cursor is on a tile where something stands above the ground - an elevated path or bridge, a raised ride entrance or exit, track passing overhead, or a sloped path - the tile readout ends with that thing's elevation. Bare ground never reports a height, since the ground is the baseline everything else is measured against. If several things overlap at different heights, every height is read: "elevation 2 and 4" for an elevated queue with coaster track flying over it. They are listed in whichever direction your **Tile reading order** setting uses, so the heights follow the same order as the features. The elevation tone follows the same levels, one note each, in the same order - but a note only sounds for a level that has actually changed since the last tile. Walking along under a coaster on level ground beeps once for the track and then goes quiet; the ground note returns only when the ground itself changes height. Note that pressing C reports where **you** are - the ground, or the height you have raised your working elevation to - not the height of something passing overhead. Those come from the tile readout. How often the heights are spoken is set by **Elevation reading** in the mod settings (control + F1): every tile, on change (the default, which stays quiet while you walk a bridge at one height), or off. You will occasionally hear an elevation like "4.5". That means the thing you are on sits **between** two normal steps. Ride track and sloped paths legitimately do this, so hearing it during a Z scan (shift + Home or End) is normal. Hearing it on a **flat path or queue you built** is a warning: a path half a step off the grid can never connect to its neighbours, no matter how far it runs, and control + P will report the network as broken. Delete that stretch and rebuild it from a whole-numbered elevation.
-
 
 #### While in Build Mode
 
@@ -149,6 +148,7 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 - Control + H: Teleports all stranded guests on the map back to the entrance and onto a path.
 - Control + Space: Toggle between keyboard and mouse mode. When in keyboard mode, the mouse is modified to not interfere with the keyboard focus. With mouse mode on, it allows the mouse to behave as it would in Open RCT2 normally.
 - / (slash): Opens the chat box in multiplayer. This is C in stock OpenRCT2, but C is the coordinate read-out here, so the mod moves chat to slash. You can change it back under Options, Controls and Interface, Shortcut keys.
+- Shift page up or page down: Zooms in and out of the map.
 
 ## Tips for Playing the Game
 
@@ -166,17 +166,17 @@ To create a blank map:
 ### Placing Paths and Queues
 
 Paths and queues are everything in this game because they direct your guests as to where they can and cannot go. Queues are just as important because they show guests where to line up at the entrance to a ride. Paths and queues are 1 tile each and must be placed with no breaks in order for guests to recognize them as a continuous path or queue. If a path leads to the entrance of a ride, a guests would not view it as a place they can stand and wait for their turn on the ride, and therefore would begin complaining about not being able to get on the ride. By placing queues, guests will know where to begin waiting and will begin to forma  line. You also do not need to use queues for the exits of your rides because guests will simply exit the ride and walk off to do whatever else they want to do.
-Guests will never walk off the path or queue into empty space. However, if a path or queue is deleted while they are on It, then they will be placed on empty space and wander around aimlessly. Additionally, if you delete a path or queue and guests are on the other side of it that isn’t connected to the entrance of the park, they are now more or less stranded on an island and cannot leave the park. If either of these scenarios happen, guests will begin to complain and lower the rating of your park. To avoid this, you can press control + “p” while on a path and it will trace all the way back to the entrance of your park to insure guests are able to leave. If there is a break in the path, the mod will tell you where that break occurs. If a guests does happen to get stranded off the path, you can press control + “h” from anywhere to teleport them back to the entrance of the park. This does not mean they will automatically leave the park once being placed there, there are many other factors that determine  when a guests wants to eat, go on a ride, leave the park, etc.
+Guests will never walk off the path or queue into empty space. However, if a path or queue is deleted while they are on It, then they will be placed on empty space and wander around aimlessly. Additionally, if you delete a path or queue and guests are on the other side of it that isn’t connected to the entrance of the park, they are now more or less stranded on an island and cannot leave the park. If either of these scenarios happen, guests will begin to complain and lower the rating of your park. To avoid this, you can press control + “p” while on a path and it will trace all the way back to the entrance of your park to insure guests are able to leave. If there is a break in the path, the mod will tell you where that break occurs. If a guests does happen to get stranded off the path, you can press control + “h” from anywhere to teleport them back to the entrance of the park. This does not mean they will automatically leave the park once being placed there, there are many other factors that determine  when a guest wants to eat, go on a ride, leave the park, etc.
 
 ### Placing Sloped Paths and Queues
 
-Sloped paths and queues are important because they allow your guests to reach higher elevations. You can change the slope of the path or queue you are placing by pressing “l”. Each slope tile elevates up or down one unit, so if you are at elevation 0 and a ride entrance is at elevation 5, you would need to place 6 tiles sloping up to properly reach the same elevation as the entrance. The reason you would need 6 and not 5 is because in order for a path to connect to an entrance or exit, the path or queue tyle directly outside of it needs to be flat and not a slope. When placing a sloped path, you must be at the same elevation as the current path for it to connect properly. If you place a slope, the mod will automatically move you up or down int he direction of that slope as you place it, so you don't have to keep manually adjusting your elevation. It’s also important to remember that paths and queues can be placed below or above other objects, but the game will let you know if you are unable to place a path or queue and tell you specifically why. For example, some pre-built rides have tricky entrances or exits for guests to access, so sometimes you may need to snake a path or queue above or below the ride itself for guests to get in or out.
+Sloped paths and queues are important because they allow your guests to reach higher elevations. You can change the slope of the path or queue you are placing by pressing “l”. Each slope tile elevates up or down one unit, so if you are at elevation 0 and a ride entrance is at elevation 5, you would need to place 6 tiles sloping up to properly reach the same elevation as the entrance. The reason you would need 6 and not 5 is because in order for a path to connect to an entrance or exit, the path or queue tyle directly outside of it needs to be flat and not a slope. When placing a sloped path, you must be at the same elevation as the current path for it to connect properly. If you place a slope, the mod will automatically move you up or down in the direction of that slope as you place it, so you don't have to keep manually adjusting your elevation. It’s also important to remember that paths and queues can be placed below or above other objects, but the game will let you know if you are unable to place a path or queue and tell you specifically why. For example, some pre-built rides have tricky entrances or exits for guests to access, so sometimes you may need to snake a path or queue above or below the ride itself for guests to get in or out.
 
 ### Building Custom Rides
 
 After you choose a custom ride to build, you will be placed into build mode. While in this mode, some commands may not work as intended, but most of them still do. The main one that doesn’t is control + arrows. I may change this in the future, but for now that’s how it is.
 The way building in RCT works is by customizing the features of the piece you would like to build and then placing it. The mod will tell you when the piece you have created is valid or not. The game itself quite literally will not let you place an invalid piece or a piece in an invalid location. Additionally, you do not need to be focused on the spot where you want the piece to be placed, the game will automatically place the piece you are working on at the end of the ride. The game and mod will only let you use the pieces the specific tier of ride lets you build. So for example, you can’t build a loop on a junior rollercoaster.
-Here are the general steps to build a rollercoaster, but you’ll learn they don’t technically need to be built in this order:
+Here are the general steps to build a rollercoaster, but you’ll learn they don’t technically need to be done in this order:
 
 1.	Navigate the build menu with control up and down and change the specifications of the category you’re on with control left and right. When you have made your desired piece, navigate to construct and activate it with control + enter.
 2.	You will first want to place a station platform. This is where the carts sit for guests to board and disembark from the ride. Choosing the direction of your station will determine which way the ride will initially move.
@@ -185,3 +185,11 @@ Here are the general steps to build a rollercoaster, but you’ll learn they don
 5.	If you ever need to delete a section of your ride, just press delete on the piece you want to get rid of. If the piece you are deleting isn’t on the end and will cause a break in the ride, you will need to go to the piece before the gap you just made and then press insert. Insert tells the build helper to readjust itself so it knows where to insert the next piece. After the gap is filled, it should configure itself back to the end of the ride. If it doesn’t for whatever reason, you should be able to go to the last piece in the ride and press insert to realign it. 
 6.	Once you’re ride is complete, you can escape out of build mode and then set your ride to test mode. You will know the ride makes a complete circuit if you are able to enter test mode. If it doesn’t let you, it means you haven’t connected something properly. It’s fairly difficult to do this, so if this does happen to you, I would bet that it’s an issue with how you connected the final piece back to the station platform or leading away from the station platform. I plan to make this more clear in future updates.
 
+##Support My Work
+
+- [Patreon](https://www.patreon.com/RossMinor)
+- [Subscribe to my Twitch](https://www.twitch.tv/RossMinor)
+- [Become a member on my YouTube](https://www.youtube.com/channel/UCoZujToINVP7xax9BTc7s2g/store)
+
+##Reporting Bugs
+To record any bugs, the quickest way to do so is [on my Discord.](https://discord.gg/fvq8UaU) I will be checking other places I've posted about the mod, but not as frequently.
