@@ -74,16 +74,16 @@ namespace OpenRCT2::Ui::Accessibility
         return std::filesystem::temp_directory_path() / "openrct2-access-changelog.txt";
     }
 
-    // Written by the update helper when the installer refuses the update - most often because the
-    // player's OpenRCT2 has been updated since this mod build was released, so the two no longer
-    // match. Its presence on the next launch is how a failure that happened while the game was
-    // closed gets reported to a player who cannot see the helper's console window.
+    // Written by the update helper when the copy over the game folder fails - a file held open by
+    // something else, a full disk, a folder needing rights the player does not have. Its presence on
+    // the next launch is how a failure that happened while the game was closed gets reported to a
+    // player who cannot see the helper's console window.
     static std::filesystem::path InstallFailedMarkerPath()
     {
         return std::filesystem::temp_directory_path() / "openrct2-access-update-failed.txt";
     }
 
-    // Where the helper sends the installer's output, so a refusal can be read after the fact.
+    // Where the helper sends the copy's output, so a failure can be read after the fact.
     static std::filesystem::path InstallLogPath()
     {
         return std::filesystem::temp_directory_path() / "openrct2-access-update.log";
@@ -217,16 +217,21 @@ namespace OpenRCT2::Ui::Accessibility
         _installFuture = std::async(std::launch::async, RunInstall, _downloadUrl);
     }
 
-    // Launches the swap helper and quits. The helper waits for this process to exit, runs the
-    // installer bundled in the release, relaunches, and cleans up.
+    // Launches the swap helper and quits. The helper waits for this process to exit, copies the
+    // downloaded release over the game folder, relaunches, and cleans up.
     //
-    // This used to be a plain "xcopy staging\* installDir\", which was fine when a release was a
-    // whole portable copy of the game. Now that a release only carries the mod's own files, copying
-    // them blindly would drop a build meant for one OpenRCT2 version onto whatever version the
-    // player happens to be running - and because the executable is validated against data\g2.dat by
-    // a sprite count compiled into it, the result is missing or wrong graphics rather than an error
-    // anyone could act on. Deferring to the installer buys the version gate, the backup that makes
-    // Uninstall-OpenRCT2Access.bat work, and a copy limited to the files the mod actually owns.
+    // A release is a whole portable copy of the game - the executable, the speech DLLs and the
+    // matching data\ tree - so copying it wholesale is not just adequate, it is the only shape that
+    // cannot go wrong. The executable is validated against data\g2.dat by a sprite count compiled
+    // into it, and a mismatch shows up as missing or wrong graphics rather than an error anyone can
+    // act on; taking both from the same download makes that mismatch unreachable.
+    //
+    // This briefly deferred to OpenRCT2Access-Installer.ps1 instead, back when a release carried
+    // only the mod's own files and had to be fitted onto whatever OpenRCT2 the player already had.
+    // That gate is what the bundled data\ tree replaced. The script still ships so that builds from
+    // before this change can update themselves - they invoke it out of the staging folder - but no
+    // build from here on runs it, and it is deleted from the staging copy below so it never lands in
+    // a player's game folder.
     static void FinishInstall()
     {
 #ifdef _WIN32
@@ -245,13 +250,15 @@ namespace OpenRCT2::Ui::Accessibility
             << "  timeout /t 1 /nobreak >nul\r\n"
             << "  goto wait\r\n"
             << ")\r\n"
-            // -Yes because the player already agreed to the update in-game; -NoPause because this
-            // window is minimised and a prompt here would hang the update with nobody to answer it.
-            << "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" << staging
-            << "\\OpenRCT2Access-Installer.ps1\" -TargetPath \"" << installDir << "\" -Yes -NoPause > \"" << logPath
-            << "\" 2>&1\r\n"
-            // On refusal the game is untouched, so it is still safe to relaunch - but the changelog
-            // prompt would be a lie, and the player needs to be told what happened.
+            // Legacy-only, and not something a player should find in their game folder.
+            << "del \"" << staging << "\\OpenRCT2Access-Installer.ps1\" >nul 2>&1\r\n"
+            // /E subdirectories including empty ones, /I treat the target as a folder, /Y overwrite
+            // without asking, /Q don't list every file. Everything written is either the game's own
+            // or this release's; the player's parks and settings live in Documents\OpenRCT2, well
+            // outside the folder being copied over.
+            << "xcopy \"" << staging << "\\*\" \"" << installDir << "\\\" /E /I /Y /Q > \"" << logPath << "\" 2>&1\r\n"
+            // A failed copy can leave the folder half-updated, so the changelog prompt would be a
+            // lie and the player needs to be told to reinstall from the release page.
             << "if errorlevel 1 (\r\n"
             << "  del \"" << changelogMarker << "\" >nul 2>&1\r\n"
             << "  echo " << logPath << "> \"" << failMarker << "\"\r\n"
@@ -289,9 +296,9 @@ namespace OpenRCT2::Ui::Accessibility
         {
             _checkedUpdateMarker = true;
 
-            // A refused update leaves the game exactly as it was, so this is the only sign the
-            // player gets that the update they asked for did not happen. Say so plainly and name
-            // the log, rather than letting them assume they are running the new version.
+            // A failed copy can leave the folder part-updated, so this is the only sign the player
+            // gets that the update they asked for did not finish. Say so plainly and point at the
+            // fix, rather than letting them assume they are running the new version.
             {
                 std::error_code failEc;
                 const auto failPath = InstallFailedMarkerPath();
@@ -300,12 +307,10 @@ namespace OpenRCT2::Ui::Accessibility
                     std::filesystem::remove(failPath, failEc); // one-shot
                     _launchMomentClaimed = true;
                     ScreenReaderSpeak(
-                        "The update could not be installed, and the game has been left as it was. This usually means "
-                        "the update was built for a different version of OpenRCT2 than the one you have. Details are "
+                        "The update could not be installed. To be sure the game is not left part updated, download "
+                        "the latest release from the mod's releases page and unzip it over this folder. Details are "
                         "in openrct2-access-update.log in your temp folder.");
-                    LogAnnouncement(
-                        "Update refused. The mod build did not match this OpenRCT2 version. See "
-                        + InstallLogPath().string());
+                    LogAnnouncement("Update copy failed. See " + InstallLogPath().string());
                 }
             }
 
@@ -357,7 +362,7 @@ namespace OpenRCT2::Ui::Accessibility
         // or auto-updated has no other way to confirm what they are running without sight, and it is
         // the first thing worth knowing when something misbehaves. Both numbers matter and they are
         // not interchangeable: the mod version is what updates track, while the OpenRCT2 version is
-        // what the installer gates on, so a build only ever fits the game it names here.
+        // the engine this build was compiled from and ships the data\ tree for.
         //
         // Gated on the reader actually being available rather than on a frame count - this runs from
         // the input tick, which can start before ScreenReaderInit() has been reached, and speaking

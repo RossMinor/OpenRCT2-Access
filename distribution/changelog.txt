@@ -4,6 +4,13 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.01 (2026-09-06)
+------------------------------------------------------------------------
+New Features and Improvements
+- There is no installer any more. Unzip the download anywhere, start your screen reader, and run openrct2.exe. That is the whole procedure, and it is the same whether or not you already have OpenRCT2 - the download is a complete copy of the game with the mod built in. To remove it, delete the folder.
+- Nothing is written outside the folder you unzipped, so an OpenRCT2 you already have is left completely alone. Your saved parks and settings stay in Documents\OpenRCT2 and are shared between the two.
+- Automatic updates now replace the folder they are running from, so an update can never leave the program file and the game files it needs out of step with each other.
+
 1.0 (2026-09-06)
 ------------------------------------------------------------------------
 New Features and Improvements

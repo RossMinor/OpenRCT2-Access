@@ -1,4 +1,21 @@
-# OpenRCT2-Access installer.
+# OpenRCT2-Access installer. FROZEN COMPATIBILITY SHIM - DO NOT DEVELOP THIS FURTHER.
+#
+# There is no install step any more. A release is a complete portable game - executable, speech DLLs
+# and the matching data\ tree - so the player unzips it and runs openrct2.exe, and nothing calls this
+# script. The two .bat launchers that used to sit beside it are gone, which is why the messages below
+# still name files that are no longer shipped.
+#
+# It is still packaged for exactly one reason: builds released BEFORE that change install their
+# updates by running this script out of the unpacked staging folder (FinishInstall in
+# AccessUpdate.cpp), and removing it from the package would break the in-game update for everyone
+# still on those builds. Current builds copy the release over their own folder instead, and delete
+# this file from the staging copy so it never reaches a player's game folder.
+#
+# So: leave it alone. Changing its parameters or behaviour changes how OLD builds upgrade themselves,
+# which is the one thing it exists to keep working. Delete it outright once nobody is upgrading
+# across the change - see scripts\build-access-release.ps1.
+#
+# Everything below is the original, and describes the world as it was when it was the install path.
 #
 # Installs the accessibility mod into an existing OpenRCT2 installation, and uninstalls it again.
 #

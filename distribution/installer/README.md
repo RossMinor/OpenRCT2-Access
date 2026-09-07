@@ -1,92 +1,71 @@
 # OpenRCT2-Access
 
 This download is a complete copy of OpenRCT2 with the accessibility mod built into it. You do not
-need OpenRCT2 already - these steps are the same either way, and end in the same place: OpenRCT2 in
-your Start Menu, accessible.
+need OpenRCT2 already, and there is nothing to install.
 
-## Installing
+## Playing
 
-1. Unzip this download somewhere that is **not** your OpenRCT2 folder - your Downloads folder is fine.
-2. Close OpenRCT2 if it is running.
-3. Run **Install-OpenRCT2Access.bat**. It tells you what it is about to change and asks you to type
-   `yes` before touching anything.
-4. Start your screen reader and launch **OpenRCT2** from your Start Menu.
+1. Unzip this download anywhere you like. Your Downloads folder is fine.
+2. Start your screen reader.
+3. Run **openrct2.exe** from the folder you unzipped.
 
-You do not need to know whether you already had OpenRCT2 - the installer works it out. If you did,
-the mod goes into that copy and your existing shortcut, saves and settings keep working. If you did
-not, it sets the game up under your AppData folder and adds it to your Start Menu.
+That is the whole procedure, and it is the same whether or not you already have OpenRCT2. If you
+want it somewhere easier to reach, right-click `openrct2.exe` and choose **Send to > Desktop
+(create shortcut)**, or pin it to your Start Menu - but that is your choice, not a required step.
 
-To remove it again, run **Uninstall-OpenRCT2Access.bat**. That puts your original `openrct2.exe`
-back and deletes everything the installer added.
+The first launch looks for your RollerCoaster Tycoon 2 files and finds them automatically if you own
+the game on Steam.
 
-If it says it cannot write to the folder, close the window, then right-click the .bat file and
-choose **Run as administrator**. That happens when OpenRCT2 is installed under Program Files.
+To remove it, delete the folder. Nothing was put anywhere else.
 
-## What the installer changes
+## What this does and does not touch
 
-| File | What happens |
-| --- | --- |
-| `openrct2.exe` | Replaced. The original is kept beside it as `openrct2.exe.pre-access-backup`. |
-| `prism.dll`, `tolk.dll`, `nvdaControllerClient64.dll` | Added. These are how the mod talks to your screen reader. |
-| `data\sounds\access\` | Added. The mod's own sound cues. |
-| `data\` | Only when your OpenRCT2 is older than this build - see below. |
+Your saved parks and settings live in `Documents\OpenRCT2`, outside this folder. That is also where
+a separate OpenRCT2 keeps them, so if you already have one you will see the same saved parks in
+both, and this folder can be deleted at any time without losing them.
 
-Your saved parks, settings and RollerCoaster Tycoon 2 files are never touched. They live in
-`Documents\OpenRCT2`, outside the game folder.
+Nothing is written into an existing OpenRCT2 installation. It keeps its own executable and its own
+shortcut, and it stays exactly as unmodded as it was. The two do not interfere; just don't run both
+at once, since they share one settings file.
 
-## The version rule
+## The version rule, and why it cannot bite you
 
 `openrct2.exe` is version-locked to the `data` folder beside it: `g2.dat` is validated against a
 sprite count compiled into the executable, so an executable from one OpenRCT2 release next to
 another release's data gives missing or wrong graphics rather than a clear error.
 
-This download carries both, which is what makes that a non-issue. If your OpenRCT2 is **older** than
-this build, the installer brings it up to date at the same time - nothing extra to download and
-nothing to choose.
+Both travel together in this download and neither is ever fitted to files from anywhere else, which
+is what makes that a non-issue rather than something you have to think about.
 
-If your OpenRCT2 is **newer** than this build, the installer stops. It could install, since matching
-data ships here, but it would move your game back a version and a park saved by the newer version
-might not open afterwards. Wait for a mod build for your version; the message names both versions.
-
-One consequence worth knowing: **OpenRCT2's own updater will overwrite the modded executable** when
-it updates the game, silently removing the mod. If speech stops after a game update, run this
-installer again.
-
-## How it recognises things
-
-Both version numbers are read straight out of the executables as text - the engine stamps
-`OpenRCT2, v0.5.5` into its binary and the mod stamps `OpenRCT2-Access, v1.0` beside it
-(`kAccessVersionBanner` in [Version.h](../../src/openrct2/Version.h)). Reading the binary works for
-any build, official or self-compiled, without running it, and without trusting the Windows file
-version resource - OpenRCT2 leaves that at `0.0.0.0` on builds made outside its release pipeline.
-
-If you change how those banners are formatted, update `Get-ExeVersions` in the script to match.
+The mod checks for its own updates and offers to install them in-game. There is no separate OpenRCT2
+version to keep in step, because this folder carries its own.
 
 ## For maintainers
 
-- `OpenRCT2Access-Installer.ps1` holds all the logic; the two `.bat` files only launch it with
-  `-ExecutionPolicy Bypass -NoProfile`, since PowerShell blocks downloaded scripts by default and a
-  user's own profile could otherwise print noise into output that is being read aloud.
-- Parameters: `-TargetPath <folder>` to skip detection (it may name a new or empty folder to set up a
-  fresh installation there), `-Uninstall`, `-Yes` to skip the confirmation prompt, `-NoPause` to skip
-  the closing "Press Enter". The last two are for callers rather than people: the mod's in-game
-  updater runs this script from a minimised window where a prompt nobody can see would hang the
-  update forever.
-- With no OpenRCT2 found, the installer offers to set one up in
-  `%LOCALAPPDATA%\Programs\OpenRCT2` - no elevation needed, and already one of the folders it
-  searches, so later updates find it. Such an installation gets an
-  `installed-by-openrct2-access.txt` marker, because uninstalling it has no original to restore and
-  the uninstaller must say "delete the folder" rather than "reinstall OpenRCT2".
-- **The in-game updater installs through this script**, rather than copying files itself, so an
-  automatic update gets the same version handling, the same backup and the same limited file set as a
-  manual one. If the installer refuses, the updater leaves the game untouched, writes
-  `openrct2-access-update-failed.txt` into the temp folder next to `openrct2-access-update.log`, and
-  the mod announces the failure on the next launch. Renaming this script or changing its parameters
-  therefore breaks automatic updates - see `FinishInstall` in
-  [AccessUpdate.cpp](../../src/openrct2-ui/accessibility/AccessUpdate.cpp).
-- The script targets **Windows PowerShell 5.1** - no ternary, no null-coalescing, no `&&`.
-- Re-installing never overwrites an existing backup, so a second install cannot replace the pristine
-  executable with a modded one and strand the player without an uninstall. The exception is a version
-  change, which drops the backup deliberately: it would no longer match the new data.
-- Output is plain sequential text with no progress bars, spinners or colour-carried meaning, because
-  it is read aloud.
+- The zip root **is** the game: `openrct2.exe`, the three speech DLLs, and the full `data\` tree.
+  `scripts\build-access-release.ps1` builds it and verifies the result; it now refuses to package a
+  `.bat`, so an install step cannot creep back in.
+- `OpenRCT2Access-Installer.ps1` still ships, but nothing in a current build runs it and no player
+  should. Builds released **before** the switch to unzip-and-run update themselves by invoking it
+  out of the unpacked staging folder, so removing it from the package would break the in-game update
+  for anyone still on those builds. The current `FinishInstall` deletes it from the staging copy so
+  it never lands in a player's folder. Drop it from the package once nobody is updating across that
+  change. Treat the script as frozen until then - it is a compatibility shim, and its own messages
+  still refer to the `.bat` launchers that no longer ship.
+- **In-game update** (`FinishInstall` in
+  [AccessUpdate.cpp](../../src/openrct2-ui/accessibility/AccessUpdate.cpp)): the helper waits for the
+  game to exit, `xcopy`s the downloaded release over the game folder, and relaunches. Copying
+  wholesale is safe precisely because a release is a whole portable game - exe and data always arrive
+  from the same build. If the copy fails, the helper writes
+  `openrct2-access-update-failed.txt` beside `openrct2-access-update.log` in the temp folder and the
+  mod reports it on the next launch, telling the player to unzip the release over the folder by hand
+  (a part-finished copy is not safe to leave silent).
+- Both version numbers are read out of the executables as text where anything needs them - the
+  engine stamps `OpenRCT2, v0.5.5` into its binary and the mod stamps `OpenRCT2-Access, v1.01`
+  beside it (`kAccessVersionBanner` in [Version.h](../../src/openrct2/Version.h)). That works on any
+  build, official or self-compiled, without running it, and without trusting the Windows file version
+  resource - OpenRCT2 leaves that at `0.0.0.0` on builds made outside its release pipeline. If you
+  change how those banners are formatted, update the packaging script's regexes to match.
+- Scripts here target **Windows PowerShell 5.1** - no ternary, no null-coalescing, no `&&`.
+- Player-facing output is plain sequential text with no progress bars, spinners or colour-carried
+  meaning, because it is read aloud.

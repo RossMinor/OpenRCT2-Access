@@ -1,10 +1,13 @@
 # Packages an OpenRCT2-Access release.
 #
-# The package carries the mod's executable AND the matching game data\ tree - g2.dat, objects,
-# scenarios, language files, the lot. That is deliberate, and it is what makes version mismatches
-# impossible: the executable is version-locked to data\ (g2.dat is validated against a sprite count
-# compiled into the exe), so shipping them together means an install can never end up with an
-# executable from one OpenRCT2 release sitting beside another release's data.
+# The package is the game, not an installer for it: the executable, the speech DLLs and the matching
+# game data\ tree - g2.dat, objects, scenarios, language files, the lot - all at the zip root. Unzip
+# it anywhere and run openrct2.exe. There is no install step because there is nothing left to do.
+#
+# Shipping data\ alongside the executable is what makes that possible, and it makes version
+# mismatches impossible at the same time: the executable is version-locked to data\ (g2.dat is
+# validated against a sprite count compiled into the exe), so travelling together means a player can
+# never end up with an executable from one OpenRCT2 release sitting beside another release's data.
 #
 # The alternative - shipping only the executable, at about 8 MB - was tried, and it pushed that
 # version-matching problem onto the player: their data\ came from whichever OpenRCT2 they happened
@@ -50,9 +53,17 @@ foreach ($d in 'prism.dll', 'tolk.dll', 'nvdaControllerClient64.dll') {
     if (-not (Test-Path -LiteralPath $p)) { Fail "Missing $d in bin. Build once to run CopySpeechLibraries." }
     $files[$p] = $d
 }
-foreach ($n in 'Install-OpenRCT2Access.bat', 'Uninstall-OpenRCT2Access.bat', 'OpenRCT2Access-Installer.ps1') {
-    $files[(Join-Path $repo "distribution\installer\$n")] = $n
-}
+# The installer script, and ONLY the script. There is nothing to install any more - unzipping the
+# package produces a complete, runnable game, so the player runs openrct2.exe and that is the whole
+# procedure. The two .bat launchers are deliberately not shipped: an install step that copies files
+# into a folder the player already unzipped earns nothing and is one more thing to get wrong.
+#
+# The script itself still travels because builds released BEFORE this change update themselves by
+# running it out of the unpacked staging folder (FinishInstall in AccessUpdate.cpp). Dropping it
+# would break the in-game update for everyone still on those builds. It can go once nobody is
+# updating across this change; nothing in a current build calls it, and the current FinishInstall
+# deletes it from the staging copy so it never reaches a player's game folder.
+$files[(Join-Path $repo 'distribution\installer\OpenRCT2Access-Installer.ps1')] = 'OpenRCT2Access-Installer.ps1'
 $files[(Join-Path $repo 'distribution\installer\README.md')] = 'README.md'
 $files[(Join-Path $repo 'distribution\changelog.txt')]       = 'changelog.txt'
 $files[(Join-Path $repo 'contributors.md')]                  = 'contributors.md'
@@ -123,9 +134,12 @@ $check.Dispose()
 $problems = @()
 if ($names.Count -ne $files.Count) { $problems += "entry count $($names.Count) != expected $($files.Count)" }
 if ($names | Where-Object { $_.Contains([char]92) }) { $problems += 'entries contain backslashes' }
-foreach ($required in 'openrct2.exe', 'prism.dll', 'Install-OpenRCT2Access.bat', 'OpenRCT2Access-Installer.ps1') {
+foreach ($required in 'openrct2.exe', 'prism.dll', 'OpenRCT2Access-Installer.ps1') {
     if ($names -notcontains $required) { $problems += "missing $required" }
 }
+# Nothing for a player to run but the game. A .bat back in the package would put an install step in
+# front of a folder that is already a complete installation.
+if ($names | Where-Object { $_ -like '*.bat' }) { $problems += 'a .bat launcher leaked into the package' }
 if (($names | Where-Object { $_ -like 'data/sounds/access/*' }).Count -lt 1) { $problems += 'no sound cues' }
 if ($names | Where-Object { $_ -like '*.pdb' -or $_ -like '*.lib' -or $_ -like '*portable-data*' }) { $problems += 'development files leaked in' }
 if (($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { $problems += 'duplicate entry names' }
@@ -147,4 +161,4 @@ if ($problems.Count -gt 0) {
 Write-Host ''
 Write-Host "Wrote $zipPath"
 Write-Host ("  {0} entries, {1:N1} MB" -f $names.Count, ((Get-Item $zipPath).Length / 1MB))
-Write-Host "  installs OpenRCT2-Access v$mod into an OpenRCT2 v$engine installation"
+Write-Host "  a complete OpenRCT2 v$engine with OpenRCT2-Access v$mod - unzip and run openrct2.exe"
