@@ -10,6 +10,7 @@
 #include "../UiStringIds.h"
 
 #include <iterator>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -669,7 +670,10 @@ static StringId window_cheats_page_titles[] = {
                 case AccessControlKind::dropdown:
                     return "combo box";
                 case AccessControlKind::spinner:
-                    return "spinner";
+                    // "slider" everywhere, matching the other windows. A spinner and a slider are
+                    // different widgets, but in this mod they are operated identically (Left/Right
+                    // changes the value), so one familiar word beats two accurate ones.
+                    return "slider";
                 case AccessControlKind::button:
                     return "button";
                 default:
@@ -702,16 +706,13 @@ static StringId window_cheats_page_titles[] = {
 
         void accessCloseDropdown()
         {
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->CloseByClass(WindowClass::dropdown);
+            Accessibility::CloseWidgetDropdownFromKeyboard();
             _accessDropdownOpen = false;
         }
 
         void accessOpenDropdown(WidgetIndex chevronWidx)
         {
-            onMouseDown(chevronWidx); // populates and shows gDropdown
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+            if (!Accessibility::OpenWidgetDropdownFromKeyboard(*this, chevronWidx))
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevronWidx;
@@ -777,13 +778,24 @@ static StringId window_cheats_page_titles[] = {
                 NodeVtable vt;
                 vt.announcements.emplace_back([this, w, kind]() { return accessControlLabel(w, kind); });
                 vt.announcements.emplace_back(NodeAnnouncement::Static(accessKindWord(kind), AnnouncementKinds::kRole));
+                // LIVE, so a value that only settles on a later tick is still announced when it
+                // lands. Cheats are game actions, and the engine ENQUEUES a game action raised from
+                // the UI rather than running it (see ExecuteInternal in GameActionRunner.cpp:
+                // "also the case when its executed from the UI update"), so the new state is simply
+                // not readable yet when the keypress returns.
                 vt.announcements.emplace_back(
-                    [this, w, kind]() { return accessControlValue(w, kind); }, false, AnnouncementKinds::kValue);
-                // Synchronous feedback after Enter/adjust: just the new value, no label repeated.
-                vt.stateText = [this, w, kind]() {
-                    onPrepareDraw();
-                    return accessControlValue(w, kind);
-                };
+                    [this, w, kind]() { return accessControlValue(w, kind); }, true, AnnouncementKinds::kValue);
+                // Only the spinners settle synchronously - they edit window-local values, not game
+                // state - so only they get synchronous feedback. Giving it to the others would
+                // announce the value they had BEFORE the keypress ("unchecked" immediately after
+                // checking something), with the live part correcting it a moment later.
+                if (kind == AccessControlKind::spinner)
+                {
+                    vt.stateText = [this, w, kind]() {
+                        onPrepareDraw();
+                        return accessControlValue(w, kind);
+                    };
+                }
                 vt.focusRect = [this, w]() -> std::optional<Accessibility::Graph::GraphRect> {
                     if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
                         return std::nullopt;

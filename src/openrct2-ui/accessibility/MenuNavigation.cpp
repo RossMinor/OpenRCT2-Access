@@ -19,7 +19,9 @@
 #include <SDL.h>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/input/ShortcutManager.h>
+#include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/windows/Windows.h>
+#include <openrct2/Input.h>
 #include <openrct2/OpenRCT2.h>
 #include <algorithm>
 #include <openrct2/config/Config.h>
@@ -119,6 +121,99 @@ namespace OpenRCT2::Ui::Accessibility
             default:
                 return false;
         }
+    }
+
+    // The keyboard's position inside an open dropdown. See the header for why this cannot live in
+    // Windows::gDropdown.highlightedIndex.
+    static int32_t _keyboardDropdownIndex = -1;
+
+    void SetKeyboardDropdownIndex(int32_t index)
+    {
+        _keyboardDropdownIndex = index;
+        // Mirror it immediately so the highlight is right on this frame too, not just after the
+        // next tick.
+        if (index >= 0 && index < Windows::gDropdown.numItems)
+        {
+            Windows::gDropdown.highlightedIndex = index;
+            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+    }
+
+    int32_t GetKeyboardDropdownIndex()
+    {
+        return _keyboardDropdownIndex;
+    }
+
+    void TickKeyboardDropdownHighlight()
+    {
+        if (_keyboardDropdownIndex < 0)
+            return;
+
+        auto* windowMgr = GetWindowManager();
+        if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+        {
+            _keyboardDropdownIndex = -1; // the dropdown went away; forget the position
+            return;
+        }
+
+        if (_keyboardDropdownIndex >= Windows::gDropdown.numItems)
+        {
+            _keyboardDropdownIndex = -1;
+            return;
+        }
+
+        // The engine clears this from the mouse every input tick, so put it back.
+        if (Windows::gDropdown.highlightedIndex != _keyboardDropdownIndex)
+        {
+            Windows::gDropdown.highlightedIndex = _keyboardDropdownIndex;
+            windowMgr->InvalidateByClass(WindowClass::dropdown);
+        }
+    }
+
+    void ClaimWidgetPressForKeyboard(WindowBase& w, WidgetIndex widgetIndex)
+    {
+        gPressedWidget.windowClassification = w.classification;
+        gPressedWidget.windowNumber = w.number;
+        gPressedWidget.widgetIndex = widgetIndex;
+    }
+
+    void ReleaseWidgetPressForKeyboard()
+    {
+        _keyboardDropdownIndex = -1;
+
+        // Hand the engine back the state a mouse-driven close leaves it in. Staying in
+        // dropdownActive would send the player's next real click through the dropdown commit path
+        // with nothing open, and a lingering pressed widget draws a stuck-looking chevron.
+        if (InputGetState() == InputState::dropdownActive)
+            InputSetState(InputState::normal);
+        gInputFlags.unset(InputFlag::widgetPressed);
+        gPressedWidget.windowClassification = WindowClass::null;
+    }
+
+    bool OpenWidgetDropdownFromKeyboard(WindowBase& w, WidgetIndex chevronWidx)
+    {
+        // Claim the press BEFORE opening: onMouseDown shows the dropdown, and the engine can act on
+        // gPressedWidget from the very next tick. See the header for why this is load-bearing.
+        ClaimWidgetPressForKeyboard(w, chevronWidx);
+
+        w.onMouseDown(chevronWidx); // populates and shows gDropdown
+
+        auto* windowMgr = GetWindowManager();
+        if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+        {
+            // Nothing opened - don't leave a press behind claiming otherwise.
+            ReleaseWidgetPressForKeyboard();
+            return false;
+        }
+        return true;
+    }
+
+    void CloseWidgetDropdownFromKeyboard()
+    {
+        if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+            windowMgr->CloseByClass(WindowClass::dropdown);
+        ReleaseWidgetPressForKeyboard();
     }
 
     bool IsLegacyNavigableAccessibleClass(WindowClass wc)

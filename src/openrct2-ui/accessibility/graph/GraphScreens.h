@@ -53,6 +53,17 @@ namespace OpenRCT2::Ui::Accessibility::Graph
 
         // Arrow wrap-around at list edges (legacy parity: the mod's lists wrap).
         bool wrapArrows = true;
+
+        // Whether Left/Right may fall through to a page switch when the focused node has nothing
+        // to adjust. True for LIST screens, where that has always been the behaviour and a row has
+        // no sideways meaning of its own.
+        //
+        // FORM screens must set this false. There, Left/Right belongs to the focused control - it
+        // adjusts a slider, steps a spinner, opens a combo box - and a control with nothing to
+        // adjust (a checkbox, a button) should simply re-read. Letting the key reach the page
+        // switch instead silently teleports the player to another page, taking the control they
+        // were on with it. Pages are still reached with Tab/Shift+Tab either way.
+        bool sideArrowsChangePage = true;
     };
 
     // Register a screen recipe. Call once per window class (typically from that window's source

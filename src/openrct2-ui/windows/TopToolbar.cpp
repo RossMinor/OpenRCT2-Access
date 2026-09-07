@@ -13,6 +13,7 @@
 
 #include <iterator>
 #include <limits>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -1141,13 +1142,22 @@ namespace OpenRCT2::Ui::Windows
                         // onMouseDown opens dropdown buttons; onMouseUp handles toggles and
                         // window-opening buttons. Exactly one acts for any given button.
                         // Suppress their click-announce: this keyboard path announces itself.
+                        // Claim the press before activating: if this button opens a dropdown, the
+                        // engine's dropdown-active state machine will look for the widget that
+                        // opened it on the very next tick and close the list if it finds none.
+                        Accessibility::ClaimWidgetPressForKeyboard(*this, widgetIndex);
                         _suppressClickAnnounce = true;
                         onMouseDown(widgetIndex);
                         onMouseUp(widgetIndex);
                         _suppressClickAnnounce = false;
 
                         auto* windowMgr = GetWindowManager();
-                        if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::dropdown) != nullptr)
+                        const bool dropdownOpened = windowMgr != nullptr
+                            && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
+                        if (!dropdownOpened)
+                            Accessibility::ReleaseWidgetPressForKeyboard(); // no list; drop the claim
+
+                        if (dropdownOpened)
                         {
                             // A dropdown opened: switch into dropdown navigation.
                             _accessibilityDropdownOpen = true;
@@ -1251,7 +1261,10 @@ namespace OpenRCT2::Ui::Windows
             if (n <= 0)
                 return;
 
-            int32_t idx = gDropdown.highlightedIndex;
+            // Read the mod's own cursor, NOT gDropdown.highlightedIndex - the engine rewrites that
+            // from the mouse every input tick while a dropdown is open, so it reads back as -1 and
+            // every move would restart from the same end of the list.
+            int32_t idx = Accessibility::GetKeyboardDropdownIndex();
             for (int32_t steps = 0; steps < n; steps++)
             {
                 idx += delta;
@@ -1265,12 +1278,8 @@ namespace OpenRCT2::Ui::Windows
             if (gDropdown.items[idx].isSeparator())
                 return;
 
-            gDropdown.highlightedIndex = idx;
+            Accessibility::SetKeyboardDropdownIndex(idx); // also mirrors into gDropdown for drawing
             announceDropdownHighlight();
-
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
         }
 
         // Speaks the currently highlighted dropdown item and its position, without moving the
@@ -1278,7 +1287,7 @@ namespace OpenRCT2::Ui::Windows
         // from a window opened over it (so returning to a reopened menu speaks where you land).
         void announceDropdownHighlight()
         {
-            const int32_t idx = gDropdown.highlightedIndex;
+            const int32_t idx = Accessibility::GetKeyboardDropdownIndex();
             if (idx < 0 || idx >= gDropdown.numItems || gDropdown.items[idx].isSeparator())
                 return;
 
@@ -1327,7 +1336,7 @@ namespace OpenRCT2::Ui::Windows
 
         void commitAccessibilityDropdown()
         {
-            const int32_t idx = gDropdown.highlightedIndex;
+            const int32_t idx = Accessibility::GetKeyboardDropdownIndex();
             const WidgetIndex parent = _accessibilityDropdownParent;
             const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
                 && !gDropdown.items[idx].isDisabled();
@@ -1363,6 +1372,8 @@ namespace OpenRCT2::Ui::Windows
                 _pendingFileMenuReopen = false;
                 if (shouldKeepFileMenuOpen())
                 {
+                    // Reopened from the keyboard, so it needs the same press claim as the first open.
+                    Accessibility::ClaimWidgetPressForKeyboard(*this, WIDX_FILE_MENU);
                     onMouseDown(WIDX_FILE_MENU); // rebuild and reopen the same dropdown
                     _accessibilityDropdownOpen = true;
                     _accessibilityDropdownParent = WIDX_FILE_MENU;
@@ -1370,15 +1381,14 @@ namespace OpenRCT2::Ui::Windows
                     // Left unspoken so the action's own confirmation isn't talked over.
                     if (_fileMenuReopenIndex >= 0 && _fileMenuReopenIndex < gDropdown.numItems
                         && !gDropdown.items[_fileMenuReopenIndex].isSeparator())
-                        gDropdown.highlightedIndex = _fileMenuReopenIndex;
+                        Accessibility::SetKeyboardDropdownIndex(_fileMenuReopenIndex);
                 }
             }
         }
 
         void closeAccessibilityDropdown()
         {
-            WindowDropdownClose();
-            InputSetState(InputState::normal);
+            Accessibility::CloseWidgetDropdownFromKeyboard();
             _accessibilityDropdownOpen = false;
         }
 

@@ -245,6 +245,9 @@ void InputManager::process()
     // Announce "Menu closed" when a top-level accessible window closes and focus returns to the game.
     Accessibility::TickMenuClosedAnnounce();
 
+    // Put the keyboard's dropdown highlight back after the engine's per-tick mouse-hover reset.
+    Accessibility::TickKeyboardDropdownHighlight();
+
     // Speak new multiplayer chat/system messages and connection-status changes.
     Accessibility::TickMultiplayerAnnounce();
 }

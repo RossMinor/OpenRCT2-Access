@@ -303,6 +303,7 @@ namespace OpenRCT2::Ui::Windows
     // by EnsureGraphScreensRegistered).
     void RegisterRideListGraphScreen();
     void RegisterOptionsGraphScreen();
+    void RegisterTitleMenuGraphScreen();
     void RegisterStaffListGraphScreen();
     void RegisterScenarioSelectGraphScreen();
     void RegisterGuestListGraphScreen();

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -1262,16 +1263,13 @@ namespace OpenRCT2::Ui::Windows
         // ---- Group combo-box navigation, mirroring the shared dropdown pattern -------------------
         void accessCloseDropdown()
         {
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->CloseByClass(WindowClass::dropdown);
+            Accessibility::CloseWidgetDropdownFromKeyboard();
             _accessDropdownOpen = false;
         }
 
         void accessOpenDropdown(int32_t ownerItem, WidgetIndex chevronWidx)
         {
-            onMouseDown(chevronWidx); // populates and shows gDropdown
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+            if (!Accessibility::OpenWidgetDropdownFromKeyboard(*this, chevronWidx))
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevronWidx;

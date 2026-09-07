@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -378,16 +379,13 @@ namespace OpenRCT2::Ui::Windows
 
         void ncCloseDropdown()
         {
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->CloseByClass(WindowClass::dropdown);
+            Accessibility::CloseWidgetDropdownFromKeyboard();
             _accessDropdownOpen = false;
         }
 
         void ncOpenDropdown(int32_t ownerItem, WidgetIndex chevron)
         {
-            onMouseDown(chevron);
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+            if (!Accessibility::OpenWidgetDropdownFromKeyboard(*this, chevron))
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevron;

@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <openrct2-ui/accessibility/ListNavigation.h>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -803,16 +804,13 @@ namespace OpenRCT2::Ui::Windows
 
         void accessCloseDropdown()
         {
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->CloseByClass(WindowClass::dropdown);
+            Accessibility::CloseWidgetDropdownFromKeyboard();
             _accessDropdownOpen = false;
         }
 
         void accessOpenDropdown(WidgetIndex chevronWidx)
         {
-            onMouseDown(chevronWidx); // populates and shows gDropdown
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+            if (!Accessibility::OpenWidgetDropdownFromKeyboard(*this, chevronWidx))
                 return;
             _accessDropdownOpen = true;
             _accessDropdownChevron = chevronWidx;
@@ -903,8 +901,19 @@ namespace OpenRCT2::Ui::Windows
                         vt.onActivate = [this, w]() { onMouseUp(w); }; // toggle and save
                         break;
                     case AccessControlKind::dropdown:
-                        // Enter opens the combo box's list (the chevron follows the value widget).
+                        // Enter, Left and Right all open the combo box's list (the chevron follows
+                        // the value widget).
+                        //
+                        // Left/Right deliberately OPEN the list rather than cycling the value in
+                        // place the way the ride window's combo boxes do. A ride's values are
+                        // cheap; these are not - stepping through this page's boxes would apply a
+                        // resolution change, reinitialise the drawing engine or reload the whole
+                        // language on every keypress. Opening the list commits the setting exactly
+                        // once, when the player picks it.
                         vt.onActivate = [this, w]() { accessOpenDropdown(static_cast<WidgetIndex>(w + 1)); };
+                        vt.onAdjust = [this, w](int32_t, bool) {
+                            accessOpenDropdown(static_cast<WidgetIndex>(w + 1));
+                        };
                         break;
                     case AccessControlKind::button:
                         vt.onActivate = [this, w]() { onMouseUp(w); };
@@ -2765,6 +2774,8 @@ namespace OpenRCT2::Ui::Windows
             return true;
         };
         screen.onEscape = [](WindowBase& w) { return static_cast<OptionsWindow&>(w).AccessEscape(); };
+        // A form, not a list: Left/Right belong to the focused setting. Pages are Tab/Shift+Tab.
+        screen.sideArrowsChangePage = false;
         RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

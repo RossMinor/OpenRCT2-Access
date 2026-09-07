@@ -10,6 +10,7 @@
 #include <openrct2-ui/accessibility/AccessCrashHandler.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -101,9 +102,8 @@ namespace OpenRCT2::Ui::Windows
     private:
         ScreenRect _filterRect;
 
-        // Keyboard-navigation cursor over the menu buttons, and whether the Game Tools
-        // dropdown sub-menu currently owns navigation.
-        int32_t _accessIndex = -1;
+        // Whether the Game Tools dropdown sub-menu currently owns navigation. The focus cursor
+        // itself lives in the graph screen manager, not here.
         bool _accessDropdownOpen = false;
 
     public:
@@ -135,8 +135,8 @@ namespace OpenRCT2::Ui::Windows
 
             Accessibility::ScreenReaderInit();
             Accessibility::CrashHandlerInit();
-            // Default to the first menu item, matching the in-game menu standard.
-            onAccessibilityAction(AccessibilityAction::moveDown);
+            // Focus lands on the first item and is announced by the graph screen manager's differ;
+            // nothing to poke here.
         }
 
         void onMouseUp(WidgetIndex widgetIndex) override
@@ -319,212 +319,133 @@ namespace OpenRCT2::Ui::Windows
             return items;
         }
 
-        bool onAccessibilityTypeahead(uint32_t key) override
+    public:
+        // ---- graph accessibility recipe ----
+
+        // Declare the menu's buttons, or - while the Game Tools dropdown is open - that dropdown's
+        // items instead. Immediate mode makes the dropdown a plain modal sub-list.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
+            using namespace Accessibility::Graph;
+
+            // Re-derive the dropdown state from reality every build: the list can be dismissed
+            // behind our back, and a stale flag would strand navigation inside a menu that is gone.
+            auto* windowMgr = GetWindowManager();
+            if (_accessDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessDropdownOpen = false;
+
             if (_accessDropdownOpen)
-                return true; // not inside the open dropdown
-            const auto items = getMenuItems();
-            const int32_t count = static_cast<int32_t>(items.size());
-            if (count == 0)
-                return true;
-            const char target = static_cast<char>(key);
-            const int32_t start = (_accessIndex < 0) ? 0 : _accessIndex;
-            for (int32_t i = 1; i <= count; i++)
             {
-                const int32_t idx = (start + i) % count;
-                const std::string name = getMenuItemName(items[idx]);
-                char first = name.empty() ? '\0' : name[0];
-                if (first >= 'A' && first <= 'Z')
-                    first += 32;
-                if (first == target)
+                b.PushContext(getMenuItemName(WIDX_GAME_TOOLS), "menu");
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
-                    _accessIndex = idx;
-                    Accessibility::ScreenReaderSpeak(getMenuItemName(items[idx]));
-                    return true;
+                    if (gDropdown.items[i].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
+                    if (gDropdown.items[i].isDisabled())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
+                    vt.onActivate = [this, i]() { accessCommitDropdown(i); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
                 }
+                b.PopContext();
+                return;
             }
+
+            for (const WidgetIndex w : getMenuItems())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(getMenuItemName(w)));
+                vt.onActivate = [this, w]() { accessActivateItem(w); };
+                vt.focusRect = [this, w]() -> std::optional<GraphRect> {
+                    if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
+                        return std::nullopt;
+                    const auto& wd = widgets[w];
+                    return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+                };
+                b.AddItem(ControlId::Structural("title:" + std::to_string(w)), std::move(vt));
+            }
+        }
+
+        // Escape closes an open sub-menu and stays on Game Tools. With none open it is swallowed:
+        // this is the root screen of the title sequence, and the navigator's default - closing the
+        // focused window - would take the menu away with no way to bring it back.
+        bool AccessEscape()
+        {
+            if (!_accessDropdownOpen)
+                return true;
+            accessCloseDropdown();
+            accessSuggestFocus(WIDX_GAME_TOOLS);
             return true;
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
+    private:
+        // Ask the graph to land on this button at its next render.
+        void accessSuggestFocus(WidgetIndex w)
         {
-            const auto items = getMenuItems();
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(items.size()))
-                return std::nullopt;
-            const auto& wd = widgets[items[_accessIndex]];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
+            Accessibility::Graph::GraphStateForClass(WindowClass::titleMenu).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural("title:" + std::to_string(w));
         }
 
-        bool onAccessibilityAction(AccessibilityAction action) override
+        void accessActivateItem(WidgetIndex widgetIndex)
         {
-            if (_accessDropdownOpen)
-                return handleAccessibilityDropdown(action);
-
-            const auto items = getMenuItems();
-            if (items.empty())
-                return false;
-            const int32_t count = static_cast<int32_t>(items.size());
-
-            switch (action)
-            {
-                case AccessibilityAction::cancel:
-                    _accessIndex = -1;
-                    return true;
-
-                case AccessibilityAction::announce:
-                    if (_accessIndex >= 0 && _accessIndex < count)
-                        Accessibility::ScreenReaderSpeakItem(getMenuItemName(items[_accessIndex]), _accessIndex, count);
-                    return true;
-
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveLeft:
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveRight:
-                {
-                    const bool forward = (action == AccessibilityAction::moveDown
-                                          || action == AccessibilityAction::moveRight);
-                    if (_accessIndex < 0 || _accessIndex >= count)
-                        _accessIndex = forward ? 0 : count - 1;
-                    else if (forward)
-                        _accessIndex = (_accessIndex + 1) % count;
-                    else
-                        _accessIndex = (_accessIndex - 1 + count) % count;
-                    Accessibility::ScreenReaderSpeak(getMenuItemName(items[_accessIndex]));
-                    return true;
-                }
-
-                case AccessibilityAction::activate:
-                {
-                    if (_accessIndex < 0 || _accessIndex >= count)
-                        return true;
-                    const auto widgetIndex = items[_accessIndex];
-
-                    // onMouseDown opens the dropdown button; onMouseUp handles the
-                    // window-opening buttons. Exactly one acts for any given button.
-                    onMouseDown(widgetIndex);
-                    onMouseUp(widgetIndex);
-
-                    auto* windowMgr = GetWindowManager();
-                    if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::dropdown) != nullptr)
-                    {
-                        _accessDropdownOpen = true;
-                        moveDropdownHighlight(1); // focus + announce first item
-                    }
-                    else
-                    {
-                        // If the button opened a window we can navigate, focus and announce its
-                        // first item; otherwise just confirm the selection.
-                        WindowClass openedClass = WindowClass::null;
-                        switch (widgetIndex)
-                        {
-                            case WIDX_START_NEW_GAME:
-                                openedClass = WindowClass::scenarioSelect;
-                                break;
-                            case WIDX_CONTINUE_SAVED_GAME:
-                                openedClass = WindowClass::loadsave;
-                                break;
-                            case WIDX_MULTIPLAYER:
-                                openedClass = WindowClass::serverList;
-                                break;
-                            default:
-                                break;
-                        }
-                        WindowBase* opened = (windowMgr != nullptr && openedClass != WindowClass::null)
-                            ? windowMgr->FindByClass(openedClass)
-                            : nullptr;
-                        // A graph-owned window announces itself through the graph screen manager;
-                        // poking or speaking here would double-announce (migration seam, spec 10.5).
-                        if (opened != nullptr && Accessibility::Graph::GraphOwnsWindowClass(openedClass))
-                        {
-                            // The graph manager speaks the screen name and landing.
-                        }
-                        else if (opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
-                            Accessibility::ScreenReaderSpeak(std::string("Selected ") + getMenuItemName(widgetIndex));
-                    }
-                    return true;
-                }
-
-                default:
-                    return false;
-            }
-        }
-
-        bool handleAccessibilityDropdown(AccessibilityAction action)
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveLeft:
-                    moveDropdownHighlight(-1);
-                    return true;
-                case AccessibilityAction::moveDown:
-                case AccessibilityAction::moveRight:
-                    moveDropdownHighlight(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    commitAccessibilityDropdown();
-                    return true;
-                case AccessibilityAction::cancel:
-                    closeAccessibilityDropdown();
-                    Accessibility::ScreenReaderSpeak("Game tools");
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        void moveDropdownHighlight(int32_t delta)
-        {
-            const int32_t n = gDropdown.numItems;
-            if (n <= 0)
-                return;
-
-            int32_t idx = gDropdown.highlightedIndex;
-            for (int32_t steps = 0; steps < n; steps++)
-            {
-                idx += delta;
-                if (idx < 0)
-                    idx = n - 1;
-                else if (idx >= n)
-                    idx = 0;
-                if (!gDropdown.items[idx].isSeparator())
-                    break;
-            }
-            if (gDropdown.items[idx].isSeparator())
-                return;
-
-            gDropdown.highlightedIndex = idx;
-
-            std::string text = gDropdown.items[idx].text;
-            if (gDropdown.items[idx].isDisabled())
-                text += ", unavailable";
-
-            // Position among the selectable (non-separator) items.
-            int32_t total = 0, pos = 0;
-            for (int32_t j = 0; j < gDropdown.numItems; j++)
-            {
-                if (gDropdown.items[j].isSeparator())
-                    continue;
-                if (j == idx)
-                    pos = total;
-                total++;
-            }
-            Accessibility::ScreenReaderSpeakItem(text, pos, total);
+            // onMouseDown opens the dropdown button; onMouseUp handles the window-opening buttons.
+            // Exactly one acts for any given button. The claim keeps a dropdown alive past the next
+            // input tick - without it the engine finds no widget owning the open list and closes it
+            // immediately.
+            Accessibility::ClaimWidgetPressForKeyboard(*this, widgetIndex);
+            onMouseDown(widgetIndex);
+            onMouseUp(widgetIndex);
 
             auto* windowMgr = GetWindowManager();
-            if (windowMgr != nullptr)
-                windowMgr->InvalidateByClass(WindowClass::dropdown);
+            const bool dropdownOpened = windowMgr != nullptr
+                && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
+            if (!dropdownOpened)
+                Accessibility::ReleaseWidgetPressForKeyboard(); // no list; drop the claim
+
+            if (dropdownOpened)
+            {
+                // The rebuild now declares the dropdown's items and the differ announces the
+                // landing, so there is nothing to speak here.
+                _accessDropdownOpen = true;
+                return;
+            }
+
+            // If the button opened a window we can navigate, let that window's own announcement
+            // stand; otherwise confirm the selection so the keypress is never silent.
+            WindowClass openedClass = WindowClass::null;
+            switch (widgetIndex)
+            {
+                case WIDX_START_NEW_GAME:
+                    openedClass = WindowClass::scenarioSelect;
+                    break;
+                case WIDX_CONTINUE_SAVED_GAME:
+                    openedClass = WindowClass::loadsave;
+                    break;
+                case WIDX_MULTIPLAYER:
+                    openedClass = WindowClass::serverList;
+                    break;
+                default:
+                    break;
+            }
+            WindowBase* opened = (windowMgr != nullptr && openedClass != WindowClass::null)
+                ? windowMgr->FindByClass(openedClass)
+                : nullptr;
+            // A graph-owned window announces itself through the graph screen manager; speaking here
+            // would double-announce.
+            if (opened != nullptr && Accessibility::Graph::GraphOwnsWindowClass(openedClass))
+                return;
+            if (opened == nullptr || !opened->onAccessibilityAction(AccessibilityAction::moveDown))
+                Accessibility::ScreenReaderSpeak(std::string("Selected ") + getMenuItemName(widgetIndex));
         }
 
-        void commitAccessibilityDropdown()
+        void accessCommitDropdown(int32_t idx)
         {
-            const int32_t idx = gDropdown.highlightedIndex;
             const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
                 && !gDropdown.items[idx].isDisabled();
             const std::string selectedText = valid ? std::string(gDropdown.items[idx].text) : std::string();
 
-            closeAccessibilityDropdown();
+            accessCloseDropdown();
 
             if (valid)
             {
@@ -534,12 +455,12 @@ namespace OpenRCT2::Ui::Windows
                     Accessibility::ScreenReaderSpeak(selectedText);
                 onDropdown(WIDX_GAME_TOOLS, idx);
             }
+            accessSuggestFocus(WIDX_GAME_TOOLS);
         }
 
-        void closeAccessibilityDropdown()
+        void accessCloseDropdown()
         {
-            WindowDropdownClose();
-            InputSetState(InputState::normal);
+            Accessibility::CloseWidgetDropdownFromKeyboard();
             _accessDropdownOpen = false;
         }
 
@@ -557,5 +478,15 @@ namespace OpenRCT2::Ui::Windows
         return windowMgr->Create<TitleMenuWindow>(
             WindowClass::titleMenu, ScreenCoordsXY(0, ContextGetHeight() - 182), { 0, windowHeight },
             { WindowFlag::stickToBack, WindowFlag::transparent, WindowFlag::noBackground, WindowFlag::noTitleBar });
+    }
+
+    void RegisterTitleMenuGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::titleMenu;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<TitleMenuWindow&>(w).BuildAccessGraph(b); };
+        screen.onEscape = [](WindowBase& w) { return static_cast<TitleMenuWindow&>(w).AccessEscape(); };
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

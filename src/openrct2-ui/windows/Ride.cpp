@@ -14,6 +14,7 @@
 #include <memory>
 #include <openrct2-ui/UiStringIds.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -1471,8 +1472,7 @@ namespace OpenRCT2::Ui::Windows
 
         void axCloseDropdown()
         {
-            if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                windowMgr->CloseByClass(WindowClass::dropdown);
+            Accessibility::CloseWidgetDropdownFromKeyboard();
         }
 
         // Cycles a combo box's value in place (no visible dropdown), like a slider: opens the dropdown to
@@ -1480,9 +1480,11 @@ namespace OpenRCT2::Ui::Windows
         // both text dropdowns (current item is checked) and colour pickers (current is defaultIndex).
         void axCycleDropdown(WidgetIndex chevron, int32_t delta)
         {
-            onMouseDown(chevron); // populates and shows gDropdown
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr)
+            // Opens and closes within this one call, so it never meets the tick that tears a
+            // keyboard-opened dropdown down - but it still goes through the shared helper, which
+            // leaves the engine's input state as a mouse-driven dropdown would. Closing without
+            // that left the game sitting in InputState::dropdownActive with nothing open.
+            if (!Accessibility::OpenWidgetDropdownFromKeyboard(*this, chevron))
                 return;
 
             const int32_t n = gDropdown.numItems;

@@ -402,10 +402,18 @@ namespace OpenRCT2::Ui::Accessibility
                     AnnounceTree(kg, tr);
                     return true;
                 }
-                // Legacy parity: in paged windows Left/Right also switch pages (as the mod's
-                // list windows always have).
-                if (screen.onTabKey)
+                // Legacy parity: in paged LIST windows Left/Right also switch pages (as the mod's
+                // list windows always have). Form screens opt out - see sideArrowsChangePage.
+                if (screen.onTabKey && screen.sideArrowsChangePage)
+                {
                     DoTabKey(kg, screen, w, sign);
+                    return true;
+                }
+                // Nothing to adjust and nowhere to go: re-read the focused control. An unmoved
+                // result composes to just the leaf readout, so the key still answers rather than
+                // going silent - and on a form screen that is what Left/Right means on a checkbox
+                // or a button.
+                AnnounceMove(kg, r);
                 return true; // the focused control's chords never leak to the game
             }
             case SDLK_TAB:
