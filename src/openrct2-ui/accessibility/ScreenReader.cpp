@@ -95,6 +95,8 @@ namespace OpenRCT2::Ui::Accessibility
         using PrismBackendNameFn = const char*(PRISM_CALL*)(PrismBackend*);
         using PrismBackendSpeakFn = PrismError(PRISM_CALL*)(PrismBackend*, const char*, bool);
         using PrismBackendStopFn = PrismError(PRISM_CALL*)(PrismBackend*);
+        using PrismBackendGetFeaturesFn = uint64_t(PRISM_CALL*)(PrismBackend*);
+        using PrismBackendBrailleFn = PrismError(PRISM_CALL*)(PrismBackend*, const char*);
 
         HMODULE _prismLib = nullptr;
         PrismConfigInitFn _prismConfigInit = nullptr;
@@ -105,9 +107,16 @@ namespace OpenRCT2::Ui::Accessibility
         PrismBackendNameFn _prismBackendName = nullptr;
         PrismBackendSpeakFn _prismSpeak = nullptr;
         PrismBackendStopFn _prismStop = nullptr;
+        PrismBackendGetFeaturesFn _prismGetFeatures = nullptr;
+        PrismBackendBrailleFn _prismBraille = nullptr;
 
         PrismContext* _prismCtx = nullptr;
         PrismBackend* _prismBackend = nullptr;
+
+        // Whether the reader behind the current backend can drive a braille display. Recomputed each
+        // time a backend is acquired, because the answer belongs to the reader rather than to Prism -
+        // swapping NVDA for a reader without braille support has to change it.
+        bool _prismBackendBrailles = false;
 
         // Fallback only, used when prism.dll cannot be loaded. Matches the NVDA Controller Client
         // API; on x64 there is a single calling convention, so no decoration is needed.
@@ -115,11 +124,13 @@ namespace OpenRCT2::Ui::Accessibility
         using NvdaTestIfRunning = NvdaError (*)();
         using NvdaSpeakText = NvdaError (*)(const wchar_t*);
         using NvdaCancelSpeech = NvdaError (*)();
+        using NvdaBrailleMessage = NvdaError (*)(const wchar_t*);
 
         HMODULE _nvdaClient = nullptr;
         NvdaTestIfRunning _testIfRunning = nullptr;
         NvdaSpeakText _speakText = nullptr;
         NvdaCancelSpeech _cancelSpeech = nullptr;
+        NvdaBrailleMessage _brailleMessage = nullptr;
 
         template<typename T>
         bool ResolveExport(HMODULE lib, const char* name, T& out)
@@ -142,7 +153,12 @@ namespace OpenRCT2::Ui::Accessibility
             if (_prismBackend == nullptr)
                 return false;
 
-            LOG_INFO("Accessibility: speaking through Prism backend '%s'", _prismBackendName(_prismBackend));
+            _prismBackendBrailles = _prismBraille != nullptr && _prismGetFeatures != nullptr
+                && (_prismGetFeatures(_prismBackend) & PRISM_BACKEND_SUPPORTS_BRAILLE) != 0;
+
+            LOG_INFO(
+                "Accessibility: speaking through Prism backend '%s'%s", _prismBackendName(_prismBackend),
+                _prismBackendBrailles ? " (braille display supported)" : "");
             return true;
         }
 
@@ -155,6 +171,7 @@ namespace OpenRCT2::Ui::Accessibility
 
             _prismBackendFree(_prismBackend);
             _prismBackend = nullptr;
+            _prismBackendBrailles = false;
         }
 
         void PrismUnload()
@@ -178,6 +195,8 @@ namespace OpenRCT2::Ui::Accessibility
             _prismBackendName = nullptr;
             _prismSpeak = nullptr;
             _prismStop = nullptr;
+            _prismGetFeatures = nullptr;
+            _prismBraille = nullptr;
         }
 
         bool TryInitPrism()
@@ -201,6 +220,17 @@ namespace OpenRCT2::Ui::Accessibility
                 LOG_WARNING("Accessibility: prism.dll is missing expected exports, falling back to NVDA");
                 PrismUnload();
                 return false;
+            }
+
+            // Braille is resolved apart from the block above and is allowed to fail. A prism.dll that
+            // predates these two exports should still give the player speech, for the same reason the
+            // library is loaded by hand rather than linked.
+            if (!ResolveExport(_prismLib, "prism_backend_get_features", _prismGetFeatures)
+                || !ResolveExport(_prismLib, "prism_backend_braille", _prismBraille))
+            {
+                LOG_WARNING("Accessibility: prism.dll exports no braille entry points, speech only");
+                _prismGetFeatures = nullptr;
+                _prismBraille = nullptr;
             }
 
             // Ask Prism for the config rather than filling the struct here, so that a future
@@ -230,6 +260,8 @@ namespace OpenRCT2::Ui::Accessibility
             _testIfRunning = reinterpret_cast<NvdaTestIfRunning>(GetProcAddress(_nvdaClient, "nvdaController_testIfRunning"));
             _speakText = reinterpret_cast<NvdaSpeakText>(GetProcAddress(_nvdaClient, "nvdaController_speakText"));
             _cancelSpeech = reinterpret_cast<NvdaCancelSpeech>(GetProcAddress(_nvdaClient, "nvdaController_cancelSpeech"));
+            _brailleMessage = reinterpret_cast<NvdaBrailleMessage>(
+                GetProcAddress(_nvdaClient, "nvdaController_brailleMessage"));
         }
 
         void NvdaSpeak(const std::string& clean, bool interrupt)
@@ -248,6 +280,9 @@ namespace OpenRCT2::Ui::Accessibility
                 _cancelSpeech();
 
             _speakText(wide.c_str());
+
+            if (_brailleMessage != nullptr)
+                _brailleMessage(wide.c_str());
         }
     } // namespace
 
@@ -276,6 +311,7 @@ namespace OpenRCT2::Ui::Accessibility
         _testIfRunning = nullptr;
         _speakText = nullptr;
         _cancelSpeech = nullptr;
+        _brailleMessage = nullptr;
     }
 
     bool ScreenReaderIsAvailable()
@@ -327,7 +363,21 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         if (err != PRISM_OK)
+        {
             LOG_WARNING("Accessibility: Prism speak failed with error %d", static_cast<int>(err));
+            return;
+        }
+
+        // The same line goes to the braille display, when the reader is driving one. It takes a second
+        // call because a screen reader cannot read a braille line off the game's own rendering - it
+        // only ever sees text handed to it - so speaking alone leaves a braille user with a blank
+        // display. Each line replaces the last, which is what a reader's flash-message area is for.
+        if (_prismBackendBrailles)
+        {
+            const PrismError brailleErr = _prismBraille(_prismBackend, clean.c_str());
+            if (brailleErr != PRISM_OK)
+                LOG_WARNING("Accessibility: Prism braille failed with error %d", static_cast<int>(brailleErr));
+        }
     }
 } // namespace OpenRCT2::Ui::Accessibility
 

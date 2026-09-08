@@ -20,6 +20,7 @@ A great place to start is the **[Getting Started page](https://docs.openrct2.io/
 
 - Windows.
 - A screen reader. The mod speaks through [Prism](https://github.com/ethindp/prism), a library that hands the mod's speech to whichever reader you already run, so NVDA, JAWS, Narrator, System Access, ZDSR and others all work. [NVDA](https://www.nvaccess.org/download/) is free and is the one the mod is developed and tested against, so it is still the safest choice.
+- A braille display, if you use one, is supported and needs no setup. Everything the mod speaks is written to your display at the same time, through the same screen reader you already have running. There is nothing to turn on, and nothing changes if you do not use one.
 - The Rollercoaster Tycoon 2 game from [Steam](https://store.steampowered.com/app/285330/).
 - The rest is handled completely by the mod.
 
