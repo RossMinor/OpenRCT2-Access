@@ -305,10 +305,35 @@ namespace OpenRCT2::Ui::Windows
     void RegisterOptionsGraphScreen();
     void RegisterTitleMenuGraphScreen();
     void RegisterTopToolbarGraphScreen();
+    void RegisterEditorObjectSelectionGraphScreen();
 
     // Puts the toolbar's keyboard focus on its first button. Called when Tab steps into the
     // toolbar, so entering always starts at the left-hand end.
     void TopToolbarFocusFirstAccessibleItem();
+
+    // ---- scenario editor, exposed to the toolbar's accessible item list -------------------------
+    //
+    // The editor's "Back to previous step" and "Forward to next step" buttons live in two separate
+    // always-open windows that SHARE WindowClass::editorStepController (number 0 = back, 1 =
+    // forward). A graph screen is keyed by window class and resolved with FindByClass, so it would
+    // only ever see one of them - they cannot be a screen of their own. They are also stickToFront,
+    // so registering them would fight the map cursor exactly as the toolbar did.
+    //
+    // Instead the toolbar offers them: Tab already means "go to the menu bar", and in the editor
+    // that bar simply has the step controls on the end. Empty outside the editor.
+    struct EditorStepButtonInfo
+    {
+        std::string label;
+        int32_t number;                        // 0 = back, 1 = forward
+        int32_t x, y, width, height;           // screen rect, for the focus box
+    };
+    std::vector<EditorStepButtonInfo> EditorStepButtonsForAccessibility();
+    void EditorStepButtonActivate(int32_t number);
+
+    // The editor step the player is on ("Object selection", "Landscape editor", ...), or empty
+    // outside the editor. This is the text the editor's bottom status line draws, which a sighted
+    // player can see at all times and a keyboard player otherwise cannot reach at all.
+    std::string EditorCurrentStepName();
     void RegisterStaffListGraphScreen();
     void RegisterScenarioSelectGraphScreen();
     void RegisterGuestListGraphScreen();

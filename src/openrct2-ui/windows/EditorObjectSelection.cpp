@@ -8,6 +8,9 @@
  *****************************************************************************/
 
 #include <bit>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -1612,6 +1615,308 @@ namespace OpenRCT2::Ui::Windows
             intent.PutExtra(INTENT_EXTRA_RIDE_ENTRY_INDEX, entry_index);
             ContextOpenIntent(&intent);
         }
+#pragma region Accessibility
+
+    public:
+        // ---- graph accessibility recipe ----
+        //
+        // The page's objects as one vertical list, preceded by the controls that decide WHICH
+        // objects are listed. Enter toggles an object in or out of the scenario.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            // Re-derive the dropdown state from reality every build - it can be dismissed behind
+            // our back, and a stale flag would strand navigation inside a menu that is gone.
+            auto* windowMgr = GetWindowManager();
+            if (_accessDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _accessDropdownOpen = false;
+
+            onPrepareDraw(); // refresh captions and pressed states before reading them
+
+            if (_accessDropdownOpen)
+            {
+                b.PushContext(OpenRCT2::FormatStringID(STR_OBJECT_FILTER), "menu");
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
+                {
+                    if (gDropdown.items[i].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
+                    if (gDropdown.items[i].isChecked())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static("checked", AnnouncementKinds::kSelected));
+                    vt.onActivate = [this, i]() { axCommitDropdown(i); };
+                    vt.onFocus = [i]() { Accessibility::SetKeyboardDropdownIndex(i); };
+                    b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
+                }
+                b.PopContext();
+                return;
+            }
+
+            const auto& currentPage = ObjectSelectionPages[selectedTab];
+            b.PushContext(OpenRCT2::FormatStringID(currentPage.Caption));
+
+            // A page split into categories (rides, scenery, paths...) cycles them in place with
+            // Left/Right rather than spending a node per category: the categories only decide what
+            // the list below contains, and there can be seven of them.
+            if (!currentPage.subTabs.empty())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("Category"));
+                vt.announcements.emplace_back(NodeAnnouncement::Static("combo box", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(
+                    [this]() {
+                        const auto& page = ObjectSelectionPages[selectedTab];
+                        if (_selectedSubTab >= page.subTabs.size())
+                            return std::string();
+                        return OpenRCT2::FormatStringID(page.subTabs[_selectedSubTab].tooltip);
+                    },
+                    true, AnnouncementKinds::kValue);
+                vt.onAdjust = [this](int32_t sign, bool) { axCycleSubTab(sign); };
+                vt.focusRect = [this]() -> std::optional<GraphRect> {
+                    const auto& wd = widgets[WIDX_SUB_TAB_0 + _selectedSubTab];
+                    if (wd.type == WidgetType::empty)
+                        return std::nullopt;
+                    return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+                };
+                b.AddItem(ControlId::Structural(axKey("subtab")), std::move(vt));
+            }
+
+            // The filter (all / selected only / not selected / ride groups) - the other control
+            // that decides what the list contains.
+            if (widgets[WIDX_FILTER_DROPDOWN].type != WidgetType::empty)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("Filter"));
+                vt.announcements.emplace_back(NodeAnnouncement::Static("combo box", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(
+                    [this]() { return axFilterText(); }, true, AnnouncementKinds::kValue);
+                vt.onActivate = [this]() { axOpenDropdown(); };
+                vt.onAdjust = [this](int32_t, bool) { axOpenDropdown(); };
+                vt.focusRect = [this]() -> std::optional<GraphRect> {
+                    const auto& wd = widgets[WIDX_FILTER_DROPDOWN];
+                    return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+                };
+                b.AddItem(ControlId::Structural(axKey("filter")), std::move(vt));
+            }
+
+            // The objects themselves. Identity is the object's own name, so focus stays on the same
+            // object across a re-sort, a filter change or a rebuild.
+            int32_t rowPos = 0;
+            for (size_t i = 0; i < _listItems.size(); i++)
+            {
+                const auto* repositoryItem = _listItems[i].repositoryItem;
+                if (repositoryItem == nullptr)
+                    continue;
+
+                NodeVtable vt;
+                vt.announcements.emplace_back([this, i]() { return axRowLabel(i); });
+                // LIVE: selecting an object can pull in or push out others (a scenery group brings
+                // its members), so a row's state can change without the player touching that row.
+                vt.announcements.emplace_back(
+                    [this, i]() { return axRowState(i); }, true, AnnouncementKinds::kSelected);
+                vt.onActivate = [this, i]() { axToggle(i); };
+                vt.focusRect = [this, rowPos]() { return std::optional<GraphRect>(axRowRect(rowPos)); };
+                // Keep the list scrolled to the row the keyboard is on, so a sighted player sees
+                // what is being read and the focus box lands on something visible.
+                vt.onFocus = [this, rowPos]() { axScrollTo(rowPos); };
+                // Identity is the object's IDENTIFIER ("rct2.rides.arrt"), not its display name.
+                // Names are not unique - the ride page ships two different objects both called
+                // "Corkscrew Roller Coaster Trains" - and a duplicate id makes the builder throw,
+                // which renders the whole page as nothing. That failure is silent by design (a
+                // throwing recipe must not crash the game), so it presents as one tab that simply
+                // never speaks. Path is the last-resort fallback for an item with no identifier.
+                std::string key = repositoryItem->Identifier;
+                if (key.empty())
+                    key = repositoryItem->Path;
+                if (key.empty())
+                    key = repositoryItem->Name + "#" + std::to_string(i);
+                b.AddItem(ControlId::Structural("obj:" + key), std::move(vt));
+                rowPos++;
+            }
+
+            if (rowPos == 0)
+            {
+                // An empty page still needs a node or the screen goes silent.
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("No objects match the current filter"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural(axKey("empty")), std::move(vt));
+            }
+
+            b.PopContext();
+        }
+
+        // Tab/Shift+Tab: cycle the object pages via the window's own page switch.
+        void AccessChangePage(int32_t delta)
+        {
+            // Skip pages whose tab is hidden - the track designer shows only the first - so Tab
+            // cannot strand the player on a page they have no way to see or leave.
+            const int32_t count = static_cast<int32_t>(std::size(ObjectSelectionPages));
+            int32_t next = selectedTab;
+            for (int32_t step = 0; step < count; step++)
+            {
+                next = (next + delta + count) % count;
+                if (!widgets[WIDX_TAB_1 + next].isVisible())
+                    continue;
+                setPage(next);
+                return;
+            }
+        }
+
+        // Escape closes an open filter list first, keeping the window.
+        bool AccessEscape()
+        {
+            if (!_accessDropdownOpen)
+                return false;
+            axCloseDropdown();
+            Accessibility::Graph::GraphStateForClass(WindowClass::editorObjectSelection).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(axKey("filter"));
+            return true;
+        }
+
+    private:
+        bool _accessDropdownOpen = false;
+
+        // Node keys must carry the page. These controls exist on EVERY page, so a page-independent
+        // key survives a page switch: focus "persists" onto the new page's equivalent control, the
+        // differ sees the same identity and re-reads only that control - never saying which page
+        // you moved to. From the keyboard that is indistinguishable from Tab being broken.
+        std::string axKey(const char* name) const
+        {
+            return std::string(name) + ":" + std::to_string(selectedTab);
+        }
+
+        std::string axFilterText() const
+        {
+            const auto& wd = widgets[WIDX_FILTER_DROPDOWN];
+            if (wd.flags.has(WidgetFlag::textIsString))
+                return wd.string != nullptr ? std::string(wd.string) : std::string();
+            if (wd.text != kStringIdNone && wd.text != kStringIdEmpty)
+                return OpenRCT2::FormatStringID(wd.text);
+            return {};
+        }
+
+        std::string axRowLabel(size_t i) const
+        {
+            if (i >= _listItems.size() || _listItems[i].repositoryItem == nullptr)
+                return {};
+            const auto* repositoryItem = _listItems[i].repositoryItem;
+            std::string label = repositoryItem->Name;
+            // The ride page shows a type column beside the name; a keyboard player needs it in the
+            // same breath, since "Steel Roller Coaster" is what tells two similar names apart.
+            if (ObjectSelectionPages[selectedTab].mainObjectType == ObjectType::ride)
+            {
+                const auto typeName = LanguageGetString(GetRideTypeStringId(repositoryItem));
+                if (typeName != nullptr && *typeName != '\0')
+                    label = std::string(typeName) + ", " + label;
+            }
+            return label;
+        }
+
+        // Spoken as the row's state part: whether it is in the scenario, and whether the player is
+        // allowed to change that.
+        std::string axRowState(size_t i) const
+        {
+            if (i >= _listItems.size() || _listItems[i].flags == nullptr)
+                return {};
+            const auto objectFlags = *_listItems[i].flags;
+            if (objectFlags.has(ObjectSelectionFlag::flag5))
+                return "unavailable";
+            std::string state = objectFlags.has(ObjectSelectionFlag::selected) ? "selected" : "not selected";
+            if (objectFlags.hasAny(ObjectSelectionFlag::inUse, ObjectSelectionFlag::alwaysRequired))
+                state += ", required";
+            return state;
+        }
+
+        Accessibility::Graph::GraphRect axRowRect(int32_t rowPos) const
+        {
+            const auto& lw = widgets[WIDX_LIST];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+
+            const int32_t rowTop = viewTop + rowPos * kScrollableRowHeight - scrolls[0].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            if (bottom <= top) // scrolled out of view: box the whole list
+            {
+                top = viewTop;
+                bottom = viewBottom;
+            }
+            return { left, top, right - left, bottom - top };
+        }
+
+        void axScrollTo(int32_t rowPos)
+        {
+            const auto& lw = widgets[WIDX_LIST];
+            const int32_t viewHeight = lw.height() - 1;
+            const int32_t rowTop = rowPos * kScrollableRowHeight;
+            const int32_t rowBottom = rowTop + kScrollableRowHeight;
+
+            int32_t offset = scrolls[0].contentOffsetY;
+            if (rowTop < offset)
+                offset = rowTop;
+            else if (rowBottom > offset + viewHeight)
+                offset = rowBottom - viewHeight;
+            else
+                return; // already visible; don't fight the player's own scrolling
+
+            const int32_t maxOffset = std::max(
+                0, static_cast<int32_t>(_listItems.size()) * kScrollableRowHeight - viewHeight);
+            scrolls[0].contentOffsetY = std::clamp(offset, 0, maxOffset);
+            invalidateWidget(WIDX_LIST);
+        }
+
+        // Reuse the window's own click handler rather than re-deriving what selecting an object
+        // means: it owns the scenery-group side effects, the "cannot deselect, it is in use"
+        // errors and the filter refresh. Row i sits at y = i * kScrollableRowHeight in the scroll.
+        void axToggle(size_t i)
+        {
+            if (i >= _listItems.size())
+                return;
+            onScrollMouseDown(0, { 0, static_cast<int32_t>(i) * kScrollableRowHeight });
+        }
+
+        // Step the page's category. Routes through the window's own sub-tab handler so the filter
+        // flags, the config save and the list refresh all happen exactly as a click would do them.
+        void axCycleSubTab(int32_t delta)
+        {
+            const auto& currentPage = ObjectSelectionPages[selectedTab];
+            const int32_t count = static_cast<int32_t>(currentPage.subTabs.size());
+            if (count <= 0)
+                return;
+            const int32_t next = (static_cast<int32_t>(_selectedSubTab) + delta + count) % count;
+            onMouseUp(static_cast<WidgetIndex>(WIDX_SUB_TAB_0 + next));
+        }
+
+        void axOpenDropdown()
+        {
+            if (!Accessibility::OpenWidgetDropdownFromKeyboard(*this, WIDX_FILTER_DROPDOWN_BTN))
+                return;
+            _accessDropdownOpen = true;
+        }
+
+        void axCloseDropdown()
+        {
+            Accessibility::CloseWidgetDropdownFromKeyboard();
+            _accessDropdownOpen = false;
+        }
+
+        void axCommitDropdown(int32_t idx)
+        {
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            axCloseDropdown();
+            if (valid)
+                onDropdown(WIDX_FILTER_DROPDOWN_BTN, idx);
+            Accessibility::Graph::GraphStateForClass(WindowClass::editorObjectSelection).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(axKey("filter"));
+        }
+
+    public:
+#pragma endregion
     };
 
     /**
@@ -1745,5 +2050,24 @@ namespace OpenRCT2::Ui::Windows
             static_cast<EditorObjectSelectionWindow*>(w)->GoToTab(missingObjectType);
         }
         return false;
+    }
+
+    void RegisterEditorObjectSelectionGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::editorObjectSelection;
+        screen.build = [](GraphBuilder& b, WindowBase& w) {
+            static_cast<EditorObjectSelectionWindow&>(w).BuildAccessGraph(b);
+        };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<EditorObjectSelectionWindow&>(w).AccessChangePage(dir);
+            return true;
+        };
+        screen.onEscape = [](WindowBase& w) { return static_cast<EditorObjectSelectionWindow&>(w).AccessEscape(); };
+        // A form, not a list: Left/Right belong to the focused control (the category and filter
+        // combo boxes). Pages are Tab/Shift+Tab.
+        screen.sideArrowsChangePage = false;
+        RegisterGraphScreen(std::move(screen));
     }
 } // namespace OpenRCT2::Ui::Windows

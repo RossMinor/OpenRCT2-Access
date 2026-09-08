@@ -1128,6 +1128,33 @@ namespace OpenRCT2::Ui::Windows
                 };
                 b.AddItem(ControlId::Structural(accessItemKey(w)), std::move(vt));
             }
+
+            // In the scenario editor the menu bar continues with the editor's own controls: which
+            // step you are on, then the Back/Forward buttons that move between steps. They live in
+            // separate always-open windows a keyboard player has no other way to reach, and Tab
+            // already means "go to the menu bar", so this is where they belong. All three vanish
+            // outside the editor.
+            if (auto step = EditorCurrentStepName(); !step.empty())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("Editor step"));
+                // LIVE: the step changes when the player moves through the editor, and the readout
+                // must follow without them having to leave and re-enter the menu bar.
+                vt.announcements.emplace_back(
+                    []() { return EditorCurrentStepName(); }, true, AnnouncementKinds::kValue);
+                b.AddItem(ControlId::Structural("editorstep"), std::move(vt));
+            }
+
+            for (const auto& button : EditorStepButtonsForAccessibility())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(button.label));
+                vt.onActivate = [n = button.number]() { EditorStepButtonActivate(n); };
+                vt.focusRect = [button]() -> std::optional<GraphRect> {
+                    return GraphRect{ button.x, button.y, button.width, button.height };
+                };
+                b.AddItem(ControlId::Structural("step:" + std::to_string(button.number)), std::move(vt));
+            }
         }
 
         // Escape closes an open sub-menu and stays on the button that owned it. With none open it

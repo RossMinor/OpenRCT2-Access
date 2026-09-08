@@ -4384,6 +4384,37 @@ namespace OpenRCT2::Ui::Accessibility
         if (e.deviceKind != InputDeviceKind::keyboard)
             return false;
 
+        // The scenario editor and the track designer have a top toolbar and windows, but no park to
+        // walk around. So the MENU BAR is reachable there while the map cursor is not: Tab steps
+        // into the toolbar exactly as it does in a park, and from there the editor's own windows and
+        // its Back/Forward step buttons are reachable. Everything else falls through to the game.
+        //
+        // This branch has to come before the guard below, which not only refuses the key but clears
+        // _menuMode on every press - with it in charge the toolbar's isActive gate could never be
+        // true in the editor, which is why the editor had no keyboard access at all.
+        if (isInEditorMode() || isInTrackDesignerOrManager())
+        {
+            const uint32_t editorKey = e.button;
+            if (e.state != InputEventState::down)
+            {
+                if (editorKey == _lastHandledKey)
+                {
+                    _lastHandledKey = 0;
+                    return true;
+                }
+                return false;
+            }
+            // In menu mode the graph navigator has already had this key; only the way IN is ours.
+            if (editorKey == SDLK_TAB && !_menuMode && EnterMenuMode())
+            {
+                _lastHandledKey = editorKey;
+                return true;
+            }
+            if (GetToolbar() == nullptr)
+                _menuMode = false; // no toolbar to be inside (e.g. mid scene change)
+            return false;
+        }
+
         // Only active during normal gameplay. Reset so a freshly loaded park rescans.
         if (gLegacyScene != LegacyScene::playing)
         {

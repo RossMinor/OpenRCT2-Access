@@ -21,6 +21,7 @@
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Rectangle.h>
 #include <openrct2/drawing/Text.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/management/Research.h>
 #include <openrct2/scenario/Scenario.h>
 #include <openrct2/scenes/editor/EditorController.h>
@@ -368,6 +369,64 @@ namespace OpenRCT2::Ui::Windows
             /* DesignsManager        */ nullptr,
         };
     };
+
+    // ---- accessibility ---------------------------------------------------------------------
+    //
+    // Surfaced through the toolbar's item list rather than as a graph screen of its own - see
+    // EditorStepButtonInfo in Windows.h for why these two buttons cannot be one.
+
+    // Indexed by the window's `number`, which is EnumValue(StepDirection).
+    static constexpr StringId kStepButtonLabels[] = { STR_BACK_TO_PREVIOUS_STEP, STR_FORWARD_TO_NEXT_STEP };
+
+    std::vector<EditorStepButtonInfo> EditorStepButtonsForAccessibility()
+    {
+        std::vector<EditorStepButtonInfo> out;
+        auto* windowMgr = GetWindowManager();
+        if (windowMgr == nullptr)
+            return out;
+
+        for (int32_t number = 0; number <= 1; number++)
+        {
+            auto* w = windowMgr->FindByNumber(WindowClass::editorStepController, number);
+            if (w == nullptr)
+                continue;
+
+            // Which button exists depends on the step (there is no "back" from object selection,
+            // no "forward" from the designer), and that is decided in onPrepareDraw. Refresh it
+            // before reading, so an offered button is one the player can really press.
+            w->onPrepareDraw();
+            const auto& widget = w->widgets[WIDX_STEP_BUTTON];
+            if (!widget.isVisible())
+                continue;
+
+            out.push_back(EditorStepButtonInfo{
+                OpenRCT2::FormatStringID(kStepButtonLabels[number]),
+                number,
+                w->windowPos.x + widget.left,
+                w->windowPos.y + widget.top,
+                widget.width() + 1,
+                widget.height() + 1,
+            });
+        }
+        return out;
+    }
+
+    void EditorStepButtonActivate(int32_t number)
+    {
+        auto* windowMgr = GetWindowManager();
+        if (windowMgr == nullptr)
+            return;
+        if (auto* w = windowMgr->FindByNumber(WindowClass::editorStepController, number); w != nullptr)
+            w->onMouseUp(WIDX_STEP_BUTTON);
+    }
+
+    std::string EditorCurrentStepName()
+    {
+        if (gLegacyScene != LegacyScene::scenarioEditor && gLegacyScene != LegacyScene::trackDesigner
+            && gLegacyScene != LegacyScene::trackDesignsManager)
+            return {};
+        return OpenRCT2::FormatStringID(Editor::getStepStringId(getGameState().editorStep));
+    }
 
     /**
      * Creates the main editor bottom toolbar window.
