@@ -33,13 +33,17 @@
 
 namespace OpenRCT2::Ui::Windows
 {
-    static constexpr ScreenSize kWindowSize = { 400, 224 };
+    // Grows by one 20px row per setting added. This window has no layout engine: widget positions
+    // below, and the labels beside them in onDraw, are two parallel lists of hand-kept coordinates
+    // that have to stay in step, so adding a row means touching both and this height.
+    static constexpr ScreenSize kWindowSize = { 400, 244 };
     static constexpr int32_t kVolumeStep = 5;
     static constexpr const char* kPatreonUrl = "https://www.patreon.com/rossminor";
     static constexpr uint8_t kStepSoundModeCount = 3;
     static constexpr uint8_t kTileSpeechModeCount = 3;
     static constexpr uint8_t kTileReadingOrderCount = 2;
     static constexpr uint8_t kElevationReadModeCount = 3;
+    static constexpr uint8_t kTypingEchoModeCount = 2;
 
     // Curated high-contrast choices for the visible focus indicator. Values are Drawing::Colour enum
     // values (see drawing/Colour.h); stored in config as sound.accessibilityFocusColour.
@@ -65,6 +69,7 @@ namespace OpenRCT2::Ui::Windows
         WIDX_TILE_MODE,
         WIDX_TILE_ORDER,
         WIDX_ELEVATION_MODE,
+        WIDX_TYPING_ECHO,
         WIDX_FOCUS_COLOUR,
         WIDX_MENU_MUSIC,
         WIDX_MENU_SOUND,
@@ -79,10 +84,11 @@ namespace OpenRCT2::Ui::Windows
         makeWidget({ 150, 64 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Tile reading mode (cycles on click)
         makeWidget({ 150, 84 }, { 180, 14 },                    WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Tile reading order (cycles on click)
         makeWidget({ 150, 104 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Elevation reading (cycles on click)
-        makeWidget({ 150, 124 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Focus indicator colour (cycles on click)
-        makeWidget({ 150, 144 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Menu music volume (adjusts on click)
-        makeWidget({ 150, 164 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Menu sound volume (adjusts on click)
-        makeWidget({   8, 190 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
+        makeWidget({ 150, 124 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Typing echo (cycles on click)
+        makeWidget({ 150, 144 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Focus indicator colour (cycles on click)
+        makeWidget({ 150, 164 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Menu music volume (adjusts on click)
+        makeWidget({ 150, 184 }, { 180, 14 },                   WidgetType::button, WindowColour::secondary, kStringIdNone     ), // Menu sound volume (adjusts on click)
+        makeWidget({   8, 210 }, { kWindowSize.width - 16, 20 }, WidgetType::button, WindowColour::secondary, kStringIdNone     )  // Support Ross button
     );
     // clang-format on
 
@@ -110,6 +116,11 @@ namespace OpenRCT2::Ui::Windows
             default:
                 return "Off";
         }
+    }
+
+    static const char* typingEchoModeName(uint8_t mode)
+    {
+        return mode == 0 ? "Characters" : "Off";
     }
 
     static const char* tileReadingOrderName(uint8_t order)
@@ -157,6 +168,7 @@ namespace OpenRCT2::Ui::Windows
         std::string _tileCaption;
         std::string _tileOrderCaption;
         std::string _elevationCaption;
+        std::string _typingEchoCaption;
         std::string _focusCaption;
         std::string _menuMusicCaption;
         std::string _menuSoundCaption;
@@ -199,6 +211,8 @@ namespace OpenRCT2::Ui::Windows
             widgets[WIDX_TILE_ORDER].setString(_tileOrderCaption.c_str());
             _elevationCaption = elevationReadModeName(Config::Get().sound.accessibilityElevationReadMode);
             widgets[WIDX_ELEVATION_MODE].setString(_elevationCaption.c_str());
+            _typingEchoCaption = typingEchoModeName(Config::Get().sound.accessibilityTypingEchoMode);
+            widgets[WIDX_TYPING_ECHO].setString(_typingEchoCaption.c_str());
             _focusCaption = focusColourName(Config::Get().sound.accessibilityFocusColour);
             widgets[WIDX_FOCUS_COLOUR].setString(_focusCaption.c_str());
             _menuMusicCaption = std::to_string(Config::Get().sound.titleMusicVolume) + "%";
@@ -225,6 +239,9 @@ namespace OpenRCT2::Ui::Windows
                     break;
                 case WIDX_ELEVATION_MODE:
                     cycleElevationMode(1);
+                    break;
+                case WIDX_TYPING_ECHO:
+                    cycleTypingEchoMode(1);
                     break;
                 case WIDX_FOCUS_COLOUR:
                     cycleFocusColour(1);
@@ -282,37 +299,41 @@ namespace OpenRCT2::Ui::Windows
             const auto elevationLabelPos = windowPos + ScreenCoordsXY{ 8, 107 };
             drawText(rt, elevationLabelPos, "Elevation reading", { colours[1] });
 
+            // Typing-echo label.
+            const auto typingLabelPos = windowPos + ScreenCoordsXY{ 8, 127 };
+            drawText(rt, typingLabelPos, "Typing echo", { colours[1] });
+
             // Focus-indicator colour label.
-            const auto focusLabelPos = windowPos + ScreenCoordsXY{ 8, 127 };
+            const auto focusLabelPos = windowPos + ScreenCoordsXY{ 8, 147 };
             drawText(rt, focusLabelPos, "Focus colour", { colours[1] });
 
             // Menu-music volume label (the percentage is drawn on the button itself).
-            const auto musicLabelPos = windowPos + ScreenCoordsXY{ 8, 147 };
+            const auto musicLabelPos = windowPos + ScreenCoordsXY{ 8, 167 };
             drawText(rt, musicLabelPos, "Menu music volume", { colours[1] });
 
             // Menu-sound volume label (the percentage is drawn on the button itself).
-            const auto soundLabelPos = windowPos + ScreenCoordsXY{ 8, 167 };
+            const auto soundLabelPos = windowPos + ScreenCoordsXY{ 8, 187 };
             drawText(rt, soundLabelPos, "Menu sound volume", { colours[1] });
         }
 
         // ---- graph accessibility recipe ----
 
-        // A flat list of eight settings: the accessibility-cue volume slider, the step/tile/order/
-        // focus-colour mode cyclers, the menu music and sound volumes, and the support button. Each
-        // control carries its value both as a live part (so a change made elsewhere - dragging the
-        // slider with the mouse - is still read out) and as stateText, which is what Left/Right and
-        // Enter speak: the navigator rebaselines the live watch straight after an adjust, so a
-        // control without stateText would change silently.
+        // A flat list of nine settings: the accessibility-cue volume slider, the step/tile/order/
+        // elevation/typing-echo/focus-colour cyclers, the menu music and sound volumes, and the
+        // support button. Each control carries its value both as a live part (so a change made
+        // elsewhere - dragging the slider with the mouse - is still read out) and as stateText,
+        // which is what Left/Right and Enter speak: the navigator rebaselines the live watch
+        // straight after an adjust, so a control without stateText would change silently.
         void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
             using namespace Accessibility::Graph;
             onPrepareDraw();
 
-            for (int32_t i = 0; i <= 8; i++)
+            for (int32_t i = 0; i <= 9; i++)
             {
                 NodeVtable vt;
                 vt.announcements.emplace_back(NodeAnnouncement::Static(labelText(i)));
-                if (i != 8)
+                if (i != 9)
                 {
                     vt.announcements.emplace_back([this, i]() { return valueText(i); }, true, AnnouncementKinds::kValue);
                     // Synchronous feedback after Left/Right or Enter: just the new value.
@@ -352,16 +373,20 @@ namespace OpenRCT2::Ui::Windows
                         vt.onActivate = [this]() { cycleElevationMode(1); };
                         break;
                     case 5:
+                        vt.onAdjust = [this](int32_t sign, bool) { cycleTypingEchoMode(sign); };
+                        vt.onActivate = [this]() { cycleTypingEchoMode(1); };
+                        break;
+                    case 6:
                         vt.onAdjust = [this](int32_t sign, bool) { cycleFocusColour(sign); };
                         vt.onActivate = [this]() { cycleFocusColour(1); };
                         break;
-                    case 6:
+                    case 7:
                         vt.onAdjust = [this](int32_t sign, bool) { adjustMenuMusicVolume(sign); };
                         break;
-                    case 7:
+                    case 8:
                         vt.onAdjust = [this](int32_t sign, bool) { adjustMenuSoundVolume(sign); };
                         break;
-                    case 8: // support button: two-step confirm
+                    case 9: // support button: two-step confirm
                         vt.onActivate = [this]() {
                             if (_supportArmed)
                             {
@@ -406,10 +431,12 @@ namespace OpenRCT2::Ui::Windows
                 case 4:
                     return "Elevation reading";
                 case 5:
-                    return "Focus colour";
+                    return "Typing echo";
                 case 6:
-                    return "Menu music volume";
+                    return "Focus colour";
                 case 7:
+                    return "Menu music volume";
+                case 8:
                     return "Menu sound volume";
                 default:
                     return "Support Ross's work, button";
@@ -432,10 +459,12 @@ namespace OpenRCT2::Ui::Windows
                 case 4:
                     return elevationReadModeName(Config::Get().sound.accessibilityElevationReadMode);
                 case 5:
-                    return focusColourName(Config::Get().sound.accessibilityFocusColour);
+                    return typingEchoModeName(Config::Get().sound.accessibilityTypingEchoMode);
                 case 6:
-                    return std::to_string(Config::Get().sound.titleMusicVolume) + " percent";
+                    return focusColourName(Config::Get().sound.accessibilityFocusColour);
                 case 7:
+                    return std::to_string(Config::Get().sound.titleMusicVolume) + " percent";
+                case 8:
                     return std::to_string(Config::Get().sound.titleSoundVolume) + " percent";
                 default:
                     return {};
@@ -461,12 +490,14 @@ namespace OpenRCT2::Ui::Windows
                 case 4:
                     return WIDX_ELEVATION_MODE;
                 case 5:
-                    return WIDX_FOCUS_COLOUR;
+                    return WIDX_TYPING_ECHO;
                 case 6:
-                    return WIDX_MENU_MUSIC;
+                    return WIDX_FOCUS_COLOUR;
                 case 7:
-                    return WIDX_MENU_SOUND;
+                    return WIDX_MENU_MUSIC;
                 case 8:
+                    return WIDX_MENU_SOUND;
+                case 9:
                     return WIDX_SUPPORT_BUTTON;
                 default:
                     return WIDX_VOLUME_SLIDER;
@@ -505,6 +536,15 @@ namespace OpenRCT2::Ui::Windows
             int32_t m = Config::Get().sound.accessibilityElevationReadMode;
             m = (m + delta + kElevationReadModeCount) % kElevationReadModeCount;
             Config::Get().sound.accessibilityElevationReadMode = static_cast<uint8_t>(m);
+            Config::Save();
+            invalidate();
+        }
+
+        void cycleTypingEchoMode(int32_t delta)
+        {
+            int32_t m = Config::Get().sound.accessibilityTypingEchoMode;
+            m = (m + delta + kTypingEchoModeCount) % kTypingEchoModeCount;
+            Config::Get().sound.accessibilityTypingEchoMode = static_cast<uint8_t>(m);
             Config::Save();
             invalidate();
         }

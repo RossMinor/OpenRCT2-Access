@@ -17,6 +17,7 @@
 
 #include <SDL_clipboard.h>
 #include <SDL_events.h>
+#include <openrct2/config/Config.h>
 #include <openrct2/core/String.hpp>
 #include <openrct2/core/UTF8.h>
 #include <openrct2/ui/UiContext.h>
@@ -39,6 +40,10 @@ using namespace OpenRCT2::Ui;
 static void SpeakTypedText(std::string_view text)
 {
     if (text.empty())
+        return;
+    // Off is a real preference here, not just noise control: someone who touch-types, or who reads
+    // a braille display rather than listening, gets nothing from hearing each keystroke back.
+    if (Config::Get().sound.accessibilityTypingEchoMode != 0)
         return;
     // Punctuation and whitespace have no spoken form of their own, and a screen reader saying
     // nothing at all is indistinguishable from a dropped keystroke. Name the ones that are typed

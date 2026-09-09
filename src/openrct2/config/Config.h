@@ -171,6 +171,10 @@ namespace OpenRCT2::Config
         // When the map cursor's footstep-style cues (path, water) play: 0 = every step, 1 = only when
         // the tile type changes (like the spoken tile announcements), 2 = off. Set via Ctrl+F1.
         uint8_t accessibilityStepSoundMode;
+        // Whether typing into a text box speaks each character as it goes in, and names what
+        // backspace removed: 0 = characters, 1 = off. Set via Ctrl+F1. Covers every text box in the
+        // game, since they all share one text field.
+        uint8_t accessibilityTypingEchoMode;
         // When the screen reader announces the tile under the map cursor: 0 = every tile, 1 = only
         // when the tile changes, 2 = off. Set via Ctrl+F1.
         uint8_t accessibilityTileSpeechMode;

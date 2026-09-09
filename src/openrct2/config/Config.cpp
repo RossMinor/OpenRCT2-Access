@@ -457,6 +457,7 @@ namespace OpenRCT2::Config
             // same level as the game's sound effects, then stay independent of that slider thereafter.
             model->accessibilityCueVolume = reader->GetInt32("accessibility_cue_volume", model->soundVolume);
             model->accessibilityStepSoundMode = reader->GetInt32("accessibility_step_sound_mode", 0);
+            model->accessibilityTypingEchoMode = reader->GetInt32("accessibility_typing_echo_mode", 0);
             model->accessibilityTileSpeechMode = reader->GetInt32("accessibility_tile_speech_mode", 1);
             model->accessibilityTileReadingOrder = reader->GetInt32("accessibility_tile_reading_order", 0);
             model->accessibilityElevationReadMode = reader->GetInt32("accessibility_elevation_read_mode", 1);
@@ -481,6 +482,7 @@ namespace OpenRCT2::Config
         writer->WriteBoolean("audio_focus", model->audioFocus);
         writer->WriteInt32("accessibility_cue_volume", model->accessibilityCueVolume);
         writer->WriteInt32("accessibility_step_sound_mode", model->accessibilityStepSoundMode);
+        writer->WriteInt32("accessibility_typing_echo_mode", model->accessibilityTypingEchoMode);
         writer->WriteInt32("accessibility_tile_speech_mode", model->accessibilityTileSpeechMode);
         writer->WriteInt32("accessibility_tile_reading_order", model->accessibilityTileReadingOrder);
         writer->WriteInt32("accessibility_elevation_read_mode", model->accessibilityElevationReadMode);
