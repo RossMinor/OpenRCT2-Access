@@ -63,6 +63,12 @@ extern float gDayNightCycle;
 extern bool gInUpdateCode;
 extern bool gInMapInitCode;
 extern std::string gCurrentLoadedPath;
+
+// Bumped by GameLoadInit every time a park is loaded or a scenario started. Lets code outside the
+// core tell "this park was replaced" from "this park was saved under a new name" - both of which
+// change gCurrentLoadedPath, but only one of which means the world the player was looking at is
+// gone. Used by the accessibility mod to decide whether per-save data carries over.
+extern uint32_t gParkLoadGeneration;
 extern bool gIsAutosave;
 extern bool gIsAutosaveLoaded;
 

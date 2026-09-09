@@ -32,6 +32,12 @@ namespace OpenRCT2::Ui::Accessibility
     // land announces the border direction. Returns true if the event was consumed.
     bool HandleMapNavigationKey(const InputEvent& e);
 
+    // Polled once per frame: announces "Entering <zone>" / "Leaving <zone>" when the map cursor
+    // crosses the boundary of a named zone. Lives here rather than with the zone model because the
+    // cursor is what moves, and doing it per frame catches every way it can move - arrows, the
+    // Ctrl+arrow jumps, waypoints - instead of only the ones that remembered to ask.
+    void TickZoneTransitions();
+
     // Moves the map cursor to the bottom-left corner of the given ride, leaves menu mode,
     // centres the view, and announces the ride name and footprint size.
     void GoToRide(RideId rideId);

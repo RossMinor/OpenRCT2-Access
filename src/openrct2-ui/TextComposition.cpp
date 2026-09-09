@@ -11,6 +11,7 @@
 
 #include "UiContext.h"
 #include "UiStringIds.h"
+#include "accessibility/ScreenReader.h"
 #include "interface/InGameConsole.h"
 #include "interface/Window.h"
 
@@ -29,6 +30,28 @@
 
 using namespace OpenRCT2;
 using namespace OpenRCT2::Ui;
+
+// Screen-reader echo for the game's shared text field. A screen reader cannot see inside the
+// game's own canvas, so without this every text box in the game - renaming a ride or a member of
+// staff, naming a park or a save file, naming an accessibility zone - accepts typing in total
+// silence, and a typo is only discovered once the whole thing is read back. Speaking each
+// character as it goes in is what a screen reader does for an ordinary text field.
+static void SpeakTypedText(std::string_view text)
+{
+    if (text.empty())
+        return;
+    // Punctuation and whitespace have no spoken form of their own, and a screen reader saying
+    // nothing at all is indistinguishable from a dropped keystroke. Name the ones that are typed
+    // often enough to matter in a name.
+    std::string spoken{ text };
+    if (spoken == " ")
+        spoken = "space";
+    else if (spoken == "-")
+        spoken = "dash";
+    else if (spoken == "'")
+        spoken = "apostrophe";
+    Accessibility::ScreenReaderSpeak(spoken);
+}
 
 bool TextComposition::IsActive()
 {
@@ -131,6 +154,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                 }
 
                 Insert(e->text.text);
+                SpeakTypedText(e->text.text);
 
                 console.RefreshCaret(_session.SelectionStart);
                 Windows::WindowUpdateTextbox();
@@ -169,7 +193,12 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                         else
                             CaretMoveLeft();
                         _session.SelectionSize = endOffset - _session.SelectionStart;
+                        // Read what is about to go, while it is still there to read. Ctrl+Backspace
+                        // takes a whole word, so this is not always a single character.
+                        const std::string removed
+                            = _session.Buffer->substr(_session.SelectionStart, _session.SelectionSize);
                         Delete();
+                        SpeakTypedText(removed.empty() ? std::string("deleted") : (removed + ", deleted"));
 
                         console.RefreshCaret(_session.SelectionStart);
                         Windows::WindowUpdateTextbox();

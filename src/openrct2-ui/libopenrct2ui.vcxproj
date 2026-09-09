@@ -150,6 +150,7 @@
     <ClCompile Include="accessibility\SceneryPlacement.cpp" />
     <ClCompile Include="accessibility\TrackDesignDescription.cpp" />
     <ClCompile Include="accessibility\ScreenReader.cpp" />
+    <ClCompile Include="accessibility\Zones.cpp" />
     <ClCompile Include="accessibility\graph\GraphAnnouncer.cpp" />
     <ClCompile Include="accessibility\graph\GraphBuilder.cpp" />
     <ClCompile Include="accessibility\graph\GraphNavigator.cpp" />

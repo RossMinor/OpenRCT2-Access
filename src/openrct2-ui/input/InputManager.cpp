@@ -22,6 +22,7 @@
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/Zones.h>
 #include <openrct2-ui/accessibility/graph/GraphNavigator.h>
 #include <SDL_gamecontroller.h>
 #include <cmath>
@@ -247,6 +248,10 @@ void InputManager::process()
 
     // Put the keyboard's dropdown highlight back after the engine's per-tick mouse-hover reset.
     Accessibility::TickKeyboardDropdownHighlight();
+
+    // Named zones: load and save them as the park changes, and announce boundary crossings.
+    Accessibility::TickZoneStorage();
+    Accessibility::TickZoneTransitions();
 
     // Speak new multiplayer chat/system messages and connection-status changes.
     Accessibility::TickMultiplayerAnnounce();

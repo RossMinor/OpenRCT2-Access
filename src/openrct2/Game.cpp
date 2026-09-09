@@ -73,6 +73,7 @@ float gDayNightCycle = 0;
 bool gInUpdateCode = false;
 bool gInMapInitCode = false;
 std::string gCurrentLoadedPath;
+uint32_t gParkLoadGeneration;
 bool gIsAutosave = false;
 bool gIsAutosaveLoaded = false;
 
@@ -336,6 +337,10 @@ void GameFixSaveVars()
 
 void GameLoadInit()
 {
+    // A different world from here on, whatever it is. Anything keyed to the park the player was in
+    // must not follow them into this one (see gParkLoadGeneration).
+    gParkLoadGeneration++;
+
     auto* context = GetContext();
 
     IGameStateSnapshots* snapshots = context->GetGameStateSnapshots();

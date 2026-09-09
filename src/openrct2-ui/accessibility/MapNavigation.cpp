@@ -19,6 +19,7 @@
 #include "RidePlacement.h"
 #include "SceneryPlacement.h"
 #include "ScreenReader.h"
+#include "Zones.h"
 
 #include <SDL.h>
 #include <algorithm>
@@ -2129,6 +2130,322 @@ namespace OpenRCT2::Ui::Accessibility
             + std::to_string(SpokenCoordY(_cursor)));
     }
 
+#pragma region Named zones
+
+    // Zones give the map a vocabulary: the player draws an area with the markers, names it, and
+    // from then on the cursor says "Entering Main Street" and "Leaving Main Street" as it crosses
+    // the boundary. See Zones.h for the model; everything here is the keyboard and speech around it.
+    //
+    // Z with an area marked names that area. Z with no area marked opens the zone list, so the key
+    // always does something and the list, rename and delete all live behind one binding.
+
+    // The zone list: which zone is highlighted, and whether Delete has been pressed once on it.
+    static bool _zoneListMode = false;
+    static int32_t _zoneListIndex = 0;
+    static bool _zoneDeleteArmed = false;
+
+    // A naming in progress. The tiles are captured when Z is pressed rather than read back later,
+    // so moving the cursor or the markers while the text box is open cannot change what gets named.
+    static std::vector<TileCoordsXY> _pendingZoneTiles;
+    static std::string _pendingZoneName;
+    static bool _zoneOverlapConfirmArmed = false;
+
+    // Which zone the cursor was in when we last spoke about it, so crossings announce once. -1 is
+    // "no zone", which is a real value here: leaving a zone for open ground has to announce too.
+    static int32_t _lastSpokenZone = -1;
+
+    // Renaming from the list, rather than naming a new area.
+    static bool _zoneRenameInProgress = false;
+    static size_t _zoneRenameIndex = 0;
+
+    static std::string ZoneTileCountText(size_t count)
+    {
+        return std::to_string(count) + (count == 1 ? " tile" : " tiles");
+    }
+
+    // Sends the cursor to a tile with the bookkeeping every deliberate jump does.
+    static void JumpCursorToZoneTile(const TileCoordsXY& tile, const std::string& announcement)
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        _cursor = tile;
+        _menuMode = false;
+        CentreViewportOnCursor();
+
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            SoundElevationOnChange(_cursor);
+            _scanHeight = surface->baseHeight;
+            _scanLocked = false;
+        }
+
+        _lastTileDescription = GetTileDescription(_cursor);
+        ScreenReaderSpeak(announcement + ", " + SpokenTileCoordsText(_cursor));
+    }
+
+    // Every tile of the marked rectangle, clamped to the playable map exactly as the area commands
+    // clamp it, so a zone covers the tiles the player was told it would.
+    static std::vector<TileCoordsXY> MarkedAreaTiles()
+    {
+        int32_t ax, ay, bx, by;
+        GetTerraformBounds(ax, ay, bx, by);
+        std::vector<TileCoordsXY> tiles;
+        for (int32_t wy = ay; wy <= by; wy += kCoordsXYStep)
+        {
+            for (int32_t wx = ax; wx <= bx; wx += kCoordsXYStep)
+                tiles.push_back(TileCoordsXY{ wx / kCoordsXYStep, wy / kCoordsXYStep });
+        }
+        return tiles;
+    }
+
+    // Applies the naming that has been waiting (either straight away, or once an overlap has been
+    // confirmed) and says what happened to which zone.
+    static void CommitPendingZone()
+    {
+        const bool extending = ZoneIndexByName(_pendingZoneName) >= 0;
+        const size_t added = _pendingZoneTiles.size();
+        const size_t index = CreateOrExtendZone(_pendingZoneName, _pendingZoneTiles);
+        const auto* zone = ZoneByIndex(index);
+        const std::string name = zone != nullptr ? zone->name : _pendingZoneName;
+        const size_t total = zone != nullptr ? zone->tiles.size() : added;
+
+        _pendingZoneTiles.clear();
+        _pendingZoneName.clear();
+        _zoneOverlapConfirmArmed = false;
+        _lastSpokenZone = ZoneIndexAtTile(_cursor); // the cursor may now stand in a different zone
+
+        std::string spoken = extending ? ("Zone " + name + " extended, now " + ZoneTileCountText(total))
+                                       : ("Zone " + name + " created, " + ZoneTileCountText(total));
+        // Zones are filed against the save, so a park with no save file yet has nowhere to keep
+        // them. They are written the moment it is saved; say so rather than let the player draw
+        // half a park's worth of zones believing they are safe.
+        if (!ZonesArePersistable())
+            spoken += ". This park has not been saved yet, so zones are kept only until you save it";
+        ScreenReaderSpeak(spoken);
+    }
+
+    // The name has been typed. Same name as an existing zone (ignoring case) means extend it -
+    // whether or not the areas touch, because two zones cannot share a name and "expand a zone" is
+    // what naming an area after an existing one means. A different name over someone else's tiles
+    // has to be confirmed, because it takes those tiles away.
+    static void OnZoneNameEntered(std::string_view typed)
+    {
+        std::string name{ typed };
+        // Trim, so a stray space does not create a second zone that sounds identical to the first.
+        const auto first = name.find_first_not_of(" \t");
+        const auto last = name.find_last_not_of(" \t");
+        name = (first == std::string::npos) ? std::string() : name.substr(first, last - first + 1);
+
+        if (name.empty())
+        {
+            _pendingZoneTiles.clear();
+            ScreenReaderSpeak("No name given, zone not created");
+            return;
+        }
+
+        _pendingZoneName = name;
+        const auto clashes = ZonesOverlapping(_pendingZoneTiles, name);
+        if (clashes.empty())
+        {
+            CommitPendingZone();
+            return;
+        }
+
+        std::string others = clashes[0];
+        for (size_t i = 1; i < clashes.size(); i++)
+            others += (i + 1 == clashes.size() ? " and " : ", ") + clashes[i];
+
+        _zoneOverlapConfirmArmed = true;
+        ScreenReaderSpeak(
+            name + " overlaps with " + others + ". Proceed? Press Enter to take those tiles, or any other key to cancel.");
+    }
+
+    static void OnZoneRenameEntered(std::string_view typed)
+    {
+        std::string name{ typed };
+        const auto first = name.find_first_not_of(" \t");
+        const auto last = name.find_last_not_of(" \t");
+        name = (first == std::string::npos) ? std::string() : name.substr(first, last - first + 1);
+
+        _zoneRenameInProgress = false;
+        if (name.empty())
+        {
+            ScreenReaderSpeak("No name given, zone not renamed");
+            return;
+        }
+        if (!RenameZone(_zoneRenameIndex, name))
+        {
+            ScreenReaderSpeak("A zone called " + name + " already exists");
+            return;
+        }
+        _lastSpokenZone = ZoneIndexAtTile(_cursor);
+        ScreenReaderSpeak("Renamed to " + name);
+    }
+
+    // Z with an area marked: ask for a name. The text box is the game's own, so typing, backspace
+    // and Enter all work as they do anywhere else; the mod speaks the prompt and (see
+    // TextComposition) echoes the characters as they go in.
+    static void BeginZoneFromMarkedArea()
+    {
+        _pendingZoneTiles = MarkedAreaTiles();
+        if (_pendingZoneTiles.empty())
+        {
+            ScreenReaderSpeak("Nothing to name");
+            return;
+        }
+
+        ScreenReaderSpeak(
+            "Name this zone, " + ZoneTileCountText(_pendingZoneTiles.size()) + ". Type a name and press Enter.");
+        Windows::WindowTextInputOpen(
+            "Name this zone", "Zone name", "", 32, [](std::string_view text) { OnZoneNameEntered(text); },
+            []() { _pendingZoneTiles.clear(); ScreenReaderSpeak("Cancelled"); });
+    }
+
+    static void SpeakZoneListEntry()
+    {
+        const auto* zone = ZoneByIndex(static_cast<size_t>(_zoneListIndex));
+        if (zone == nullptr)
+            return;
+        ScreenReaderSpeak(
+            zone->name + ", " + ZoneTileCountText(zone->tiles.size()) + ", " + std::to_string(_zoneListIndex + 1) + " of "
+            + std::to_string(ZoneCount()));
+    }
+
+    static void OpenZoneList()
+    {
+        if (ZoneCount() == 0)
+        {
+            ScreenReaderSpeak("No zones yet. Mark an area with K, then press Z to name it.");
+            return;
+        }
+
+        _zoneListMode = true;
+        _zoneDeleteArmed = false;
+        // Start on the zone the cursor is standing in, if any - that is nearly always the one the
+        // player means when they open the list from inside a zone.
+        const int32_t here = ZoneIndexAtTile(_cursor);
+        _zoneListIndex = here >= 0 ? here : 0;
+        ScreenReaderSpeak("Zones. Up and down to browse, Enter to jump there, R to rename, Delete to remove, Escape to close.");
+        SpeakZoneListEntry();
+    }
+
+    static void CloseZoneList()
+    {
+        _zoneListMode = false;
+        _zoneDeleteArmed = false;
+    }
+
+    static void ZoneListMove(int32_t delta)
+    {
+        const int32_t count = static_cast<int32_t>(ZoneCount());
+        if (count == 0)
+        {
+            CloseZoneList();
+            return;
+        }
+        _zoneDeleteArmed = false; // moving off a zone abandons a half-finished delete
+        _zoneListIndex = ((_zoneListIndex + delta) % count + count) % count;
+        SpeakZoneListEntry();
+    }
+
+    // The zone list owns every key while it is open, so nothing underneath can act on a keystroke
+    // meant for choosing a zone - the same rule the Delete picker follows.
+    static bool HandleZoneListKey(uint32_t key)
+    {
+        const auto* zone = ZoneByIndex(static_cast<size_t>(_zoneListIndex));
+        if (zone == nullptr)
+        {
+            CloseZoneList();
+            return true;
+        }
+
+        switch (key)
+        {
+            case SDLK_UP:
+                ZoneListMove(-1);
+                return true;
+            case SDLK_DOWN:
+                ZoneListMove(1);
+                return true;
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER:
+            {
+                const std::string name = zone->name;
+                const auto tile = ZoneAnchorTile(static_cast<size_t>(_zoneListIndex));
+                CloseZoneList();
+                JumpCursorToZoneTile(tile, name);
+                _lastSpokenZone = ZoneIndexAtTile(_cursor); // we just named it; do not say it again
+                return true;
+            }
+            case SDLK_r:
+                _zoneRenameInProgress = true;
+                _zoneRenameIndex = static_cast<size_t>(_zoneListIndex);
+                CloseZoneList();
+                ScreenReaderSpeak("Rename " + zone->name + ". Type a new name and press Enter.");
+                Windows::WindowTextInputOpen(
+                    "Rename zone", "Zone name", zone->name, 32, [](std::string_view text) { OnZoneRenameEntered(text); },
+                    []() { _zoneRenameInProgress = false; ScreenReaderSpeak("Cancelled"); });
+                return true;
+            case SDLK_DELETE:
+                if (!_zoneDeleteArmed)
+                {
+                    _zoneDeleteArmed = true;
+                    ScreenReaderSpeak("Delete zone " + zone->name + "? Press Delete again to confirm.");
+                    return true;
+                }
+                {
+                    const std::string name = zone->name;
+                    DeleteZone(static_cast<size_t>(_zoneListIndex));
+                    _lastSpokenZone = ZoneIndexAtTile(_cursor);
+                    ScreenReaderSpeak("Zone " + name + " deleted");
+                    if (ZoneCount() == 0)
+                    {
+                        CloseZoneList();
+                        return true;
+                    }
+                    _zoneDeleteArmed = false;
+                    _zoneListIndex = std::min(_zoneListIndex, static_cast<int32_t>(ZoneCount()) - 1);
+                    SpeakZoneListEntry();
+                }
+                return true;
+            case SDLK_ESCAPE:
+                CloseZoneList();
+                ScreenReaderSpeak("Zone list closed");
+                return true;
+        }
+
+        _zoneDeleteArmed = false;
+        return true; // modal: swallow everything else rather than let it reach the map
+    }
+
+    void TickZoneTransitions()
+    {
+        // Only while the map cursor is the thing being moved: in a menu or in mouse mode the cursor
+        // is not where the player's attention is, and a stale crossing would be confusing.
+        if (gLegacyScene != LegacyScene::playing || !_initialised || _menuMode || _mouseMode || _statusMode)
+            return;
+
+        const int32_t now = ZoneIndexAtTile(_cursor);
+        if (now == _lastSpokenZone)
+            return;
+
+        const auto* left = ZoneByIndex(static_cast<size_t>(_lastSpokenZone));
+        const auto* entered = ZoneByIndex(static_cast<size_t>(now));
+        _lastSpokenZone = now;
+
+        // Queued rather than interrupting, so the crossing is heard alongside the tile read-out the
+        // move itself produced instead of cutting it off.
+        if (left != nullptr && entered != nullptr)
+            ScreenReaderSpeak("Leaving " + left->name + ". Entering " + entered->name, false);
+        else if (left != nullptr)
+            ScreenReaderSpeak("Leaving " + left->name, false);
+        else if (entered != nullptr)
+            ScreenReaderSpeak("Entering " + entered->name, false);
+    }
+
+#pragma endregion
+
     // Drops (or moves) the numbered waypoint in the given slot at the cursor's current tile.
     static void SetWaypoint(int32_t slot)
     {
@@ -3294,8 +3611,9 @@ namespace OpenRCT2::Ui::Accessibility
         scenery,
         footpathObjects,
         hazards,
+        zones,
     };
-    static constexpr int32_t kJumpCategoryCount = 4;
+    static constexpr int32_t kJumpCategoryCount = 5;
     static JumpCategory _jumpCategory = JumpCategory::ridesAndStalls;
 
     // Spoken name of a category, announced when cycling.
@@ -3309,6 +3627,8 @@ namespace OpenRCT2::Ui::Accessibility
                 return "Footpath objects";
             case JumpCategory::hazards:
                 return "Hazards";
+            case JumpCategory::zones:
+                return "Zones";
             case JumpCategory::ridesAndStalls:
                 break;
         }
@@ -3326,6 +3646,8 @@ namespace OpenRCT2::Ui::Accessibility
                 return "footpath objects";
             case JumpCategory::hazards:
                 return "hazards";
+            case JumpCategory::zones:
+                return "zones";
             case JumpCategory::ridesAndStalls:
                 break;
         }
@@ -3387,6 +3709,16 @@ namespace OpenRCT2::Ui::Accessibility
                         return true;
                 }
                 return false;
+            }
+
+            case JumpCategory::zones:
+            {
+                // "The next zone that way", not "the next tile of a zone" - otherwise every jump
+                // from inside a zone would land one tile further along the zone the cursor is
+                // already in. Rides get the same treatment, by ride identity, for the same reason.
+                const int32_t here = ZoneIndexAtTile(_cursor);
+                const int32_t there = ZoneIndexAtTile(tile);
+                return there >= 0 && there != here;
             }
 
             case JumpCategory::ridesAndStalls:
@@ -4135,7 +4467,7 @@ namespace OpenRCT2::Ui::Accessibility
             && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET
             && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
             && key != SDLK_k && key != SDLK_HOME && key != SDLK_END && key != SDLK_PAGEUP
-            && key != SDLK_PAGEDOWN && key != SDLK_DELETE)
+            && key != SDLK_PAGEDOWN && key != SDLK_DELETE && key != SDLK_z)
             return false;
 
         // A window owns the keyboard, so the map cursor must not change the world underneath it.
@@ -4249,6 +4581,15 @@ namespace OpenRCT2::Ui::Accessibility
                     SnapToMarker();
                 else
                     CycleAreaMarker();
+                break;
+            case SDLK_z:
+                // Z names the marked area as a zone. With no area marked there is nothing to name,
+                // so it opens the zone list instead - which is also where renaming and deleting
+                // live, so the whole feature sits behind one key.
+                if (HasMarkedArea())
+                    BeginZoneFromMarkedArea();
+                else
+                    OpenZoneList();
                 break;
             case SDLK_e:
                 GoToEntrance();
@@ -4660,6 +5001,12 @@ namespace OpenRCT2::Ui::Accessibility
             _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
             _areaConfirmPending = AreaCommand::none;
             _areaConfirmedMask = 0;
+            // Zones themselves persist per park (Zones.cpp swaps them as the park changes); it is
+            // only the transient UI around them that resets here.
+            _zoneListMode = false;
+            _zoneOverlapConfirmArmed = false;
+            _pendingZoneTiles.clear();
+            _lastSpokenZone = -1;
             std::fill(std::begin(_waypointSet), std::end(_waypointSet), false); // and any waypoints
             return false;
         }
@@ -4694,6 +5041,35 @@ namespace OpenRCT2::Ui::Accessibility
         if (IsDeletePickerActive())
         {
             HandleDeletePickerKey(key);
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // The zone list is modal for the same reason: while it is open every key is a choice about
+        // a zone, so nothing underneath may act on one.
+        if (_zoneListMode)
+        {
+            HandleZoneListKey(key);
+            _lastHandledKey = key;
+            return true;
+        }
+
+        // A naming is waiting on the overlap question. Enter takes the tiles from the zones that
+        // already hold them; anything else abandons the naming, matching how the marked-area
+        // confirmations answer.
+        if (_zoneOverlapConfirmArmed)
+        {
+            if (key == SDLK_RETURN || key == SDLK_KP_ENTER)
+            {
+                CommitPendingZone();
+            }
+            else
+            {
+                _zoneOverlapConfirmArmed = false;
+                _pendingZoneTiles.clear();
+                _pendingZoneName.clear();
+                ScreenReaderSpeak("Cancelled, nothing changed");
+            }
             _lastHandledKey = key;
             return true;
         }
