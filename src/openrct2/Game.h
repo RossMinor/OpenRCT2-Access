@@ -64,6 +64,12 @@ extern bool gInUpdateCode;
 extern bool gInMapInitCode;
 extern std::string gCurrentLoadedPath;
 
+// True when gCurrentLoadedPath points at a SCENARIO rather than a save of this playthrough. A
+// scenario is a template: every new game of it loads the same path, so it does not identify the
+// park the player is building and nothing belonging to one playthrough may be keyed to it. Cleared
+// as soon as the game is saved, at which point the path really is this playthrough's own file.
+extern bool gCurrentLoadedPathIsScenario;
+
 // Bumped by GameLoadInit every time a park is loaded or a scenario started. Lets code outside the
 // core tell "this park was replaced" from "this park was saved under a new name" - both of which
 // change gCurrentLoadedPath, but only one of which means the world the player was looking at is

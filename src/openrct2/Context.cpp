@@ -788,8 +788,17 @@ namespace OpenRCT2
                 // Reset viewport rendering inhibition
                 WindowSetFlagForAllViewports(VIEWPORT_FLAG_RENDERING_INHIBITED, false);
 
+                // A scenario is a TEMPLATE, not this playthrough's file. Every new game of it loads
+                // the same path, so anything keyed to "the file the player is playing" must not be
+                // filed against it or the next playthrough inherits it. The same test decides
+                // whether to continue a save or begin a scenario below; computed once so the two
+                // can never disagree about which kind of file this is.
+                const bool continuingSave = !asScenario
+                    && (info.Type == FileType::park || info.Type == FileType::savedGame);
+
                 gScenarioSavePath = path;
                 gCurrentLoadedPath = path;
+                gCurrentLoadedPathIsScenario = !continuingSave;
                 gFirstTimeSaving = true;
                 GameFixSaveVars();
                 MapAnimations::MarkAllTiles();
@@ -800,7 +809,7 @@ namespace OpenRCT2
 #ifndef DISABLE_NETWORK
                 bool sendMap = false;
 #endif
-                if (!asScenario && (info.Type == FileType::park || info.Type == FileType::savedGame))
+                if (continuingSave)
                 {
 #ifndef DISABLE_NETWORK
                     if (_network.GetMode() == Network::Mode::client)

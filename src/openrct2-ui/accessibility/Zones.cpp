@@ -152,10 +152,16 @@ namespace OpenRCT2::Ui::Accessibility
         return (std::filesystem::path(env.GetDirectoryPath(DirBase::user)) / "access-zones.json").u8string();
     }
 
-    // Empty means "nowhere to keep these": the title screen, or a park that has never been saved.
+    // Empty means "nowhere to keep these": the title screen, or a park with no save of its own yet.
+    //
+    // A scenario counts as having no save. Starting a scenario sets gCurrentLoadedPath to the
+    // SCENARIO file, which is a template shared by every playthrough of it - key zones to that and
+    // a fresh game of Electric Fields comes up wearing the zones from the last one. Zones drawn
+    // before the first save live in memory and are written out the moment the park is saved, at
+    // which point the path is a file this playthrough actually owns.
     static std::string CurrentParkKey()
     {
-        if (gLegacyScene != LegacyScene::playing || gCurrentLoadedPath.empty())
+        if (gLegacyScene != LegacyScene::playing || gCurrentLoadedPath.empty() || gCurrentLoadedPathIsScenario)
             return {};
         // Normalised so the same file reached by a differently spelled path is still the same key.
         return std::filesystem::u8path(gCurrentLoadedPath).lexically_normal().generic_u8string();

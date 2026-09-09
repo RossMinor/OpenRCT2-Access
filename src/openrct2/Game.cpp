@@ -73,6 +73,7 @@ float gDayNightCycle = 0;
 bool gInUpdateCode = false;
 bool gInMapInitCode = false;
 std::string gCurrentLoadedPath;
+bool gCurrentLoadedPathIsScenario;
 uint32_t gParkLoadGeneration;
 bool gIsAutosave = false;
 bool gIsAutosaveLoaded = false;
@@ -510,6 +511,8 @@ void SaveGameWithName(u8string_view name)
     {
         LOG_VERBOSE("Saved to %s", u8string(name).c_str());
         gCurrentLoadedPath = name;
+        // Whatever was loaded to get here, the current path is now a save this playthrough owns.
+        gCurrentLoadedPathIsScenario = false;
         gIsAutosaveLoaded = false;
         gScreenAge = 0;
     }
