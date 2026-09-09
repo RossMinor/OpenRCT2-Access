@@ -291,17 +291,23 @@ namespace OpenRCT2::Ui::Windows
                 }
                 case WINDOW_STAFF_OPTIONS:
                 {
+                    // This page shows a different set of controls per staff type, and hides the rest
+                    // with setHidden() - which only sets a flag and LEAVES type unchanged. So the
+                    // type alone is not evidence a control is there: it declared an entertainer's
+                    // four hidden, never-labelled checkboxes as "Option, checkbox" rows with the
+                    // costume combo box buried behind them, and gave every other staff type a
+                    // phantom Costume row. Visibility is the test.
                     for (WidgetIndex w = WIDX_CHECKBOX_1; w <= WIDX_CHECKBOX_4; w++)
                     {
-                        if (widgets[w].type != WidgetType::checkbox)
+                        if (widgets[w].type != WidgetType::checkbox || !widgets[w].isVisible())
                             continue;
                         std::string label = sxWidgetText(w);
-                        items.push_back(
-                            { (label.empty() ? "Option" : label) + ", checkbox, "
-                                  + (widgetIsPressed(*this, w) ? "checked" : "unchecked"),
-                              SxKind::checkbox, w });
+                        // Checked state is deliberately NOT baked in here; it is announced as a live
+                        // part instead (see the checkbox case in accessGraphBuild).
+                        items.push_back({ (label.empty() ? "Option" : label) + ", checkbox", SxKind::checkbox, w });
                     }
-                    if (widgets[WIDX_COSTUME_BOX].type == WidgetType::dropdownMenu)
+                    if (widgets[WIDX_COSTUME_BOX].type == WidgetType::dropdownMenu
+                        && widgets[WIDX_COSTUME_BOX].isVisible())
                         items.push_back(
                             { "Costume, combo box, " + sxWidgetText(WIDX_COSTUME_BOX), SxKind::dropdown, WIDX_COSTUME_BTN });
                     break;
@@ -459,9 +465,18 @@ namespace OpenRCT2::Ui::Windows
                 {
                     case SxKind::checkbox:
                         vt.onActivate = [this, w = it.widget]() { onMouseUp(w); };
-                        vt.stateText = [this, w = it.widget]() {
-                            return widgetIsPressed(*this, w) ? std::string("checked") : std::string("unchecked");
-                        };
+                        // LIVE, and with no synchronous stateText. Toggling a staff option raises a
+                        // StaffSetOrdersAction, and the engine ENQUEUES a game action raised from
+                        // the UI rather than running it (see ExecuteInternal in GameActionRunner.cpp:
+                        // "also the case when its executed from the UI update"), so the new state is
+                        // simply not readable yet when the keypress returns. Reading it synchronously
+                        // announced the state the box had BEFORE the press - "unchecked" at the very
+                        // moment of checking it. The live part speaks it once it actually lands.
+                        vt.announcements.emplace_back(
+                            [this, w = it.widget]() {
+                                return widgetIsPressed(*this, w) ? std::string("checked") : std::string("unchecked");
+                            },
+                            true, Accessibility::Graph::AnnouncementKinds::kValue);
                         break;
                     case SxKind::dropdown:
                         vt.onActivate = [this, i, w = it.widget]() { sxOpenDropdown(i, w); };
