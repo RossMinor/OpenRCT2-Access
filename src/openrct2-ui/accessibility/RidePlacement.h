@@ -39,8 +39,10 @@ namespace OpenRCT2::Ui::Accessibility
     void AccessibleRidePlacementAtTile(const CoordsXY& mapCoords);
 
     // Backspace during a footprint preview: picks the ride back up so it follows the cursor again for
-    // repositioning. No-op unless a footprint preview is currently frozen.
-    void AccessibleRidePlacementPickup();
+    // repositioning, and returns the tile the preview was frozen at so the caller can put the map
+    // cursor back there rather than leaving it wherever inspecting the footprint left it. Nullopt
+    // (and no other effect) unless a footprint preview is currently frozen.
+    std::optional<CoordsXY> AccessibleRidePlacementPickup();
 
     // If a footprint preview is frozen and covers the given tile, returns the ride's name so the tile
     // reader can announce the ride as though it were already placed there (letting the player trace

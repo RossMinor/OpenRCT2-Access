@@ -3678,6 +3678,31 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak("Zoom level " + std::to_string(level));
     }
 
+    // Backspace picked a frozen placement preview back up. Put the cursor back on the tile the
+    // preview was frozen at: inspecting the footprint walks the cursor away from it, so without this
+    // the player has to re-find a spot they had already chosen before they can nudge it. Same
+    // bookkeeping as every other deliberate jump (see the marker and entrance/exit jumps).
+    static void SnapCursorToPickedUpPreview(const CoordsXY& origin)
+    {
+        if (!_initialised)
+            InitialiseCursor();
+
+        _cursor = TileCoordsXY{ origin };
+        CentreViewportOnCursor();
+
+        if (auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            SoundElevationOnChange(_cursor);
+            _scanHeight = surface->baseHeight;
+            _scanLocked = false;
+        }
+
+        _lastTileDescription = GetTileDescription(_cursor);
+        ScreenReaderSpeak(
+            "Picked back up at " + SpokenTileCoordsText(_cursor)
+            + ". Move the cursor and press Enter to position it again.");
+    }
+
     static bool HandleMapCursorKey(uint32_t key, uint32_t modifiers)
     {
         // The mod uses no Alt-modified keys, so let any Alt combination fall through to the game's
@@ -3714,7 +3739,10 @@ namespace OpenRCT2::Ui::Accessibility
                 }
                 case SDLK_BACKSPACE:
                 {
-                    Windows::WindowTrackPlacePickup();
+                    // Snap back before refreshing the ghost, so the outline reappears where the
+                    // design was positioned rather than wherever inspecting it left the cursor.
+                    if (auto origin = Windows::WindowTrackPlacePickup(); origin.has_value())
+                        SnapCursorToPickedUpPreview(*origin);
                     // The preview is unfrozen; put the ghost back under the cursor right away.
                     const auto bWorld = TileCoordsXYZ(_cursor.x, _cursor.y, 0).ToCoordsXYZ();
                     Windows::WindowTrackPlaceUpdateGhost(CoordsXY{ bWorld.x, bWorld.y });
@@ -3748,7 +3776,8 @@ namespace OpenRCT2::Ui::Accessibility
                     return true;
                 }
                 case SDLK_BACKSPACE:
-                    AccessibleRidePlacementPickup();
+                    if (auto origin = AccessibleRidePlacementPickup(); origin.has_value())
+                        SnapCursorToPickedUpPreview(*origin);
                     return true;
                 case SDLK_ESCAPE:
                     AccessibleRidePlacementCancel();

@@ -610,12 +610,12 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    void AccessibleRidePlacementPickup()
+    std::optional<CoordsXY> AccessibleRidePlacementPickup()
     {
         if (!_active || _stage != Stage::footprint || !_previewing)
-            return;
+            return std::nullopt;
         _previewing = false;
-        ScreenReaderSpeak("Picked back up. Move the cursor and press Enter to position it again.");
+        return _previewCursor;
     }
 
     std::optional<std::string> AccessibleRidePlacementPreviewLabel(const TileCoordsXY& tile)

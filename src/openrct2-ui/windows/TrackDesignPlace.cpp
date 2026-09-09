@@ -917,13 +917,17 @@ namespace OpenRCT2::Ui::Windows
                 + " tiles. Arrow around to check the area, Enter to build, Backspace to reposition.");
         }
 
-        // Backspace during a preview: pick the design back up so it can be repositioned.
-        void pickupForAccessibility()
+        // Backspace during a preview: pick the design back up so it can be repositioned. Returns the
+        // tile the preview was frozen at so the caller can put the map cursor back there - after
+        // arrowing around the footprint the cursor is somewhere in the middle of it, and repositioning
+        // from there would mean re-finding the spot the player had already chosen. Nullopt if no
+        // preview was frozen. The caller announces, so the coordinates land in the same sentence.
+        std::optional<CoordsXY> pickupForAccessibility()
         {
             if (!_accPreviewing)
-                return;
+                return std::nullopt;
             _accPreviewing = false;
-            Accessibility::ScreenReaderSpeak("Picked back up. Move the cursor and press Enter to position it again.");
+            return _accPreviewOrigin;
         }
 
         // The world tiles where a frozen preview's entrances and exits will be built, each with the
@@ -1500,10 +1504,11 @@ namespace OpenRCT2::Ui::Windows
             w->close();
     }
 
-    void WindowTrackPlacePickup()
+    std::optional<CoordsXY> WindowTrackPlacePickup()
     {
         if (auto* w = GetTrackPlaceWindow(); w != nullptr)
-            w->pickupForAccessibility();
+            return w->pickupForAccessibility();
+        return std::nullopt;
     }
 
     std::optional<std::string> WindowTrackPlacePreviewLabel(const TileCoordsXY& tile)

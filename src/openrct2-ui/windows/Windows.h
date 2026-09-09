@@ -458,7 +458,9 @@ namespace OpenRCT2::Ui::Windows
     void WindowTrackPlaceUpdateGhost(const CoordsXY& mapCoords);
     void WindowTrackPlaceCancel();
     // Backspace during a frozen preview: pick the design back up so it follows the cursor again.
-    void WindowTrackPlacePickup();
+    // Returns the tile the preview was frozen at, for the caller to snap the map cursor back to;
+    // nullopt if nothing was frozen.
+    std::optional<CoordsXY> WindowTrackPlacePickup();
     // If a design preview is frozen and covers this tile, the design's name (so the tile reader can
     // announce the ride as though it were already there). Nullopt otherwise.
     std::optional<std::string> WindowTrackPlacePreviewLabel(const TileCoordsXY& tile);
