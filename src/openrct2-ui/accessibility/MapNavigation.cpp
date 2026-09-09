@@ -3862,6 +3862,33 @@ namespace OpenRCT2::Ui::Accessibility
             + ". Move the cursor and press Enter to position it again.");
     }
 
+    // The map-cursor commands that CHANGE the world, as opposed to describing it. Only these are
+    // refused while a window owns the keyboard (see HandleMapCursorKey); everything else still
+    // answers, because reading out the cursor's surroundings is harmless from inside a window.
+    static bool IsWorldChangingMapKey(uint32_t key, uint32_t modifiers)
+    {
+        switch (key)
+        {
+            case SDLK_SPACE:  // build a path, or pave the marked area
+            case SDLK_d:      // remove a path
+            case SDLK_x:      // clear scenery
+            case SDLK_o:      // buy land / construction rights
+            case SDLK_DELETE: // remove the thing at the cursor
+                return true;
+            case SDLK_PAGEUP:
+            case SDLK_PAGEDOWN:
+                // Plain raises/lowers land and Ctrl does the water; Shift is the zoom, which only
+                // moves the camera and so stays available.
+                return !(modifiers & KMOD_SHIFT);
+            default:
+                return false;
+        }
+    }
+
+    // The world-changing key most recently refused, so a held key says it once instead of on
+    // every repeat. Cleared as soon as a key gets through.
+    static uint32_t _lastBlockedMapKey = 0;
+
     static bool HandleMapCursorKey(uint32_t key, uint32_t modifiers)
     {
         // The mod uses no Alt-modified keys, so let any Alt combination fall through to the game's
@@ -4110,6 +4137,27 @@ namespace OpenRCT2::Ui::Accessibility
             && key != SDLK_k && key != SDLK_HOME && key != SDLK_END && key != SDLK_PAGEUP
             && key != SDLK_PAGEDOWN && key != SDLK_DELETE)
             return false;
+
+        // A window owns the keyboard, so the map cursor must not change the world underneath it.
+        // The graph navigator gets every key first, but it only claims the ones it navigates with -
+        // Space, Delete and Page Up/Down are not among them, so they fell through to here and paved,
+        // deleted or terraformed at a cursor the player had left behind to work in the window. The
+        // arrows they had just been pressing belonged to the window, not to the map.
+        //
+        // Only the world-changing commands are refused. The read-only ones (coordinates, facing,
+        // announcement history, focus elevation) still answer, because they only describe where the
+        // cursor is and cannot do any harm from inside a window.
+        if (IsWorldChangingMapKey(key, modifiers) && Graph::FrontNavigableWindow() != nullptr)
+        {
+            // Held keys repeat, so speak once per key rather than on every repeat.
+            if (key != _lastBlockedMapKey)
+            {
+                _lastBlockedMapKey = key;
+                ScreenReaderSpeak("Close the window first");
+            }
+            return true;
+        }
+        _lastBlockedMapKey = 0;
 
         if (!_initialised)
             InitialiseCursor();
