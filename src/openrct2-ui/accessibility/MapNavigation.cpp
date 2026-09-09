@@ -196,6 +196,32 @@ namespace OpenRCT2::Ui::Accessibility
     // press so the cursor snaps back and forth between the two markers.
     static int32_t _snapTarget = 0;
 
+    // The commands that act on the whole marked rectangle instead of one tile or the small brush.
+    // Each is an ordinary single-tile key until markers are set, at which point one press can pave,
+    // strip or reshape hundreds of tiles and spend a great deal of money. So while a rectangle is
+    // active the first press of each only describes the area and waits; a second press runs it.
+    enum class AreaCommand : uint8_t
+    {
+        none,
+        pavePath,
+        removePaths,
+        clearScenery,
+        buyLand,
+        buyRights,
+        raiseLand,
+        lowerLand,
+        raiseWater,
+        lowerWater,
+    };
+
+    // The command awaiting its confirming second press, and the commands already confirmed for the
+    // CURRENT rectangle. Confirming is remembered per command so that holding Page Up to raise land
+    // several steps asks once rather than on every press, while a command not yet used on this
+    // rectangle - Space, say - still asks the first time. Moving or clearing the markers resets
+    // both, because the area the player agreed to no longer exists.
+    static AreaCommand _areaConfirmPending = AreaCommand::none;
+    static uint32_t _areaConfirmedMask = 0;
+
     // Numbered waypoints: bookmarks on the map. Shift + number drops or moves the waypoint in that
     // slot at the cursor; Ctrl + number warps the cursor to it. Slots are the digit keys 1-9 then 0
     // (the tenth). Session-only - cleared on park load, like the terraform markers.
@@ -1683,8 +1709,120 @@ namespace OpenRCT2::Ui::Accessibility
         return 3;     // North
     }
 
+    // What each area command is bound to, so the prompt can name the key to press again and so a
+    // pending confirmation can tell that exact binding apart from every other keystroke. The
+    // modifier is the one that must be held: plain Page Up raises land, Ctrl+Page Up raises water,
+    // and those must not confirm each other.
+    struct AreaCommandBinding
+    {
+        AreaCommand command;
+        uint32_t key;
+        uint32_t modifier; // 0, KMOD_SHIFT or KMOD_CTRL
+        const char* keyName;
+        const char* verb; // reads as "<verb> marked area"
+    };
+
+    static constexpr AreaCommandBinding kAreaCommandBindings[] = {
+        { AreaCommand::pavePath, SDLK_SPACE, 0, "Space", "Pave" },
+        { AreaCommand::removePaths, SDLK_d, 0, "D", "Remove all paths from" },
+        { AreaCommand::clearScenery, SDLK_x, 0, "X", "Clear scenery from" },
+        { AreaCommand::buyLand, SDLK_o, 0, "O", "Buy the land in" },
+        { AreaCommand::buyRights, SDLK_o, KMOD_SHIFT, "Shift plus O", "Buy construction rights in" },
+        { AreaCommand::raiseLand, SDLK_PAGEUP, 0, "Page Up", "Raise the land in" },
+        { AreaCommand::lowerLand, SDLK_PAGEDOWN, 0, "Page Down", "Lower the land in" },
+        { AreaCommand::raiseWater, SDLK_PAGEUP, KMOD_CTRL, "Control plus Page Up", "Raise the water in" },
+        { AreaCommand::lowerWater, SDLK_PAGEDOWN, KMOD_CTRL, "Control plus Page Down", "Lower the water in" },
+    };
+
+    static const AreaCommandBinding& AreaBindingFor(AreaCommand command)
+    {
+        for (const auto& binding : kAreaCommandBindings)
+        {
+            if (binding.command == command)
+                return binding;
+        }
+        return kAreaCommandBindings[0]; // unreachable: every command above has a binding
+    }
+
+    // True when this keystroke is a repeat of the exact binding that armed the pending confirmation.
+    // Only that answers the prompt; everything else cancels it (see HandleMapNavigationKey).
+    static bool AreaConfirmKeyMatches(uint32_t key, uint32_t modifiers)
+    {
+        if (_areaConfirmPending == AreaCommand::none)
+            return false;
+        const auto& binding = AreaBindingFor(_areaConfirmPending);
+        if (key != binding.key)
+            return false;
+        return ((modifiers & KMOD_SHIFT) != 0) == ((binding.modifier & KMOD_SHIFT) != 0)
+            && ((modifiers & KMOD_CTRL) != 0) == ((binding.modifier & KMOD_CTRL) != 0);
+    }
+
+    // Describes the rectangle a command is about to act on, by its two opposite corners. Spoken X
+    // and Y are the map's absolute axes at the default view - screen-right is higher X, screen-up is
+    // higher Y (see SpokenCoordX/Y) - so the TOP LEFT corner is the lowest X with the highest Y, and
+    // the bottom right the opposite. Both run against the tile indices, which is why the corners
+    // come from the min/max of the spoken values rather than of the tile coordinates.
+    static void AnnounceAreaCommandConfirm(const AreaCommandBinding& binding)
+    {
+        int32_t ax, ay, bx, by;
+        GetTerraformBounds(ax, ay, bx, by);
+
+        // GetTerraformBounds clamps to the playable map, so these are the tiles that would really
+        // be affected - not the raw markers, which may sit past the edge.
+        const TileCoordsXY corner0{ ax / kCoordsXYStep, ay / kCoordsXYStep };
+        const TileCoordsXY corner1{ bx / kCoordsXYStep, by / kCoordsXYStep };
+        const int32_t leftX = std::min(SpokenCoordX(corner0), SpokenCoordX(corner1));
+        const int32_t rightX = std::max(SpokenCoordX(corner0), SpokenCoordX(corner1));
+        const int32_t bottomY = std::min(SpokenCoordY(corner0), SpokenCoordY(corner1));
+        const int32_t topY = std::max(SpokenCoordY(corner0), SpokenCoordY(corner1));
+
+        const int32_t w = (bx - ax) / kCoordsXYStep + 1;
+        const int32_t h = (by - ay) / kCoordsXYStep + 1;
+
+        // Paving with the queue type selected lays queue line, which is a different thing to agree to.
+        std::string verb = binding.verb;
+        if (binding.command == AreaCommand::pavePath && gFootpathSelection.isQueueSelected)
+            verb = "Queue";
+
+        ScreenReaderSpeak(
+            verb + " marked area, top left X " + std::to_string(leftX) + ", Y " + std::to_string(topY)
+            + ", bottom right X " + std::to_string(rightX) + ", Y " + std::to_string(bottomY) + ", "
+            + std::to_string(w) + " by " + std::to_string(h) + " tiles. Press " + binding.keyName
+            + " again to confirm, or any other key to cancel.");
+    }
+
+    // The gate every area command passes through. Returns true when the command may run now: always
+    // with no marked rectangle (it is then an ordinary single-tile or brush command), and once the
+    // player has confirmed this command for the current rectangle. Otherwise it arms the prompt,
+    // describes the area, and returns false so the caller does nothing at all this press.
+    static bool ConfirmAreaCommand(AreaCommand command)
+    {
+        if (!HasMarkedArea())
+            return true;
+
+        const uint32_t bit = 1u << static_cast<uint32_t>(command);
+        if (_areaConfirmedMask & bit)
+            return true;
+
+        if (_areaConfirmPending == command)
+        {
+            _areaConfirmPending = AreaCommand::none;
+            _areaConfirmedMask |= bit;
+            return true;
+        }
+
+        _areaConfirmPending = command;
+        AnnounceAreaCommandConfirm(AreaBindingFor(command));
+        return false;
+    }
+
     static void BuildPath()
     {
+        // A marked rectangle turns Space into an area command; confirm it before spending anything.
+        // Nothing at all happens on an unconfirmed press, not even selecting a path type.
+        if (!ConfirmAreaCommand(AreaCommand::pavePath))
+            return;
+
         // Ensure a valid default path type is selected.
         if (!Windows::WindowFootpathSelectDefault())
         {
@@ -1914,6 +2052,10 @@ namespace OpenRCT2::Ui::Accessibility
     static void CycleAreaMarker()
     {
         _snapTarget = 0; // any change to the markers restarts the Shift+K snap at the first corner
+        // The rectangle is about to change, so nothing the player already agreed to still applies:
+        // drop both the armed prompt and every command confirmed for the old area.
+        _areaConfirmPending = AreaCommand::none;
+        _areaConfirmedMask = 0;
         if (_markerCount == 0)
         {
             _markerA = _cursor;
@@ -2104,6 +2246,9 @@ namespace OpenRCT2::Ui::Accessibility
 
     static void ClearSceneryAtCursor()
     {
+        if (!ConfirmAreaCommand(AreaCommand::clearScenery))
+            return;
+
         int32_t ax, ay, bx, by;
         GetTerraformBounds(ax, ay, bx, by);
 
@@ -2174,6 +2319,9 @@ namespace OpenRCT2::Ui::Accessibility
         _lastTileDescription.clear();
         if (built > 0)
         {
+            // The same placement sound a single-tile build makes - one for the sweep, not one per
+            // tile, which across an area would be a burst of overlapping copies.
+            PlayAccessSound(AccessSound::place);
             std::string spoken = (gFootpathSelection.isQueueSelected ? "Marked area queued, " : "Marked area paved, ")
                 + std::to_string(built) + (built == 1 ? " tile" : " tiles");
             if (builtUnderwater > 0)
@@ -2344,6 +2492,9 @@ namespace OpenRCT2::Ui::Accessibility
 
     static void ChangeLandHeight(bool raise)
     {
+        if (!ConfirmAreaCommand(raise ? AreaCommand::raiseLand : AreaCommand::lowerLand))
+            return;
+
         int32_t ax, ay, bx, by;
         GetTerraformBounds(ax, ay, bx, by);
         const int32_t centreX = (ax + bx) / 2 + 16;
@@ -2417,6 +2568,9 @@ namespace OpenRCT2::Ui::Accessibility
 
     static void ChangeWaterHeight(bool raise)
     {
+        if (!ConfirmAreaCommand(raise ? AreaCommand::raiseWater : AreaCommand::lowerWater))
+            return;
+
         int32_t ax, ay, bx, by;
         GetTerraformBounds(ax, ay, bx, by);
 
@@ -2475,11 +2629,14 @@ namespace OpenRCT2::Ui::Accessibility
     // spent; otherwise we explain why nothing happened, based on a sample tile's ownership.
     static void ChangeLandOwnership(GameActions::LandBuyRightSetting setting)
     {
+        const bool rights = (setting == GameActions::LandBuyRightSetting::buyConstructionRights);
+        if (!ConfirmAreaCommand(rights ? AreaCommand::buyRights : AreaCommand::buyLand))
+            return;
+
         int32_t ax, ay, bx, by;
         GetTerraformBounds(ax, ay, bx, by);
         const TileCoordsXY sample = TerraformSampleTile();
 
-        const bool rights = (setting == GameActions::LandBuyRightSetting::buyConstructionRights);
         auto action = GameActions::LandBuyRightsAction(MapRange(ax, ay, bx, by), setting);
         action.SetCallback([rights, sample](const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
@@ -2533,6 +2690,8 @@ namespace OpenRCT2::Ui::Accessibility
         // With a marked rectangle active, strip paths from the whole area, like clearing scenery.
         if (HasMarkedArea())
         {
+            if (!ConfirmAreaCommand(AreaCommand::removePaths))
+                return;
             RemovePathArea();
             return;
         }
@@ -4451,6 +4610,8 @@ namespace OpenRCT2::Ui::Accessibility
             _menuMode = false;
             _statusMode = false;
             _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
+            _areaConfirmPending = AreaCommand::none;
+            _areaConfirmedMask = 0;
             std::fill(std::begin(_waypointSet), std::end(_waypointSet), false); // and any waypoints
             return false;
         }
@@ -4467,6 +4628,12 @@ namespace OpenRCT2::Ui::Accessibility
             }
             return false;
         }
+
+        // Only a repeat of the exact binding that armed it answers a marked-area confirmation; any
+        // other keystroke abandons it. Done here, before any handler can consume the key and return,
+        // so no route through this function can leave a prompt armed behind an unrelated key.
+        if (!AreaConfirmKeyMatches(key, e.modifiers))
+            _areaConfirmPending = AreaCommand::none;
 
         // While rebinding a keyboard shortcut, let every key fall through to the shortcut manager so
         // it captures the new binding (Escape-to-cancel is handled earlier in HandleMenuNavigationKey).
