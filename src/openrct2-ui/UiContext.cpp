@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <openrct2-ui/accessibility/AccessKitText.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/input/MouseInput.h>
@@ -813,8 +814,14 @@ private:
         if (height <= 0)
             height = 720;
 
-        // Create window in window first rather than fullscreen so we have the display the window is on first
-        uint32_t flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+        // Create window in window first rather than fullscreen so we have the display the window is on first.
+        //
+        // Created HIDDEN, and shown at the end of this function. AccessKit's Windows adapter works
+        // by subclassing the window procedure and the library aborts if asked to do that to a
+        // window that has already been shown, so the accessibility adapter has to be attached in
+        // the gap. Everything between here and the show - the drawing engine, DPI, fullscreen mode -
+        // was already configuring a window the player had not interacted with yet.
+        uint32_t flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN;
         if (Config::Get().general.drawingEngine == DrawingEngine::openGL)
         {
             flags |= SDL_WINDOW_OPENGL;
@@ -829,6 +836,9 @@ private:
                 flags, error);
             SDLException::Throw(errorMessage.c_str());
         }
+
+        // Must happen before the window is shown; see the flags above.
+        Accessibility::AccessKitInit(_window);
 
         ApplyScreenSaverLockSetting();
 
@@ -845,6 +855,9 @@ private:
 
         SetFullscreenMode(static_cast<FullscreenMode>(Config::Get().general.fullscreenMode));
         TriggerResize();
+
+        // Everything is configured; let the player see it.
+        SDL_ShowWindow(_window);
     }
 
     void OnResize(int32_t width, int32_t height)

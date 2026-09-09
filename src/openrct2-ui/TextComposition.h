@@ -43,5 +43,7 @@ namespace OpenRCT2::Ui
         void Clear();
         void Delete();
         void RecalculateLength();
+        // Republishes the field to the accessibility tree; call after any change to text or caret.
+        void PublishToAccessibility();
     };
 } // namespace OpenRCT2::Ui

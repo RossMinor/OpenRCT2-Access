@@ -11,6 +11,7 @@
 
 #include "UiContext.h"
 #include "UiStringIds.h"
+#include "accessibility/AccessKitText.h"
 #include "accessibility/ScreenReader.h"
 #include "interface/InGameConsole.h"
 #include "interface/Window.h"
@@ -58,6 +59,17 @@ static void SpeakTypedText(std::string_view text)
     Accessibility::ScreenReaderSpeak(spoken);
 }
 
+// Republishes the field to the accessibility tree after anything that changes its text or caret.
+// One call site's worth of bookkeeping buys a real text box: the reader can then review it by
+// character or word and keep it on a braille display, none of which is possible by announcing
+// keystrokes. See AccessKitText.h.
+void TextComposition::PublishToAccessibility()
+{
+    if (_session.Buffer == nullptr)
+        return;
+    Accessibility::AccessKitTextFieldUpdate(*_session.Buffer, _session.SelectionStart);
+}
+
 bool TextComposition::IsActive()
 {
     return SDL_IsTextInputActive() && _session.Buffer != nullptr;
@@ -72,6 +84,10 @@ TextInputSession* TextComposition::Start(u8string& buffer, size_t maxLength)
     _session.SelectionSize = 0;
     _session.ImeBuffer = _imeBuffer;
     RecalculateLength();
+    // The generic label is all this layer knows - it is the shared text field, with no idea which
+    // window opened it. The reader still gets a real text box carrying the right contents; naming
+    // what is being renamed would mean plumbing a label down from each caller.
+    Accessibility::AccessKitTextFieldOpen("Text field", buffer, _session.SelectionStart);
     return &_session;
 }
 
@@ -81,6 +97,7 @@ void TextComposition::Stop()
     _session.Buffer = nullptr;
     _session.ImeBuffer = nullptr;
     _imeActive = false;
+    Accessibility::AccessKitTextFieldClose();
 }
 
 /**
@@ -160,6 +177,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
 
                 Insert(e->text.text);
                 SpeakTypedText(e->text.text);
+                PublishToAccessibility();
 
                 console.RefreshCaret(_session.SelectionStart);
                 Windows::WindowUpdateTextbox();
@@ -204,6 +222,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                             = _session.Buffer->substr(_session.SelectionStart, _session.SelectionSize);
                         Delete();
                         SpeakTypedText(removed.empty() ? std::string("deleted") : (removed + ", deleted"));
+                        PublishToAccessibility();
 
                         console.RefreshCaret(_session.SelectionStart);
                         Windows::WindowUpdateTextbox();
@@ -211,10 +230,12 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                     break;
                 case SDLK_HOME:
                     CaretMoveToStart();
+                    PublishToAccessibility();
                     console.RefreshCaret(_session.SelectionStart);
                     break;
                 case SDLK_END:
                     CaretMoveToEnd();
+                    PublishToAccessibility();
                     console.RefreshCaret(_session.SelectionStart);
                     break;
                 case SDLK_DELETE:
@@ -227,6 +248,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                     _session.SelectionSize = _session.SelectionStart - startOffset;
                     _session.SelectionStart = startOffset;
                     Delete();
+                    PublishToAccessibility();
                     console.RefreshCaret(_session.SelectionStart);
                     Windows::WindowUpdateTextbox();
                     break;
@@ -239,6 +261,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                         CaretMoveToLeftToken();
                     else
                         CaretMoveLeft();
+                    PublishToAccessibility();
                     console.RefreshCaret(_session.SelectionStart);
                     break;
                 case SDLK_RIGHT:
@@ -246,6 +269,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                         CaretMoveToRightToken();
                     else
                         CaretMoveRight();
+                    PublishToAccessibility();
                     console.RefreshCaret(_session.SelectionStart);
                     break;
                 case SDLK_c:
@@ -261,6 +285,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                         utf8* text = SDL_GetClipboardText();
                         Insert(text);
                         SDL_free(text);
+                        PublishToAccessibility();
                         console.RefreshCaret(_session.SelectionStart);
                         Windows::WindowUpdateTextbox();
                     }
@@ -270,6 +295,7 @@ void TextComposition::HandleMessage(const SDL_Event* e)
                     {
                         GetContext()->GetUiContext().SetClipboardText(_session.Buffer->c_str());
                         Clear();
+                        PublishToAccessibility();
                         Windows::WindowUpdateTextbox();
                         ContextShowError(STR_COPY_INPUT_TO_CLIPBOARD, kStringIdNone, {});
                     }

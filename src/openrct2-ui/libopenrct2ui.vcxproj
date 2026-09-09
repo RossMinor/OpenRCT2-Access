@@ -135,6 +135,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="accessibility\AccessCrashHandler.cpp" />
+    <ClCompile Include="accessibility\AccessKitText.cpp" />
     <ClCompile Include="accessibility\AccessFollow.cpp" />
     <ClCompile Include="accessibility\AccessMultiplayer.cpp" />
     <ClCompile Include="accessibility\AccessSounds.cpp" />
