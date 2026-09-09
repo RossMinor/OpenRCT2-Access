@@ -49,8 +49,14 @@ namespace OpenRCT2::Ui::Accessibility
     // keep it. Useful for reporting to the player which reader the mod found.
     const char* ScreenReaderBackendName();
 
-    // Speaks UTF-8 text through the screen reader. When interrupt is true, any
-    // in-progress speech is cancelled first. No-op when no screen reader is available.
+    // Speaks UTF-8 text through the screen reader, and writes the same line to the player's braille
+    // display when the reader they are running has one. When interrupt is true, any in-progress
+    // speech is cancelled first. No-op when no screen reader is available.
+    //
+    // Braille is not a separate call site's job: the display has to be fed explicitly, because a
+    // screen reader can only braille text that was handed to it and never sees what the game draws
+    // for itself. Routing it through here means every line the mod already speaks reaches a braille
+    // reader too, and nothing above this layer has to know whether a display is attached.
     void ScreenReaderSpeak(std::string_view utf8Text, bool interrupt = true);
 
     // Speaks a menu/list item followed by its position, e.g. "Rides, 2 of 5". index is

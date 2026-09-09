@@ -29,6 +29,11 @@ start, and the mod's own updater copies files over an existing install where a s
 possible. These headers supply the types, enums and backend identifiers; `PRISM_STATIC` is
 defined before including them so the declarations carry no `dllimport`.
 
+The same reasoning applies once more inside the load: `prism_backend_get_features` and
+`prism_backend_braille`, which drive the braille display, are resolved separately from the exports
+the mod cannot work without, and are allowed to be missing. A `prism.dll` older than those exports
+still gives the player speech instead of being rejected outright.
+
 ## Updating Prism
 
 1. Download `prism-windows-x64.zip` from the
