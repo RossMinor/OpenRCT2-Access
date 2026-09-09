@@ -70,7 +70,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Shift + Left or Right: Snaps the camera 90 degrees in either direction.
 - E: Jumps focus to the entrance of the park.
 - Control + arrow keys: Jumps to the nearest object in that direction and reads the coordinates it lands on. What it looks for is set by the filter below.
-- Control + Shift + Up or Down: Chooses what Control + arrows jump to: rides and stalls, scenery, footpath objects (bins, benches, lamps), or hazards (litter, vomit, and vandalised objects). It starts on rides and stalls.
+- Control + Shift + Up or Down: Chooses what Control + arrows jump to: rides and stalls, scenery, footpath objects (bins, benches, lamps), hazards (litter, vomit, and vandalised objects), or your own zones. It starts on rides and stalls. On zones, Control + arrows step to the nearest *other* zone in that direction rather than to the next tile of the one you are already standing in.
 - Control + E: Jumps between the entrance and exit of the ride you are hovering over.
 - Shift + 1 ... 9, 0: Place a waypoint at the current location.
 - Control + 1 ... 9, 0: Jump to the waypoint of that number.
@@ -80,6 +80,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Tab: Opens the Tools Menu.
 - F1: Mod/game help. Reports actions or commands that can be used anywhere in the game.
 - Control + F1: Opens the mod settings.
+- Typing into any text box - naming a zone, renaming a ride or a member of staff, naming a save file - now speaks each character as you type it and says what backspace removed. Turn it off with the **Typing echo** setting in the mod settings (Control + F1) if you would rather type in silence.
 - T: Open the park stats window.
 - M: Report your cash amount.
 - []: Moves back or forward through game announcements.
@@ -109,10 +110,17 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.
 - O: Buy land ownership over the tile you're on.
 - Shift + O: Buy construction rights over the tile you're on.
-- K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights. Press K a third time will reset the markers.
+- K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights. Press K a third time will reset the markers. With an area marked, each of those commands asks before it acts: the first press describes the area - its top left and bottom right corners and its size in tiles - and waits, and a second press of the same key carries it out. Any other key cancels. Each command asks once per marked area, so holding Page Up to raise land several steps only prompts on the first press.
 - Shift + K: Snaps your focus between the two markers.
 - Control + Enter: If hovering over a ride or stall, it will open its construction/build menu.
 - Shift + B: Report the break status of the custom ride tile you are hovering over.
+
+### Zones
+
+Zones are your own names for parts of the map. Once an area is named, the cursor says "Entering Main Street" as you cross into it and "Leaving Main Street" as you cross out, so you can tell where you are in your park without checking coordinates. They are saved with your park and come back when you load it. A park you have not saved yet has nowhere to keep them, so the mod says so when you make one and writes them out the moment you save.
+
+- Z: With an area marked (see K above), names that area as a zone. It tells you how big the area is and opens a box to type a name into; press Enter to finish. Typing the name of a zone you already have extends that zone instead of making a second one, which is how you grow a zone: mark the new part and name it the same thing. If the area overlaps a *different* zone, the mod names that zone and asks before taking those tiles from it, and Enter confirms.
+- Z with no markers placed: Opens the zone list. Up and Down arrows move through your zones and read each one's name and size, Enter jumps the cursor to that zone, R renames it, Delete removes it (press Delete a second time to confirm), and Escape closes the list. It opens on the zone you are standing in, if you are in one.
 
 ### About elevation numbers
 
@@ -125,6 +133,7 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 - Arrow Keys: Moves the ride you are wanting to construct around the map.
 - R: Rotate the ride you are constructing 90 degrees right.
 - Space or Enter: Attempts to place the ride. If there is scenery in the location area where the ride will be placed, it will automatically remove the scenery. If there is scenery in the area, but it is still an invalid construction area, the scenery will stay and the game will report the error that is preventing you from constructing and tell you how and where it needs to be fixed.
+- Backspace: Picks a positioned ride back up so you can put it somewhere else, and returns the cursor to the tile you positioned it at. Checking a ride's footprint walks the cursor away from that spot, so without this you would have to find your chosen position again before you could nudge it.
 - Escape: Cancels construction or exits build mode.
 - Shift + W, A, S, or D: Focusses the scenery you are building on the tile's edge of that direction. For example, if you are placing a bench, you can press shift + W to put it on the north side of the tile you are currently on and then press space to place it.
 - Shift + Q, E, Z, or C: Focusses the scenery you are building on the tile's corner you are currently on. For example, if you were placing flowers, you can press shift + Q to point a flower at the top left corner of the tile you are on and then can press space to place the flower.

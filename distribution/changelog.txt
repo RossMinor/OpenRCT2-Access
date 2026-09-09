@@ -4,6 +4,15 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.1 (2026-09-09)
+------------------------------------------------------------------------
+- The mod now has braille support. I’m wanting to improve support for text fields, so plan for that to come soon. Big thank you to Florian Beijers (zersiax) for the contribution.
+- Custom zones: The mod now has the ability to allow users to mark an area with K and then press  Z to name the area within those markers. You can also open the zones menu by pressing Z when no markers are placed. In that menu you can press R on a zone to rename it. You can also easily expand zones by using the same marker system.
+- After placing a ride, pressing backspace to pick the ride back up will move the cursor back to where you were when you first placed the ride.
+- When modifying a large area with markers, the mod will now warn you with a  confirmation prompt before proceeding.
+- Fixed a bug where placing paths could be done with a window open.
+- Fixed some other menu inconsistencies.
+
 1.0.2 (2026-09-07)
 ------------------------------------------------------------------------
 Bug Fixes
