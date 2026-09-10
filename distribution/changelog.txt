@@ -4,6 +4,12 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.1.1 (2026-09-10)
+------------------------------------------------------------------------
+Added two maps that can be accessed when starting a new scenario. While I work on updating the documentation and ironing out some bugs, I thought it would be a good idea to include maps that are completely flat and completely blank. This will allow users to get familiar with the game at their own pace and on their own terms. The first map is called Empty Map and you start out with $15000 and you are required to unlock the rides as you play the game. The second map is called Empty Map Unlimited and this one gives you unlimited money when starting and all rides unlocked.
+
+Note: When loading the map, the game may give you an error about Rollercoaster Tycoon 1. Just ignore it and press escape and you’ll be good to go. The error may potentially go away if you have RCT 1 installed, but it will not impact your gameplay either way.
+
 1.1 (2026-09-09)
 ------------------------------------------------------------------------
 - The mod now has braille support. I’m wanting to improve support for text fields, so plan for that to come soon. Big thank you to Florian Beijers (zersiax) for the contribution.
