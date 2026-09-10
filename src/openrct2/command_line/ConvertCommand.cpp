@@ -29,12 +29,20 @@ namespace OpenRCT2
 {
     static int32_t _compressLevel = kParkFileSaveCompressionLevel;
     static bool _stripObjects = false;
+    // Renaming a scenario otherwise means loading it in the scenario editor and saving it again,
+    // which is not reachable without sight. Doing it here goes through the game's own importer and
+    // exporter, so the file is rewritten by the same code that writes any other park rather than
+    // patched by hand - which is not an option anyway, the format being compressed.
+    static u8string _scenarioName;
+    static u8string _parkName;
 
     // clang-format off
     static constexpr CommandLineOptionDefinition kConvertOptions[]
     {
         { CMDLINE_TYPE_INTEGER, &_compressLevel, 'l', "compress-level", "The compression level to use when writing the converted file" },
         { CMDLINE_TYPE_SWITCH, &_stripObjects, kNAC, "strip-objects", "Do not pack custom objects into the converted file" },
+        { CMDLINE_TYPE_STRING, &_scenarioName, kNAC, "scenario-name", "Set the scenario's name, as shown in the scenario list" },
+        { CMDLINE_TYPE_STRING, &_parkName, kNAC, "park-name", "Set the park's name, as shown in game once the scenario is started" },
         kOptionTableEnd
     };
 
@@ -137,6 +145,26 @@ namespace OpenRCT2
         {
             // We are converting a scenario, so reset the park
             ScenarioBegin(gameState);
+        }
+
+        // Report both names whether or not they are being changed: for a file you cannot open in
+        // the editor, this is the only way to find out what it currently calls itself.
+        Console::WriteFormat("Scenario name: '%s'", gameState.scenarioOptions.name.c_str());
+        Console::WriteLine();
+        Console::WriteFormat("Park name:     '%s'", gameState.park.name.c_str());
+        Console::WriteLine();
+
+        if (!_scenarioName.empty())
+        {
+            gameState.scenarioOptions.name = _scenarioName;
+            Console::WriteFormat("Scenario name set to '%s'", _scenarioName.c_str());
+            Console::WriteLine();
+        }
+        if (!_parkName.empty())
+        {
+            gameState.park.name = _parkName;
+            Console::WriteFormat("Park name set to '%s'", _parkName.c_str());
+            Console::WriteLine();
         }
 
         try
