@@ -18,6 +18,7 @@
 #include <openrct2/Context.h>
 #include <openrct2/Diagnostic.h>
 #include <openrct2/OpenRCT2.h>
+#include <openrct2-ui/accessibility/BundledScenarios.h>
 #include <openrct2/PlatformEnvironment.h>
 #include <openrct2/audio/AudioContext.h>
 #include <openrct2/command_line/ExitCode.h>
@@ -67,6 +68,12 @@ int main(int argc, const char** argv)
         {
             // Run OpenRCT2 with a UI context
             auto env = CreatePlatformEnvironment();
+
+            // Put the mod's flat starter maps in the player's scenario folder. Here because it has
+            // to happen before the context builds the scenario index, or they would not show up in
+            // the list until the next launch.
+            Accessibility::InstallBundledScenarios(*env);
+
             std::unique_ptr<IAudioContext> audioContext;
             try
             {
