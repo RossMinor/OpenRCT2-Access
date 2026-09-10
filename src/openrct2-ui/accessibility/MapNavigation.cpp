@@ -1858,8 +1858,22 @@ namespace OpenRCT2::Ui::Accessibility
         Direction actionDir = kInvalidDirection;
         std::string what;
 
-        auto* buildSurface = MapGetSurfaceElementAt(_cursor);
-        const bool elevated = buildSurface != nullptr && _scanHeight > buildSurface->baseHeight;
+        // Read the ground as VALUES, not as a pointer to keep.
+        //
+        // A TileElement* must never be held across a game action - not even across a Query. Placing
+        // anything runs MapCheckFreeElementsAndReorganise (Map.cpp), which on fragmentation or a
+        // capacity increase calls ReorganiseTileElements: that rebuilds the entire tile-element
+        // vector and moves it into place, so every pointer into the old one dangles. Whether it
+        // fires depends on the vector's spare capacity, which is why holding the pointer here
+        // worked on ordinary parks for months and then crashed reliably on a big flat empty map.
+        bool haveSurface = false;
+        int32_t groundHeight = 0;
+        if (const auto* surface = MapGetSurfaceElementAt(_cursor); surface != nullptr)
+        {
+            haveSurface = true;
+            groundHeight = surface->baseHeight;
+        }
+        const bool elevated = haveSurface && _scanHeight > groundHeight;
         if (_slopeMode != SlopeMode::flat)
         {
             // Sloped path. The ramp is anchored to the cursor's current focus elevation: to slope up,
@@ -1965,7 +1979,11 @@ namespace OpenRCT2::Ui::Accessibility
         // Matching the sighted game, a path on a water tile goes on the submerged land (the vanilla
         // path tool clicks straight through water to the bed and the engine allows it). A sighted
         // player watches it disappear under the surface, so say so.
-        if (buildSurface != nullptr && buildSurface->getWaterHeight() > baseZ)
+        //
+        // Re-read the surface rather than reusing the one from the top of the function: the height
+        // probes above may have reorganised the tile elements out from under it (see there).
+        if (const auto* waterSurface = MapGetSurfaceElementAt(_cursor);
+            waterSurface != nullptr && waterSurface->getWaterHeight() > baseZ)
             what += ", underwater";
 
         const CoordsXYZ loc{ world.x, world.y, baseZ };
@@ -1984,7 +2002,10 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 const int32_t stepBase = kPathHeightStep / kCoordsZStep; // base-height units per path step
                 _scanHeight += (_slopeMode == SlopeMode::up) ? stepBase : -stepBase;
-                _scanLocked = buildSurface == nullptr || _scanHeight > buildSurface->baseHeight;
+                // Re-read again, and here it is needed for correctness as well as safety: the path
+                // has just been built, so the ground this is compared against is freshly read.
+                const auto* builtSurface = MapGetSurfaceElementAt(_cursor);
+                _scanLocked = builtSurface == nullptr || _scanHeight > builtSurface->baseHeight;
                 what += ", elevation " + ElevationText(_scanHeight);
             }
 
