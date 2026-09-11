@@ -4,6 +4,10 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.1.2 (2026-09-11)
+------------------------------------------------------------------------
+This is a quick release to add another map, Flat Map With Electric Research. Basically I realized that the empty map park file did not have litter bins enabled by default, so users will have to unlock them while playing the game. The quickest way to do so is by going into Researcha nd Funding from the tool bar and disable all categories other than scenery. This should unlock litter bins quickly. If you do not want to do that, then I included the new map, which is just a flat versino of electric fields that include everything the base electric fields includes. This map is just a versino without all the scenery and elevation that make it cluttered. The empty map unlimited map still works as intended, since it has everything unlocked. Apologies for the confusion. I'm just doing this until I am able to make the scenario editor accessible, which may take a little bit. Thank you!
+
 1.1.1 (2026-09-10)
 ------------------------------------------------------------------------
 Added two maps that can be accessed when starting a new scenario. While I work on updating the documentation and ironing out some bugs, I thought it would be a good idea to include maps that are completely flat and completely blank. This will allow users to get familiar with the game at their own pace and on their own terms. The first map is called Empty Map and you start out with $15000 and you are required to unlock the rides as you play the game. The second map is called Empty Map Unlimited and this one gives you unlimited money when starting and all rides unlocked.
