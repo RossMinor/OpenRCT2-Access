@@ -88,7 +88,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Shift + C: Opens the Construct a New Ride window.
 - Shift + F: Open the Finances window.
 - Shift + R: Opens the Rides window.
-- Shift + P: Open the Park Information Window.
+- Shift + I: Open the Park Information Window.
 - Shift + G: Open the Guest List window.
 - Shift + S: Opens the Staff window.
 - Shift + D: Opens the Research and Design window.
@@ -99,7 +99,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Space: Places whatever you are placing. With nothing selected that means a footpath of the current type on the current tile; while placing a ride, stall or scenery it places that instead. Enter also still works for placing, so either key will do.
 - Delete: Removes an object on the current tile: paths, bins or benches, scenery, ride pieces, etc.
 - Control + P: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location. If there is a break, the mod will tell you were it is and why it's there.
-- F4: Opens the path menu. Allows you to choose path or queues type, color, type of railings, and more.
+- Shift + P or F4: Opens the path menu. Allows you to choose path or queues type, color, type of railings, and more.
+- Shift + X or F3: Opens the scenery menu, where you pick the scenery you want to place. Pressing it again closes the menu.
 - D: Deletes the path on the current tile and elivation. Unlike Delete, this works across a whole marked area.
 - L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path. The sloped path will build in the direction you are facing. So if you are facing north and have slope set to up, the path will gain elivation going north. The elevation cursor will also move up each tile to make things quick while placing slopes.
 - Home or End: Raise and lower the elivation you are working on. This is useful for building elivated paths.
