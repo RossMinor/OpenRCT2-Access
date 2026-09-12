@@ -4418,6 +4418,21 @@ namespace OpenRCT2::Ui::Accessibility
                     OpenGameWindow(WindowClass::rideList, "Rides");
                     return true;
                 case SDLK_p:
+                    OpenGameWindow(WindowClass::footpath, "Paths");
+                    return true;
+                case SDLK_x:
+                    // The scenery window closes itself on its next update unless its own tool is active
+                    // (see Scenery.cpp), so a bare ContextOpenWindow opens it and it vanishes again. Open
+                    // it the way the toolbar button does, which arms that tool. That call toggles, so only
+                    // announce when it actually opened - closing is announced by the menu-closed tick.
+                    Windows::ToggleSceneryWindow();
+                    {
+                        auto* sceneryMgr = GetWindowManager();
+                        if (sceneryMgr != nullptr && sceneryMgr->FindByClass(WindowClass::scenery) != nullptr)
+                            ScreenReaderSpeak("Scenery");
+                    }
+                    return true;
+                case SDLK_i:
                     OpenGameWindow(WindowClass::parkInformation, "Park information");
                     return true;
                 case SDLK_g:
