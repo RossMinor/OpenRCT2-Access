@@ -154,6 +154,15 @@ namespace OpenRCT2::Ui::Accessibility
     // Description of the tile the cursor was last over, so we only announce on change.
     static std::string _lastTileDescription;
 
+    // The features of the tile just left, so a move can announce only what is new. See
+    // TileReadout::parts.
+    static std::vector<std::string> _lastTileFeatureParts;
+
+    // The ride the cursor was last standing on. A ride's footprint is a bounding box, and a coaster
+    // leaves gaps of open ground inside it; crossing one of those is still "on the ride", so the
+    // ride is carried across the gap and is not announced again on the far side.
+    static RideId _lastRideOnCursor = RideId::GetNull();
+
     // Cache of the last computed ride footprint, to avoid rescanning the map repeatedly.
     static RideId _cachedBoundsRide = RideId::GetNull();
     static TileCoordsXY _cachedBoundsMin{};
@@ -460,6 +469,7 @@ namespace OpenRCT2::Ui::Accessibility
         const OpenRCT2::TrackMetadata::TrackElementDescriptor& ted, const TrackElement* element = nullptr);
     static bool IsRideConstructionWindowOpen();
     static void GetBrushBounds(int32_t& ax, int32_t& ay, int32_t& bx, int32_t& by);
+    static RideId RideIdAtCursor();
 
     // Ride name plus its footprint size in tiles, e.g. "Wooden Roller Coaster, 9 by 5". Used when
     // the map cursor passes over a finished ride outside build mode, so it reads as one ride rather
@@ -487,6 +497,18 @@ namespace OpenRCT2::Ui::Accessibility
     {
         std::string text;
         bool bareGround = false;
+        // The height read-out, kept OUT of `text` on purpose. `text` is the tile's identity - what is
+        // standing here - and is what the "on change" mode compares against the previous tile. A
+        // height is not part of that identity: folding it in meant that stepping along a ride whose
+        // track rises re-read the ride's name and size on every tile, because the string differed
+        // each time. Held apart, the features fall silent while the cursor stays on one ride and only
+        // the changing height is spoken.
+        std::string elevation;
+        // The individual features, before they were joined into `text`. Kept so a move can say only
+        // what is NEW compared with the tile just left: stepping from a queue onto a queue that a
+        // coaster crosses should say the coaster, not recite the queue the player is plainly still
+        // standing on. Includes the bare-ground label, so arriving at open ground still says so.
+        std::vector<std::string> parts;
     };
 
     // Ground litter (vomit, food wrappers, cans, cups, rubbish) sits on a tile as sprites, not as
@@ -819,7 +841,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (parts.empty())
         {
             _lastSpokenTileElevations.clear();
-            return { owned ? "Empty" : "Outside park", true };
+            std::string bare = owned ? "Empty" : "Outside park";
+            return { bare, true, {}, { bare } };
         }
 
         // The composition helper owns the ", " joins and drops any empty fragment, so the seam is
@@ -833,6 +856,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         // Then the height of everything standing above the ground here, per the elevation-reading
         // setting: every tile, only when the set of heights changes, or never.
+        std::string elevationText;
         const auto elevations = TileReadoutElevations(tile);
         const uint8_t mode = Config::Get().sound.accessibilityElevationReadMode;
         if (!elevations.empty() && mode != 2)
@@ -842,19 +866,23 @@ namespace OpenRCT2::Ui::Accessibility
                 // "elevation 5, 2.5" - the word once, then the bare numbers separated by commas.
                 // Deliberately no "and" before the last: these are read constantly while moving, so
                 // every extra word is one the player hears hundreds of times an hour.
-                std::string text = "elevation ";
+                elevationText = "elevation ";
                 for (size_t i = 0; i < elevations.size(); i++)
                 {
                     if (i > 0)
-                        text += ", ";
-                    text += ElevationText(elevations[i]);
+                        elevationText += ", ";
+                    elevationText += ElevationText(elevations[i]);
                 }
-                sb.add(text);
             }
         }
         _lastSpokenTileElevations = elevations;
 
-        return { sb.str(), false };
+        // "outside park" is part of what stands here as far as the player is concerned, so it rides
+        // along in the parts list and is diffed with everything else.
+        if (!owned)
+            parts.push_back("outside park");
+
+        return { sb.str(), false, std::move(elevationText), std::move(parts) };
     }
 
     // Reads out the whole square brush area (3x3, 5x5, 7x7) centred on the cursor, listing every
@@ -1316,19 +1344,71 @@ namespace OpenRCT2::Ui::Accessibility
             // "Every tile" reads on every move; "on change" (the original behaviour) reads only when
             // the description differs from the previous tile. A ride-preview footprint tile always
             // reads so the player can trace the whole shape.
-            if (onPreviewTile || tileMode == TileSpeechMode::everyTile || description != _lastTileDescription)
+            // A ride's footprint is a bounding box and a coaster leaves open ground inside it. A gap
+            // like that is still part of the ride's area, so carry the ride across it: the gap still
+            // reads as empty, but stepping back onto the track on the far side does not announce the
+            // ride a second time. Only bare gaps carry it - a path inside the box is its own thing.
+            const bool singleTile = (_brushSize <= 1);
+            if (singleTile)
             {
-                // Skip the bare-ground label right after a boundary cue (which already said it). This
-                // rides on the describer's flag, not on matching its wording.
-                if (!(announcedCrossing && readout.bareGround))
-                    ScreenReaderSpeak(description, !announcedCrossing);
+                if (const RideId here = RideIdAtCursor(); !here.IsNull())
+                {
+                    _lastRideOnCursor = here;
+                }
+                else if (readout.bareGround && !_lastRideOnCursor.IsNull())
+                {
+                    TileCoordsXY mn, mx;
+                    if (ComputeRideBounds(_lastRideOnCursor, mn, mx) && _cursor.x >= mn.x && _cursor.x <= mx.x
+                        && _cursor.y >= mn.y && _cursor.y <= mx.y)
+                        readout.parts.push_back(RideNameWithDimensions(_lastRideOnCursor));
+                    else
+                        _lastRideOnCursor = RideId::GetNull(); // left the ride's area for good
+                }
             }
+
+            // Say only what is new since the tile just left. Anything carried over - the queue still
+            // underfoot, the ride still overhead - has already been named and is plainly still there,
+            // so repeating it buries the one thing that actually changed. "Every tile" mode and a
+            // ride-placement preview still read everything, as they are for surveying rather than
+            // travelling.
+            std::string spoken;
+            if (onPreviewTile || tileMode == TileSpeechMode::everyTile || !singleTile
+                || _lastTileDescription.empty())
+            {
+                // An empty baseline means it was deliberately reset - a jump, a warp, ownership
+                // changing under the cursor - so nothing carries over and the whole tile reads.
+                spoken = description;
+            }
+            else
+            {
+                SpeechBuilder fresh;
+                for (const auto& part : readout.parts)
+                {
+                    if (std::find(_lastTileFeatureParts.begin(), _lastTileFeatureParts.end(), part)
+                        == _lastTileFeatureParts.end())
+                        fresh.add(part);
+                }
+                spoken = fresh.str();
+            }
+
+            // The height rides along with whatever is said, but is never itself a reason to repeat
+            // the features - see TileReadout::elevation.
+            if (!readout.elevation.empty())
+                spoken = spoken.empty() ? readout.elevation : (spoken + ", " + readout.elevation);
+
+            // Skip the bare-ground label right after a boundary cue (which already said it). This
+            // rides on the describer's flag, not on matching its wording.
+            if (!spoken.empty() && !(announcedCrossing && readout.bareGround))
+                ScreenReaderSpeak(spoken, !announcedCrossing);
+
+            _lastTileFeatureParts = std::move(readout.parts);
             _lastTileDescription = std::move(description);
         }
         else
         {
             // Off: stay silent, but keep the baseline current so switching back to "on change" does
             // not immediately re-announce a stale tile.
+            _lastTileFeatureParts = std::move(readout.parts);
             _lastTileDescription = std::move(description);
         }
 
