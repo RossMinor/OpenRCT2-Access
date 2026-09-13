@@ -21,6 +21,7 @@
 #include <openrct2-ui/accessibility/ElevationTone.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/RideDesignPaths.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/Zones.h>
 #include <openrct2-ui/accessibility/graph/GraphNavigator.h>
@@ -251,6 +252,10 @@ void InputManager::process()
 
     // Named zones: load and save them as the park changes, and announce boundary crossings.
     Accessibility::TickZoneStorage();
+
+    // Take away the footpaths and queues a pre-built ride design brought with it, once that
+    // ride is demolished.
+    Accessibility::TickRideDesignPaths();
     Accessibility::TickZoneTransitions();
 
     // Speak new multiplayer chat/system messages and connection-status changes.

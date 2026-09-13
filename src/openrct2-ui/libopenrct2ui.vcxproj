@@ -54,6 +54,7 @@
     <ClInclude Include="accessibility\ListNavigation.h" />
     <ClInclude Include="accessibility\MapNavigation.h" />
     <ClInclude Include="accessibility\MenuNavigation.h" />
+    <ClInclude Include="accessibility\RideDesignPaths.h" />
     <ClInclude Include="accessibility\RidePlacement.h" />
     <ClInclude Include="accessibility\RideVisualDescriptions.h" />
     <ClInclude Include="accessibility\SceneryPlacement.h" />
@@ -146,6 +147,7 @@
     <ClCompile Include="accessibility\GuestRescue.cpp" />
     <ClCompile Include="accessibility\MapNavigation.cpp" />
     <ClCompile Include="accessibility\MenuNavigation.cpp" />
+    <ClCompile Include="accessibility\RideDesignPaths.cpp" />
     <ClCompile Include="accessibility\RidePlacement.cpp" />
     <ClCompile Include="accessibility\RideVisualDescriptions.cpp" />
     <ClCompile Include="accessibility\SceneryPlacement.cpp" />

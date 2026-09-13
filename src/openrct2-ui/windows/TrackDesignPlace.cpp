@@ -9,6 +9,7 @@
 
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/RideDesignPaths.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/ViewportInteraction.h>
@@ -1028,6 +1029,37 @@ namespace OpenRCT2::Ui::Windows
                 return;
             }
 
+            // Note which footpaths already stand around here, so that once the design is built we can
+            // tell which paths and queues it brought with it and remember them against the new ride.
+            // Demolishing the ride later takes exactly those away again; the engine itself keeps no
+            // link between a design's paths and its ride. The area is the track footprint plus a
+            // generous margin, since a design's paths reach beyond its track - anything already
+            // standing there is excluded by the comparison, so an oversized area costs nothing but a
+            // slightly longer scan.
+            {
+                constexpr int32_t kPathMargin = 16; // tiles
+                TileCoordsXY captureMin{ std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max() };
+                TileCoordsXY captureMax{ std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min() };
+                for (const auto& tile : footprintTiles(mapCoords))
+                {
+                    const TileCoordsXY tc{ tile };
+                    captureMin.x = std::min(captureMin.x, tc.x);
+                    captureMin.y = std::min(captureMin.y, tc.y);
+                    captureMax.x = std::max(captureMax.x, tc.x);
+                    captureMax.y = std::max(captureMax.y, tc.y);
+                }
+                if (captureMin.x > captureMax.x)
+                {
+                    // A design with no track tiles to measure: fall back to the origin.
+                    captureMin = captureMax = TileCoordsXY{ mapCoords };
+                }
+                captureMin.x -= kPathMargin;
+                captureMin.y -= kPathMargin;
+                captureMax.x += kPathMargin;
+                captureMax.y += kPathMargin;
+                Accessibility::BeginDesignPathCapture(captureMin, captureMax);
+            }
+
             _placingTrackDesign = true;
             auto tdAction = GameActions::TrackDesignAction(
                 { trackLoc, _currentTrackPieceDirection }, *_trackDesign, !gTrackDesignSceneryToggle,
@@ -1039,6 +1071,7 @@ namespace OpenRCT2::Ui::Windows
                     auto* windowMgr = GetWindowManager();
                     windowMgr->ShowError(result->getErrorTitle(), result->getErrorMessage());
                     announcePlacementFailure(result->error, CoordsXY{ trackLoc }, trackLoc.z);
+                    Accessibility::AbortDesignPathCapture(); // nothing was built, so there is nothing to record
                     _placingTrackDesign = false;
                     return;
                 }
@@ -1055,6 +1088,9 @@ namespace OpenRCT2::Ui::Windows
                     // under it. This runs only after a successful build, so it can never destroy
                     // scenery for a placement that failed.
                     clearFootprintScenery(CoordsXY{ trackLoc });
+                    // Whatever footpaths and queues appeared since the snapshot came from this
+                    // design, so tie them to the new ride. Demolishing it will take them away.
+                    Accessibility::EndDesignPathCapture(rideId);
                     _accPreviewing = false; // the ride is down; leave preview mode
                     Accessibility::ScreenReaderSpeak("Ride placed");
 
