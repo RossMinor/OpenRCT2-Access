@@ -10,6 +10,7 @@
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/RideDesignPaths.h>
+#include <openrct2-ui/accessibility/RidePlacement.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/interface/ViewportInteraction.h>
@@ -772,26 +773,85 @@ namespace OpenRCT2::Ui::Windows
         void announcePlacementFailure(GameActions::Status status, const CoordsXY& origin, int32_t baseZ)
         {
             std::string spoken = PlacementAdvice(status);
-
-            // Name the exact tiles at fault - hard obstructions (paths, rides) and un-level ground.
-            // Both lists are empty when nothing on a tile is wrong, so this is safe for any failure.
-            auto blockers = findFootprintObstructions(origin);
-            for (auto& tile : findUnlevelTiles(origin, baseZ))
-                blockers.push_back(std::move(tile));
-
-            if (!blockers.empty())
-            {
-                spoken += " Problem tiles: ";
-                const size_t limit = std::min<size_t>(blockers.size(), 4);
-                for (size_t i = 0; i < limit; i++)
-                    spoken += (i == 0 ? "" : "; ") + blockers[i];
-                if (blockers.size() > limit)
-                    spoken += "; and " + std::to_string(blockers.size() - limit) + " more";
-                spoken += ".";
-            }
+            const std::string tiles = problemTilesText(origin, baseZ);
+            if (!tiles.empty())
+                spoken += " " + tiles;
 
             // interrupt = false so this follows the error message rather than cutting it off.
             Accessibility::ScreenReaderSpeak(spoken, false);
+        }
+
+        // "Problem tiles: X n, Y n: why; ..." naming the exact tiles at fault - hard obstructions
+        // (paths, rides) and un-level ground - or empty when no tile is individually at fault.
+        std::string problemTilesText(const CoordsXY& origin, int32_t baseZ)
+        {
+            auto blockers = findFootprintObstructions(origin);
+            for (auto& tile : findUnlevelTiles(origin, baseZ))
+                blockers.push_back(std::move(tile));
+            if (blockers.empty())
+                return {};
+
+            std::string text = "Problem tiles: ";
+            const size_t limit = std::min<size_t>(blockers.size(), 4);
+            for (size_t i = 0; i < limit; i++)
+                text += (i == 0 ? "" : "; ") + blockers[i];
+            if (blockers.size() > limit)
+                text += "; and " + std::to_string(blockers.size() - limit) + " more";
+            return text + ".";
+        }
+
+        // The height the game's own tool starts a design at on this tile: the ground (or water
+        // surface) plus the design-specific offset getBaseZ adds so the ride sits where the ghost
+        // shows it. Nullopt off the map. Shared by the preview and the build so they cannot differ.
+        std::optional<int32_t> naturalDesignBaseZ(const CoordsXY& mapCoords)
+        {
+            auto* surface = MapGetSurfaceElementAt(mapCoords);
+            if (surface == nullptr)
+                return std::nullopt;
+            int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
+            if (surface->getWaterHeight() > 0)
+                baseZ = std::max<int32_t>(baseZ, surface->getWaterHeight());
+            return baseZ
+                + TrackDesignGetZPlacement(
+                       *_trackDesign, RideGetTemporaryForPreview(), { mapCoords, baseZ, _currentTrackPieceDirection });
+        }
+
+        // The error the game gives for building the design at exactly this height.
+        std::string designErrorAt(const CoordsXY& mapCoords, int32_t z)
+        {
+            auto action = GameActions::TrackDesignAction(
+                CoordsXYZD{ mapCoords.x, mapCoords.y, z, _currentTrackPieceDirection }, *_trackDesign,
+                !gTrackDesignSceneryToggle, Config::Get().general.defaultInspectionInterval);
+            return GameActions::Query(&action, getGameState()).getErrorMessage();
+        }
+
+        // The first-Enter preview line. Predicts buildAtTile's outcome with the same steps as
+        // dry-run queries - the same start height, the same upward search, the same rules for when
+        // scenery gets cleared - so what the player hears is what Enter then does.
+        std::string describeDesignPreview(const CoordsXY& mapCoords, int32_t w, int32_t h)
+        {
+            using Accessibility::PreviewHeight;
+            const auto baseZ = naturalDesignBaseZ(mapCoords);
+            if (!baseZ.has_value())
+                return "Ride positioned, but there is no ground here to build on. Backspace to move it, or Escape to cancel.";
+
+            CoordsXYZ probe = { mapCoords, *baseZ };
+            const auto asIs = findValidTrackDesignPlaceHeight(probe, {});
+            if (asIs.error == GameActions::Status::ok)
+            {
+                if (probe.z == *baseZ)
+                    return Accessibility::DescribeRidePreview(_accPreviewName, w, h, PreviewHeight::fits, *baseZ, *baseZ, {});
+                return Accessibility::DescribeRidePreview(
+                    _accPreviewName, w, h, PreviewHeight::raised, *baseZ, probe.z, designErrorAt(mapCoords, *baseZ));
+            }
+
+            const std::string reason = designErrorAt(mapCoords, *baseZ);
+            if (footprintHasHardBlocker(mapCoords) || footprintTerrainBlocks(mapCoords, *baseZ)
+                || footprintOnUnbuildableLand(mapCoords))
+                return Accessibility::DescribeRidePreview(
+                    _accPreviewName, w, h, PreviewHeight::blocked, *baseZ, *baseZ, reason, problemTilesText(mapCoords, *baseZ));
+
+            return Accessibility::DescribeRidePreview(_accPreviewName, w, h, PreviewHeight::clearsScenery, *baseZ, *baseZ, reason);
         }
 
         // Plays the error sound and reports why a placement failed. Queries at the ground height the
@@ -913,9 +973,7 @@ namespace OpenRCT2::Ui::Windows
                 w = maxX - minX + 1;
                 h = maxY - minY + 1;
             }
-            Accessibility::ScreenReaderSpeak(
-                "Ride positioned, " + std::to_string(w) + " by " + std::to_string(h)
-                + " tiles. Arrow around to check the area, Enter to build, Backspace to reposition.");
+            Accessibility::ScreenReaderSpeak(describeDesignPreview(mapCoords, w, h));
         }
 
         // Backspace during a preview: pick the design back up so it can be repositioned. Returns the
@@ -978,8 +1036,12 @@ namespace OpenRCT2::Ui::Windows
             if (_trackDesign == nullptr)
                 return;
 
-            auto* surface = MapGetSurfaceElementAt(mapCoords);
-            if (surface == nullptr)
+            // Strictly follow the game's own placement height: getBaseZ (which positions the
+            // construction ghost, and the mouse tool's real placement) adds a design-specific offset
+            // so the design sits where the ghost shows it, instead of dropping its origin to the
+            // ground. Without it the built ride lands at a different height than the ghost.
+            const auto naturalZ = naturalDesignBaseZ(mapCoords);
+            if (!naturalZ.has_value())
             {
                 Accessibility::ScreenReaderSpeak("Cannot build here");
                 return;
@@ -987,15 +1049,7 @@ namespace OpenRCT2::Ui::Windows
 
             clearProvisional();
 
-            int32_t baseZ = floor2(surface->getBaseZ(), kCoordsZStep);
-            if (surface->getWaterHeight() > 0)
-                baseZ = std::max<int32_t>(baseZ, surface->getWaterHeight());
-            // Strictly follow the game's own placement height: getBaseZ (which positions the
-            // construction ghost, and the mouse tool's real placement) adds this design-specific
-            // offset so the design sits where the ghost shows it, instead of dropping its origin to
-            // the ground. Without it the built ride lands at a different height than the ghost.
-            baseZ += TrackDesignGetZPlacement(
-                *_trackDesign, RideGetTemporaryForPreview(), { mapCoords, baseZ, _currentTrackPieceDirection });
+            const int32_t baseZ = *naturalZ;
 
             // Decide whether clearing scenery would actually let the ride build BEFORE destroying any.
             // The engine auto-clears small scenery as it builds track, so a probe that still fails is

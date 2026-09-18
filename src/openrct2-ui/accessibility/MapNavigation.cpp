@@ -5445,15 +5445,20 @@ namespace OpenRCT2::Ui::Accessibility
     {
         for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
         {
-            switch (el->getType())
+            // Ghosts (placement previews) never block: the game's own clearance check skips them, and
+            // counting one would make a ride's own preview ghost look like an obstruction.
+            if (!el->isGhost())
             {
-                case TileElementType::path:
-                case TileElementType::track:
-                case TileElementType::entrance:
-                case TileElementType::banner:
-                    return true;
-                default: // Surface, small/large scenery and walls/fences are clearable, so they don't count.
-                    break;
+                switch (el->getType())
+                {
+                    case TileElementType::path:
+                    case TileElementType::track:
+                    case TileElementType::entrance:
+                    case TileElementType::banner:
+                        return true;
+                    default: // Surface, small/large scenery and walls/fences are clearable, so they don't count.
+                        break;
+                }
             }
             if (el->isLastForTile())
                 break;

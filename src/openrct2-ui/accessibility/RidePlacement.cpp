@@ -12,6 +12,7 @@
 #include "MapNavigation.h"
 #include "AccessSounds.h"
 #include "Direction.h"
+#include "Elevation.h"
 #include "ScreenReader.h"
 
 #include <openrct2/Context.h>
@@ -206,6 +207,59 @@ namespace OpenRCT2::Ui::Accessibility
                 break; // raising height won't help
         }
         return std::nullopt;
+    }
+
+    std::string DescribeRidePreview(
+        const std::string& rideName, int32_t width, int32_t length, PreviewHeight kind, int32_t askedZ, int32_t builtZ,
+        const std::string& reason, const std::string& detail)
+    {
+        // The game's error text, without a trailing full stop so it can sit inside a sentence.
+        std::string why = reason.empty() ? std::string("Something is in the way") : reason;
+        while (!why.empty() && (why.back() == '.' || why.back() == ' '))
+            why.pop_back();
+
+        const std::string size = "Ride positioned, " + std::to_string(width) + " by " + std::to_string(length) + " tiles";
+        const std::string asked = ElevationText(ElevationHalfSteps(askedZ));
+        const std::string controls = " Arrow around to check the area, Enter to build, Backspace to reposition.";
+
+        switch (kind)
+        {
+            case PreviewHeight::fits:
+                return size + ", at elevation " + asked + "." + controls;
+            case PreviewHeight::raised:
+                // Ross's wording, verbatim: "x in the way at elevation y. Moving x to elevation y to make room."
+                return size + ". " + why + " at elevation " + asked + ". Moving " + rideName + " to elevation "
+                    + ElevationText(ElevationHalfSteps(builtZ)) + " to make room." + controls;
+            case PreviewHeight::clearsScenery:
+                return size + ", at elevation " + asked + ". " + why
+                    + ", but that is scenery, which Enter clears from the ride's tiles before building." + controls;
+            case PreviewHeight::blocked:
+            default:
+                return size + ". " + why + ". Raising the ride does not help, so Enter will not build it here."
+                    + (detail.empty() ? std::string() : " " + detail)
+                    + " Backspace to move it, or Escape to cancel.";
+        }
+    }
+
+    // True if any footprint tile holds scenery (small, large, or a wall/fence) - the things the build
+    // clears before retrying. Only consulted when there is no hard blocker.
+    static bool FootprintHasScenery(const CoordsXY& origin)
+    {
+        for (const auto& o : FootprintOffsets())
+        {
+            const CoordsXY tile{ origin.x + o.x, origin.y + o.y };
+            for (auto* el = MapGetFirstElementAt(tile); el != nullptr; el++)
+            {
+                const auto type = el->getType();
+                if (!el->isGhost()
+                    && (type == TileElementType::smallScenery || type == TileElementType::largeScenery
+                        || type == TileElementType::wall))
+                    return true;
+                if (el->isLastForTile())
+                    break;
+            }
+        }
+        return false;
     }
 
     static std::string GetRideName(const RideSelection& item)
@@ -472,6 +526,36 @@ namespace OpenRCT2::Ui::Accessibility
         AnnounceFootprintError(origin, startZ);
     }
 
+    // The first-Enter preview line. Predicts what PlaceFootprint will do at this spot by running the
+    // same steps as dry-run queries - same start height, same scenery rule, same upward search - so
+    // what the player hears is what Enter then does. Nothing is built or cleared here.
+    static std::string DescribeFootprintPreview(const CoordsXY& cursor)
+    {
+        const CoordsXY origin = AnchorOriginFromCursor(cursor);
+        int32_t w = 1, h = 1;
+        FootprintSize(w, h);
+
+        auto ground = FootprintGroundZ(origin);
+        if (!ground.has_value())
+            return "Ride positioned, but there is no ground here to build on. Backspace to move it, or Escape to cancel.";
+
+        const int32_t startZ = std::max(*ground, GetCursorWorkingZ());
+        const CoordsXYZD loc{ origin.x, origin.y, startZ, _direction };
+        auto query = GameActions::TrackPlaceAction(_rideId, _trackType, _rideType, loc, 0, 0, 0, {}, false);
+        const auto res = GameActions::Query(&query, getGameState());
+        if (res.error == GameActions::Status::ok)
+            return DescribeRidePreview(_rideName, w, h, PreviewHeight::fits, startZ, startZ, {});
+
+        const std::string reason = res.getErrorMessage();
+        if (!FootprintHasHardBlocker(origin) && FootprintHasScenery(origin))
+            return DescribeRidePreview(_rideName, w, h, PreviewHeight::clearsScenery, startZ, startZ, reason);
+
+        if (auto raisedZ = FindFootprintBaseZ(origin, startZ); raisedZ.has_value())
+            return DescribeRidePreview(_rideName, w, h, PreviewHeight::raised, startZ, *raisedZ, reason);
+
+        return DescribeRidePreview(_rideName, w, h, PreviewHeight::blocked, startZ, startZ, reason);
+    }
+
     // If `tile` is a valid square to place an entrance/exit on, returns the direction from that
     // tile toward the ride's station (which is what the place action expects). Mirrors the search
     // in RideGetEntranceOrExitPositionFromScreenPosition, but tile-based for the keyboard cursor.
@@ -584,14 +668,11 @@ namespace OpenRCT2::Ui::Accessibility
                 if (!_previewing)
                 {
                     // First Enter: freeze the footprint here so the player can inspect it before
-                    // committing. Nothing is built yet.
+                    // committing. Nothing is built yet, but the line says where it will be built and,
+                    // if not where it was aimed, why.
                     _previewCursor = mapCoords;
                     _previewing = true;
-                    int32_t w = 1, h = 1;
-                    FootprintSize(w, h);
-                    ScreenReaderSpeak(
-                        "Ride positioned, " + std::to_string(w) + " by " + std::to_string(h)
-                        + " tiles. Arrow around to check the area, Enter to build, Backspace to reposition.");
+                    ScreenReaderSpeak(DescribeFootprintPreview(mapCoords));
                 }
                 else
                 {

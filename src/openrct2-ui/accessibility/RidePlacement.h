@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <openrct2/ride/RideTypes.h>
 #include <openrct2/world/Location.hpp>
 #include <optional>
@@ -16,6 +17,24 @@
 
 namespace OpenRCT2::Ui::Accessibility
 {
+    // What the build will do at a frozen placement preview, predicted with the same height search the
+    // build itself runs. Shared by stalls/flat rides and pre-built rides so both explain it alike.
+    enum class PreviewHeight
+    {
+        fits,          // builds exactly at the height asked for
+        raised,        // something is in the way, so - like the game's own tool - it goes up on supports
+        clearsScenery, // only scenery is in the way; the build clears it first
+        blocked,       // no height works; Enter will refuse
+    };
+
+    // The spoken line for a frozen placement preview: size, where the ride will sit and, when the
+    // game will not put it where it was aimed, what is in the way and what Enter will do about it.
+    // askedZ/builtZ are world Z; builtZ is only read for `raised`. `reason` is the game's own error
+    // text at askedZ (e.g. "Footpath in the way"); `detail` is appended to a blocked explanation.
+    std::string DescribeRidePreview(
+        const std::string& rideName, int32_t width, int32_t length, PreviewHeight kind, int32_t askedZ, int32_t builtZ,
+        const std::string& reason, const std::string& detail = {});
+
     // True if this ride can be placed by the keyboard placement flow below. Currently shops and
     // stalls (facilities), which are a single footprint with no entrance or exit to position.
     bool AccessibleRidePlacementSupported(const RideSelection& item);
