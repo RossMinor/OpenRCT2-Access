@@ -11,6 +11,7 @@
 
 #include <openrct2/world/Location.hpp>
 #include <optional>
+#include <string>
 
 namespace OpenRCT2::Ui::Accessibility
 {
@@ -19,14 +20,21 @@ namespace OpenRCT2::Ui::Accessibility
     enum class EntranceReachability
     {
         noEntrance,   // the park has no entrance to reach
-        notOnPath,    // the tile has no footpath on it, so there is nothing to walk on
-        reachable,    // a footpath on the tile connects to an entrance
-        unreachable,  // a footpath on the tile exists but is cut off from every entrance
+        notOnPath,          // no footpath, ride entrance, ride exit or stall on the tile
+        accessNotConnected, // a ride entrance, exit or stall with no footpath connected to it
+        reachable,          // the tile's path (or the path connected to its entrance/exit/stall) reaches an entrance
+        unreachable,        // that path exists but is cut off from every park entrance
     };
 
-    // Runs the footpath flood-fill from the park entrances and reports whether the given tile's path
-    // connects to one. Bound to a keyboard command so a player can check any spot on the map.
+    // Runs the footpath flood-fill from the park entrances and reports whether the given tile connects
+    // to one. A footpath on the tile is checked directly; without one, a ride entrance, exit or stall
+    // is checked through the paths connected to it, using the game's own connection rule. Bound to a
+    // keyboard command so a player can check any spot on the map.
     EntranceReachability CheckEntranceReachability(const TileCoordsXY& tile);
+
+    // Names the ride entrance, exit or stall on this tile for speech: "ride entrance", "ride exit", or
+    // the stall's own name (e.g. "Hot Dog Stall 1"). Empty if there is none.
+    std::string DescribeAccessPoint(const TileCoordsXY& tile);
 
     // When a tile's path is cut off from every entrance (EntranceReachability::unreachable), this
     // returns the tile on that path's own network that comes closest to the entrance-connected network

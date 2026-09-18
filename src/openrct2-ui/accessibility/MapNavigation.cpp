@@ -5241,6 +5241,14 @@ namespace OpenRCT2::Ui::Accessibility
                 case EntranceReachability::notOnPath:
                     ScreenReaderSpeak("Not on a footpath");
                     break;
+                case EntranceReachability::accessNotConnected:
+                {
+                    // "ride entrance" / "ride exit" read as "This ride entrance ..."; a stall by its name.
+                    const std::string what = DescribeAccessPoint(_cursor);
+                    const bool isRideDoor = what == "ride entrance" || what == "ride exit";
+                    ScreenReaderSpeak((isRideDoor ? "This " + what : what) + " has no path connected to it");
+                    break;
+                }
                 case EntranceReachability::reachable:
                     ScreenReaderSpeak("Connected to the park entrance");
                     break;

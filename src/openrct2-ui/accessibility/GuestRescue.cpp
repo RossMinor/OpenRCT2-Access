@@ -26,7 +26,15 @@
 #include <openrct2/world/Location.hpp>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/TileElementsView.h>
+#include <openrct2/world/tile_element/EntranceElement.h>
 #include <openrct2/world/tile_element/PathElement.h>
+#include <openrct2/world/tile_element/TileElement.h>
+#include <openrct2/world/tile_element/TrackElement.h>
+#include <openrct2/core/Numerics.hpp>
+#include <openrct2/ride/Ride.h>
+#include <openrct2/ride/RideData.h>
+#include <openrct2/ride/TrackData.h>
+#include <openrct2/ride/ted/TrackElementDescriptor.h>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -163,6 +171,121 @@ namespace OpenRCT2::Ui::Accessibility
         return seeds;
     }
 
+    // The world sides of an element through which guests walk between it and a footpath: a ride
+    // entrance or exit's single door, or the open sides of a shop or stall. Zero for anything else.
+    // Mirrors the game's own "not connected to a path" checks in Ride.cpp: RideEntranceExitIsReachable
+    // (the door faces opposite the entrance's direction) and RideShopConnected (the piece's entrance
+    // connection sides, rotated into the world by the piece's direction).
+    static uint8_t AccessSides(const TileElement& el)
+    {
+        if (el.isGhost())
+            return 0;
+
+        if (const auto* entrance = el.asEntrance(); entrance != nullptr)
+        {
+            const auto type = entrance->getEntranceType();
+            if (type == EntranceType::rideEntrance || type == EntranceType::rideExit)
+                return static_cast<uint8_t>(1 << DirectionReverse(el.getDirection()));
+            return 0;
+        }
+
+        if (const auto* track = el.asTrack(); track != nullptr)
+        {
+            const auto* ride = GetRide(track->getRideIndex());
+            if (ride == nullptr || !ride->getRideTypeDescriptor().flags.has(RtdFlag::isShopOrFacility))
+                return 0;
+            const auto& ted = TrackMetadata::GetTrackElementDescriptor(track->getTrackType());
+            const auto& sequence = ted.sequenceData.sequences[track->getSequenceIndex()];
+            if (!sequence.flags.has(TrackMetadata::SequenceFlag::connectsToPath))
+                return 0;
+            return Numerics::rol4(sequence.getEntranceConnectionSides(), el.getDirection());
+        }
+
+        return 0;
+    }
+
+    // True if the tile holds a ride entrance, ride exit, or shop/stall - something guests reach from a
+    // neighbouring footpath rather than by standing on a path on this tile.
+    static bool TileHasAccessPoint(const TileCoordsXY& tile)
+    {
+        for (auto* el = MapGetFirstElementAt(tile); el != nullptr; el++)
+        {
+            if (AccessSides(*el) != 0)
+                return true;
+            if (el->isLastForTile())
+                break;
+        }
+        return false;
+    }
+
+    // The footpath tiles connected to the entrances, exits and stalls on this tile - the paths a guest
+    // steps onto when leaving them - as seeds for the same flood-fill a path tile uses. A path counts
+    // under the game's own rule (MapCoordIsConnected): at the element's height with an edge back
+    // toward it, or a slope whose top meets it.
+    static std::vector<TileCoordsXYZ> AccessPathSeedsAt(const TileCoordsXY& tile)
+    {
+        std::vector<TileCoordsXYZ> seeds;
+        for (auto* el = MapGetFirstElementAt(tile); el != nullptr; el++)
+        {
+            const uint8_t sides = AccessSides(*el);
+            const int32_t z = el->baseHeight;
+            for (Direction side : kAllDirections)
+            {
+                if (!(sides & (1 << side)))
+                    continue;
+                const Direction face = DirectionReverse(side); // from the path, looking back at the element
+                const TileCoordsXY pathTile{ tile.x + TileDirectionDelta[side].x, tile.y + TileDirectionDelta[side].y };
+                for (auto* path : TileElementsView<PathElement>(pathTile.ToCoordsXY()))
+                {
+                    if (path->isGhost())
+                        continue;
+                    bool connected;
+                    if (path->isSloped())
+                        connected = (path->getSlopeDirection() == face && z == path->baseHeight + 2)
+                            || (DirectionReverse(path->getSlopeDirection()) == face && z == path->baseHeight);
+                    else
+                        connected = z == path->baseHeight && (path->getEdges() & (1 << face));
+                    if (connected)
+                        seeds.push_back(TileCoordsXYZ{ pathTile.x, pathTile.y, path->baseHeight });
+                }
+            }
+            if (el->isLastForTile())
+                break;
+        }
+        return seeds;
+    }
+
+    std::string DescribeAccessPoint(const TileCoordsXY& tile)
+    {
+        for (auto* el = MapGetFirstElementAt(tile); el != nullptr; el++)
+        {
+            if (AccessSides(*el) != 0)
+            {
+                if (const auto* entrance = el->asEntrance(); entrance != nullptr)
+                    return entrance->getEntranceType() == EntranceType::rideExit ? "ride exit" : "ride entrance";
+                if (const auto* track = el->asTrack(); track != nullptr)
+                {
+                    if (const auto* ride = GetRide(track->getRideIndex()); ride != nullptr)
+                        return ride->getName();
+                    return "stall";
+                }
+            }
+            if (el->isLastForTile())
+                break;
+        }
+        return {};
+    }
+
+    // What a player standing here checks from: the paths on the tile itself, or - when there are none -
+    // the paths connected to an entrance, exit or stall on it.
+    static std::vector<TileCoordsXYZ> CheckSeedsAt(const TileCoordsXY& tile)
+    {
+        auto seeds = PathSeedTilesAt(tile);
+        if (seeds.empty())
+            seeds = AccessPathSeedsAt(tile);
+        return seeds;
+    }
+
     // Finds a walkable tile at the park entrance nearest to the guest to teleport them to, returned as
     // world coordinates for a PeepPickupAction. Tries the entrance tile then its neighbours (where the
     // connecting path usually is). Returns nullopt if none is placeable. This only queries placement
@@ -268,26 +391,21 @@ namespace OpenRCT2::Ui::Accessibility
         if (getGameState().park.entrances.empty())
             return EntranceReachability::noEntrance;
 
-        // Is there a (non-ghost) footpath on this tile at all?
-        bool hasPath = false;
-        for (auto* path : TileElementsView<PathElement>(tile.ToCoordsXY()))
+        // A footpath on this tile is checked directly, as before. Without one, a ride entrance, exit or
+        // stall is checked through the paths connected to it.
+        const auto seeds = CheckSeedsAt(tile);
+        if (seeds.empty())
         {
-            if (!path->isGhost())
-            {
-                hasPath = true;
-                break;
-            }
-        }
-        if (!hasPath)
+            if (PathSeedTilesAt(tile).empty() && TileHasAccessPoint(tile))
+                return EntranceReachability::accessNotConnected;
             return EntranceReachability::notOnPath;
+        }
 
-        // Flood-fill from the entrances, then see if any path on this tile is in the reachable set.
+        // Flood-fill from the entrances, then see if any seed is in the reachable set.
         const auto reachable = ComputeEntranceReachablePaths();
-        for (auto* path : TileElementsView<PathElement>(tile.ToCoordsXY()))
+        for (const auto& seed : seeds)
         {
-            if (path->isGhost())
-                continue;
-            if (reachable.count(PackTileKey(tile.x, tile.y, path->baseHeight)) != 0)
+            if (reachable.count(PackTileKey(seed.x, seed.y, seed.z)) != 0)
                 return EntranceReachability::reachable;
         }
         return EntranceReachability::unreachable;
@@ -295,8 +413,9 @@ namespace OpenRCT2::Ui::Accessibility
 
     std::optional<TileCoordsXY> FindPathDisconnectPoint(const TileCoordsXY& tile)
     {
-        // The path network the cursor tile belongs to.
-        const auto cursorSeeds = PathSeedTilesAt(tile);
+        // The path network the cursor tile belongs to (or, on an entrance, exit or stall, the network
+        // of the paths connected to it).
+        const auto cursorSeeds = CheckSeedsAt(tile);
         if (cursorSeeds.empty())
             return std::nullopt;
         const auto cursorNet = FloodPathNetwork(cursorSeeds);
