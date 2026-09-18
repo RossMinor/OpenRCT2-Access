@@ -1185,19 +1185,12 @@ namespace OpenRCT2
          */
         void Launch()
         {
-            if (!_versionCheckFuture.valid())
-            {
-                _versionCheckFuture = std::async(std::launch::async, [this] {
-                    _newVersionInfo = GetLatestVersion();
-                    // Only flag an update when the fork's latest release tag differs from the
-                    // version this build was cut as. An empty tag means the check failed (no
-                    // network), so don't nag in that case.
-                    if (!_newVersionInfo.tag.empty() && _newVersionInfo.tag != kAccessVersionTag)
-                    {
-                        _hasNewVersionInfo = true;
-                    }
-                });
-            }
+            // Upstream's launch-time version check is deliberately not run. It drove the "Update
+            // available" button on the title menu, the About window and the File menu, all opening a
+            // window with no keyboard access whose download button sent players to vanilla OpenRCT2 -
+            // losing the mod. With the check off, HasNewVersionInfo() stays false and all three stay
+            // hidden. The mod's own updater (openrct2-ui/accessibility/AccessUpdate) announces new
+            // releases at launch and installs them with F5.
 
             if (!gOpenRCT2Headless)
             {

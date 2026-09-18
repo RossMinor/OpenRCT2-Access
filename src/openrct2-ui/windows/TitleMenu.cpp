@@ -114,6 +114,9 @@ namespace OpenRCT2::Ui::Windows
 #ifdef DISABLE_NETWORK
             widgets[WIDX_MULTIPLAYER].setHidden();
 #endif
+            // Start hidden rather than waiting for onPrepareDraw, so the keyboard list never offers it
+            // before the first draw. It stays hidden: the version check behind it is off (Context.cpp).
+            widgets[WIDX_NEW_VERSION].setHidden();
 
             int32_t x = 0;
             for (Widget* widget = widgets.data(); widget != &widgets[WIDX_NEW_VERSION]; widget++)
@@ -311,9 +314,11 @@ namespace OpenRCT2::Ui::Windows
         std::vector<WidgetIndex> getMenuItems() const
         {
             std::vector<WidgetIndex> items;
+            // Visibility, not type: a hidden widget keeps its type, so filtering on type always listed
+            // the hidden "Update available" button (and a hidden Multiplayer button in no-network builds).
             for (WidgetIndex i = WIDX_START_NEW_GAME; i <= WIDX_NEW_VERSION; i++)
             {
-                if (widgets[i].type != WidgetType::empty)
+                if (widgets[i].isVisible())
                     items.push_back(i);
             }
             return items;
