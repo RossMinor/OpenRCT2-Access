@@ -569,6 +569,13 @@ namespace OpenRCT2::Ui::Accessibility
     // water appended last since it sits beneath any structures. Land ownership is deliberately not
     // included - the caller decides how to phrase "Empty"/"Outside park" for a single tile versus a
     // whole brush area. A tile with nothing on it returns an empty vector.
+    // ", connected to path" / ", not connected to path" for a ride entrance, exit or stall, using the
+    // game's own connection rule (shared with Ctrl+P). Ross's wording.
+    static std::string PathConnectionText(const TileCoordsXY& tile, const TileElement& el)
+    {
+        return IsAccessPointConnected(tile, el) ? ", connected to path" : ", not connected to path";
+    }
+
     static std::vector<std::string> GatherTileFeatures(const TileCoordsXY& tile)
     {
         // Built in a single canonical bottom-to-top order (lowest feature first): water, then the
@@ -610,7 +617,8 @@ namespace OpenRCT2::Ui::Accessibility
                         ride != nullptr && ride->getRideTypeDescriptor().flags.has(RtdFlag::isShopOrFacility))
                     {
                         if (auto facing = GetShopFacing(*track); facing.has_value())
-                            desc += std::string(", facing ") + GetWorldDirectionName(*facing);
+                            desc += std::string(", facing ") + GetScreenDirectionName(*facing);
+                        desc += PathConnectionText(tile, *el);
                     }
                     parts.push_back(std::move(desc));
                 }
@@ -625,10 +633,14 @@ namespace OpenRCT2::Ui::Accessibility
                     case EntranceType::rideEntrance:
                         // The doorway (where guests enter) faces opposite the element's stored
                         // direction, which points toward the station platform.
-                        parts.push_back(std::string("Ride entrance, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
+                        parts.push_back(
+                            std::string("Ride entrance, facing ") + GetScreenDirectionName(GetEntranceFacing(*entrance))
+                            + PathConnectionText(tile, *el));
                         break;
                     case EntranceType::rideExit:
-                        parts.push_back(std::string("Ride exit, facing ") + GetWorldDirectionName(GetEntranceFacing(*entrance)));
+                        parts.push_back(
+                            std::string("Ride exit, facing ") + GetScreenDirectionName(GetEntranceFacing(*entrance))
+                            + PathConnectionText(tile, *el));
                         break;
                 }
             }
@@ -5483,29 +5495,11 @@ namespace OpenRCT2::Ui::Accessibility
         // A ride entrance/exit is stored facing toward its station platform; its doorway - where
         // guests walk in and a queue/path connects - faces the opposite way.
         const Direction doorway = GetEntranceFacing(loc.direction);
-        std::string text = std::string(", facing ") + GetWorldDirectionName(doorway);
+        std::string text = std::string(", facing ") + GetScreenDirectionName(doorway);
 
-        // Is there a footpath on the doorway tile at roughly the entrance's height?
-        const auto entranceWorld = TileCoordsXYZ(loc.x, loc.y, loc.z).ToCoordsXYZ();
-        const CoordsXY doorTile = CoordsXY{ entranceWorld.x, entranceWorld.y } + CoordsDirectionDelta[doorway];
-        const TileCoordsXY doorTileCoords{ doorTile };
-
-        bool connected = false;
-        for (TileElement* el = MapGetFirstElementAt(doorTileCoords); el != nullptr;)
-        {
-            if (auto* path = el->asPath(); path != nullptr)
-            {
-                const int32_t dz = path->getBaseZ() - entranceWorld.z;
-                if ((dz < 0 ? -dz : dz) <= kPathHeightStep)
-                {
-                    connected = true;
-                    break;
-                }
-            }
-            if (el->isLastForTile())
-                break;
-            el++;
-        }
+        // Connected under the game's own rule - the one the tile reader and Ctrl+P use - rather than
+        // "any path near the doorway": the path must be at the door's height and reach back to it.
+        const bool connected = IsDoorwayConnected(TileCoordsXYZ(loc.x, loc.y, loc.z), doorway);
         text += connected ? ", path connected" : ", no path connected yet";
         return text;
     }

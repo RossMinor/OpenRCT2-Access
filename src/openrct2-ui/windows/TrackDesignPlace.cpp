@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/Direction.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/RideDesignPaths.h>
 #include <openrct2-ui/accessibility/RidePlacement.h>
@@ -490,9 +491,10 @@ namespace OpenRCT2::Ui::Windows
             _placementLoc.SetNull();
             DrawMiniPreview(*_trackDesign);
 
-            static constexpr const char* kDirections[] = { "North", "East", "South", "West" };
+            // Named as the arrow key pointing the way the design's start piece heads, at the current
+            // camera rotation - like every object facing in the mod (see Direction.h).
             Accessibility::ScreenReaderSpeak(
-                std::string("Rotated, facing ") + kDirections[(_currentTrackPieceDirection + GetCurrentRotation()) & 3]);
+                std::string("Rotated, facing ") + Accessibility::GetScreenDirectionName(_currentTrackPieceDirection));
         }
 
         // Plain-language "why and how to fix" for a placement failure, from the engine's status

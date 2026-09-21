@@ -106,9 +106,9 @@ namespace OpenRCT2::Ui::Accessibility
         }
         _rotation = (_rotation + 1) & 3;
         // _rotation is placed directly as the object's world direction (see the placement actions
-        // below), so name it in the absolute world frame - NOT camera-relative, unlike _edge/_quadrant
-        // whose input is screen-relative - so the spoken facing matches what actually gets built.
-        ScreenReaderSpeak(std::string("Rotated, facing ") + GetWorldDirectionName(_rotation));
+        // below). It is spoken as the arrow key that points that way at the current camera rotation,
+        // like every object facing in the mod (see Direction.h).
+        ScreenReaderSpeak(std::string("Rotated, facing ") + GetScreenDirectionName(_rotation));
     }
 
     // Convert a screen-relative edge (0 = top, 1 = right, 2 = bottom, 3 = left, as the player sees
@@ -147,27 +147,20 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_active)
             return;
         _edge = ScreenEdgeToWorldDirection(screenEdge);
-        // Announce the absolute world edge (e.g. "West edge"), matching how the mod names the
-        // direction the Left arrow moves, rather than the screen-relative "Left edge".
-        ScreenReaderSpeak(std::string(GetWorldDirectionName(_edge)) + " edge");
+        // Announce the edge as it sits on screen right now ("Left edge"), like every object facing
+        // in the mod (see Direction.h).
+        ScreenReaderSpeak(GetScreenEdgeName(_edge));
     }
 
-    // Absolute compass name of a small-scenery quadrant (the engine's SceneryQuadrantOffsets, in the
-    // mod's world frame where -x = East, +x = West, -y = North, +y = South): 0 = NE, 1 = SE, 2 = SW,
-    // 3 = NW.
-    static const char* WorldQuadrantName(uint8_t quadrant)
+    // Name of a small-scenery quadrant (the engine's SceneryQuadrantOffsets) as the corner it sits in
+    // on screen right now, e.g. "Top left corner" - like every object facing in the mod (Direction.h).
+    static std::string ScreenQuadrantName(uint8_t quadrant)
     {
-        switch (quadrant & 3)
-        {
-            case 0:
-                return "Northeast corner";
-            case 1:
-                return "Southeast corner";
-            case 2:
-                return "Southwest corner";
-            default:
-                return "Northwest corner";
-        }
+        // Each quadrant lies between one world direction along x (East 0 / West 2) and one along y
+        // (North 3 / South 1): 0 = NE, 1 = SE, 2 = SW, 3 = NW.
+        const Direction alongX = (quadrant & 3) <= 1 ? 0 : 2;
+        const Direction alongY = ((quadrant & 3) == 0 || (quadrant & 3) == 3) ? 3 : 1;
+        return GetScreenCornerName(alongX, alongY);
     }
 
     // Convert a screen-relative corner (0 = top-left, 1 = top-right, 2 = bottom-right, 3 = bottom-left,
@@ -202,7 +195,7 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         _quadrant = ScreenCornerToWorldQuadrant(screenCorner);
         // Announce the absolute world corner (e.g. "Northwest corner"), matching the mod's compass.
-        ScreenReaderSpeak(WorldQuadrantName(_quadrant));
+        ScreenReaderSpeak(ScreenQuadrantName(_quadrant));
     }
 
     static int32_t SurfaceBaseZ(const CoordsXY& tile)

@@ -222,37 +222,58 @@ namespace OpenRCT2::Ui::Accessibility
     // steps onto when leaving them - as seeds for the same flood-fill a path tile uses. A path counts
     // under the game's own rule (MapCoordIsConnected): at the element's height with an edge back
     // toward it, or a slope whose top meets it.
+    // Appends the footpath tiles connected through the given world sides of something at height z on
+    // this tile, under the game's own rule (MapCoordIsConnected): a flat path at the same height with
+    // an edge back toward it, or a slope whose top meets it.
+    static void AppendConnectedPaths(
+        const TileCoordsXY& tile, int32_t z, uint8_t sides, std::vector<TileCoordsXYZ>& out)
+    {
+        for (Direction side : kAllDirections)
+        {
+            if (!(sides & (1 << side)))
+                continue;
+            const Direction face = DirectionReverse(side); // from the path, looking back at the element
+            const TileCoordsXY pathTile{ tile.x + TileDirectionDelta[side].x, tile.y + TileDirectionDelta[side].y };
+            for (auto* path : TileElementsView<PathElement>(pathTile.ToCoordsXY()))
+            {
+                if (path->isGhost())
+                    continue;
+                bool connected;
+                if (path->isSloped())
+                    connected = (path->getSlopeDirection() == face && z == path->baseHeight + 2)
+                        || (DirectionReverse(path->getSlopeDirection()) == face && z == path->baseHeight);
+                else
+                    connected = z == path->baseHeight && (path->getEdges() & (1 << face));
+                if (connected)
+                    out.push_back(TileCoordsXYZ{ pathTile.x, pathTile.y, path->baseHeight });
+            }
+        }
+    }
+
     static std::vector<TileCoordsXYZ> AccessPathSeedsAt(const TileCoordsXY& tile)
     {
         std::vector<TileCoordsXYZ> seeds;
         for (auto* el = MapGetFirstElementAt(tile); el != nullptr; el++)
         {
-            const uint8_t sides = AccessSides(*el);
-            const int32_t z = el->baseHeight;
-            for (Direction side : kAllDirections)
-            {
-                if (!(sides & (1 << side)))
-                    continue;
-                const Direction face = DirectionReverse(side); // from the path, looking back at the element
-                const TileCoordsXY pathTile{ tile.x + TileDirectionDelta[side].x, tile.y + TileDirectionDelta[side].y };
-                for (auto* path : TileElementsView<PathElement>(pathTile.ToCoordsXY()))
-                {
-                    if (path->isGhost())
-                        continue;
-                    bool connected;
-                    if (path->isSloped())
-                        connected = (path->getSlopeDirection() == face && z == path->baseHeight + 2)
-                            || (DirectionReverse(path->getSlopeDirection()) == face && z == path->baseHeight);
-                    else
-                        connected = z == path->baseHeight && (path->getEdges() & (1 << face));
-                    if (connected)
-                        seeds.push_back(TileCoordsXYZ{ pathTile.x, pathTile.y, path->baseHeight });
-                }
-            }
+            AppendConnectedPaths(tile, el->baseHeight, AccessSides(*el), seeds);
             if (el->isLastForTile())
                 break;
         }
         return seeds;
+    }
+
+    bool IsAccessPointConnected(const TileCoordsXY& tile, const TileElement& el)
+    {
+        std::vector<TileCoordsXYZ> paths;
+        AppendConnectedPaths(tile, el.baseHeight, AccessSides(el), paths);
+        return !paths.empty();
+    }
+
+    bool IsDoorwayConnected(const TileCoordsXYZ& loc, Direction doorway)
+    {
+        std::vector<TileCoordsXYZ> paths;
+        AppendConnectedPaths(TileCoordsXY{ loc.x, loc.y }, loc.z, static_cast<uint8_t>(1 << doorway), paths);
+        return !paths.empty();
     }
 
     std::string DescribeAccessPoint(const TileCoordsXY& tile)

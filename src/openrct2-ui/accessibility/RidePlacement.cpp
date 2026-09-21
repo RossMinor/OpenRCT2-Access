@@ -334,7 +334,7 @@ namespace OpenRCT2::Ui::Accessibility
             FootprintSize(w, h);
             std::string size = std::to_string(w) + " by " + std::to_string(h);
             ScreenReaderSpeak(
-                "Placing " + rideName + ", " + size + ", entrance facing " + GetWorldDirectionName(_direction)
+                "Placing " + rideName + ", " + size + ", entrance facing " + GetScreenDirectionName(_direction)
                 + ". The cursor holds the bottom left corner. Move to position it, R to rotate, Enter to place a "
                   "preview, then Enter again to build. Escape to cancel.");
         });
@@ -364,7 +364,7 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         }
         _direction = (_direction + 1) & 3;
-        ScreenReaderSpeak(std::string("Rotated, entrance facing ") + GetWorldDirectionName(_direction));
+        ScreenReaderSpeak(std::string("Rotated, entrance facing ") + GetScreenDirectionName(_direction));
     }
 
     static void Finish()

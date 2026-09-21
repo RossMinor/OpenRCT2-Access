@@ -13,6 +13,11 @@
 #include <optional>
 #include <string>
 
+namespace OpenRCT2
+{
+    struct TileElement;
+} // namespace OpenRCT2
+
 namespace OpenRCT2::Ui::Accessibility
 {
     // Result of checking whether a map tile has a walking route back to a park entrance, using the
@@ -31,6 +36,16 @@ namespace OpenRCT2::Ui::Accessibility
     // is checked through the paths connected to it, using the game's own connection rule. Bound to a
     // keyboard command so a player can check any spot on the map.
     EntranceReachability CheckEntranceReachability(const TileCoordsXY& tile);
+
+    // True if a footpath connects to this ride entrance, ride exit or stall (an element on `tile`),
+    // under the game's own rule - the same one Ctrl+P and the game's "not connected" warnings use: a
+    // path at its door or serving side, at a matching height, reaching back toward it. False for any
+    // other element.
+    bool IsAccessPointConnected(const TileCoordsXY& tile, const OpenRCT2::TileElement& el);
+
+    // The same rule for a doorway given by position and the direction it faces - for announcing an
+    // entrance or exit just placed, from the location the ride's station records for it.
+    bool IsDoorwayConnected(const TileCoordsXYZ& loc, Direction doorway);
 
     // Names the ride entrance, exit or stall on this tile for speech: "ride entrance", "ride exit", or
     // the stall's own name (e.g. "Hot Dog Stall 1"). Empty if there is none.

@@ -10,6 +10,7 @@
 #include "Direction.h"
 
 #include <openrct2/core/Numerics.hpp>
+#include <openrct2/interface/Viewport.h>
 #include <openrct2/ride/TrackData.h>
 #include <openrct2/ride/ted/TrackElementDescriptor.h>
 #include <openrct2/world/tile_element/EntranceElement.h>
@@ -44,5 +45,37 @@ namespace OpenRCT2::Ui::Accessibility
                 return count;
         }
         return std::nullopt;
+    }
+
+    int32_t ScreenSideOf(Direction worldDir)
+    {
+        // The world direction at the top of the screen: North (3) at rotation 0, then East, South,
+        // West as the camera turns - exactly what CameraFacingDirection and the F key report.
+        const int32_t upDir = (3 + GetCurrentRotation()) & 3;
+        // World directions run clockwise (East, South, West, North), so one step on is one screen side
+        // clockwise: up, right, down, left.
+        return (worldDir - upDir) & 3;
+    }
+
+    const char* GetScreenDirectionName(Direction worldDir)
+    {
+        static constexpr const char* kNames[] = { "up", "right", "down", "left" };
+        return kNames[ScreenSideOf(worldDir)];
+    }
+
+    const char* GetScreenEdgeName(Direction worldDir)
+    {
+        static constexpr const char* kNames[] = { "Top edge", "Right edge", "Bottom edge", "Left edge" };
+        return kNames[ScreenSideOf(worldDir)];
+    }
+
+    std::string GetScreenCornerName(Direction worldDirA, Direction worldDirB)
+    {
+        const int32_t a = ScreenSideOf(worldDirA);
+        const int32_t b = ScreenSideOf(worldDirB);
+        // One of the two lands on top/bottom, the other on left/right, whatever the rotation.
+        const int32_t vertical = (a == 0 || a == 2) ? a : b;
+        const int32_t horizontal = (a == 0 || a == 2) ? b : a;
+        return std::string(vertical == 0 ? "Top " : "Bottom ") + (horizontal == 1 ? "right corner" : "left corner");
     }
 } // namespace OpenRCT2::Ui::Accessibility

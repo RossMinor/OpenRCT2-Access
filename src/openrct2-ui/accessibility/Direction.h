@@ -11,7 +11,9 @@
 
 #include <openrct2/world/Location.hpp>
 
+#include <cstdint>
 #include <optional>
+#include <string>
 
 namespace OpenRCT2
 {
@@ -50,4 +52,23 @@ namespace OpenRCT2::Ui::Accessibility
     // world space. The connection side IS the front (guests approach from there), so it is reported
     // directly with no reversal. Returns nullopt if the piece exposes no connection side.
     std::optional<Direction> GetShopFacing(const TrackElement& track);
+
+    // === Camera-relative names for the way OBJECTS face ===
+    // An object's facing is spoken as the arrow key that points the same way at the current camera
+    // rotation, so it always agrees with how the cursor moves. Compass words (GetWorldDirectionName)
+    // stay fixed to the map and are kept for the camera itself (F), for coordinates, and for
+    // directions of travel.
+
+    // Which screen side a world direction points to right now: 0 = up/top, 1 = right, 2 = down/bottom,
+    // 3 = left. Uses the same camera-rotation step as the arrow keys (MoveScreen / CameraFacingDirection).
+    int32_t ScreenSideOf(Direction worldDir);
+
+    // "up", "right", "down" or "left" - for "facing ..." announcements.
+    const char* GetScreenDirectionName(Direction worldDir);
+
+    // "Top edge", "Right edge", "Bottom edge" or "Left edge" - for the edge of a tile.
+    const char* GetScreenEdgeName(Direction worldDir);
+
+    // "Top left corner" etc. for the corner between two world directions (one along x, one along y).
+    std::string GetScreenCornerName(Direction worldDirA, Direction worldDirB);
 } // namespace OpenRCT2::Ui::Accessibility
