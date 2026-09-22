@@ -4,6 +4,32 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.1.3 (2026-09-21)
+------------------------------------------------------------------------
+- Directions now follow your camera. A ride entrance, exit, stall or piece of scenery reads
+  as facing up, right, down or left, matching the arrow key that walks that way. Rotating
+  the view changes the word. Coordinates, the F key and directions of travel still use
+  north, east, south and west, which never move.
+- Ride entrances, exits and stalls now say whether they are connected to a path, so you can
+  tell at once whether guests can reach them.
+- Control + P now works on a ride entrance, exit or stall as well as a path. It checks from
+  the path that serves it, and tells you if nothing is connected to it.
+- When something is in the way, placing a ride now explains what will happen before you
+  build. Pressing enter the first time says, for example, "Footpath in the way at elevation
+  0. Moving Hot Dog Stall to elevation 1 to make room." You can press backspace to move it
+  somewhere clear instead.
+- Shift + P opens the path menu and shift + X opens the scenery menu from the map cursor.
+  Park information has moved to shift + I.
+- The tile reading now tells you only what is new as you move. Walking along a queue under
+  a coaster no longer repeats the queue you are plainly still on, and a ride's name and size
+  are not repeated tile after tile as its track rises.
+- Demolishing a pre-built ride now removes the paths and queues that came with its design,
+  instead of leaving them stranded. This only applies to rides built from now on, and only
+  to paths the design itself laid down.
+- Removed the update button from the main menu. It opened a window that could not be read
+  and sent you to the wrong download. The mod still tells you when an update is out and
+  installs it with F5.
+
 1.1.2 (2026-09-11)
 ------------------------------------------------------------------------
 This is a quick release to add another map, Flat Map With Electric Research. Basically I realized that the empty map park file did not have litter bins enabled by default, so users will have to unlock them while playing the game. The quickest way to do so is by going into Research and Funding from the tool bar and disable all categories other than scenery. This should unlock litter bins quickly. If you do not want to do that, then I included the new map, which is just a flat version of electric fields that include everything the base electric fields includes. This map is just a version without all the scenery and elevation that make it cluttered. The empty map unlimited map still works as intended, since it has everything unlocked. Apologies for the confusion. I'm just doing this until I am able to make the scenario editor accessible, which may take a little bit. Thank you!
