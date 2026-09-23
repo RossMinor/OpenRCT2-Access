@@ -206,6 +206,30 @@ namespace OpenRCT2::Ui::Windows
     static bool _trackPlaceCtrlState;
     static int32_t _trackPlaceCtrlZ;
     static bool _trackPlaceShiftState;
+
+    // Accessibility: true while the keyboard build is driving the construction tool itself. The tool
+    // reads the live Ctrl and Shift keys as its own height modifiers (lock the height to whatever is
+    // under the pointer / drag the piece up and down), and the keyboard build is bound to Ctrl+Enter -
+    // so every keyboard build looked like a Ctrl-held mouse build, skipping the normal search up from
+    // the ground and taking a height (and tile) off a flat plane instead. On sloped ground that lands
+    // below the cursor. While this is set, both modifiers are ignored and any state left behind by an
+    // earlier mouse build is cleared, so the piece is built from the cursor's own tile and ground.
+    static bool _axDrivingPlacementTool = false;
+
+    // Sets the flag above for as long as it is in scope.
+    struct AxToolDriver
+    {
+        AxToolDriver()
+        {
+            _axDrivingPlacementTool = true;
+            _trackPlaceCtrlState = false;
+            _trackPlaceShiftState = false;
+        }
+        ~AxToolDriver()
+        {
+            _axDrivingPlacementTool = false;
+        }
+    };
     static ScreenCoordsXY _trackPlaceShiftStart;
     static int32_t _trackPlaceShiftZ;
     static int32_t _trackPlaceZ;
@@ -1984,6 +2008,7 @@ namespace OpenRCT2::Ui::Windows
                     Accessibility::ScreenReaderSpeak("Move the map cursor to where you want to start building first");
                     return;
                 }
+                const AxToolDriver driving;               // the build key is Ctrl+Enter; see the flag
                 onToolUpdate(WIDX_CONSTRUCT, *screenPos); // position the ghost at the cursor
                 onToolDown(WIDX_CONSTRUCT, *screenPos);   // place it there
             }
@@ -2046,6 +2071,7 @@ namespace OpenRCT2::Ui::Windows
                 onMouseUp(WIDX_ENTRANCE);
             gRideEntranceExitPlaceType = placingExit ? EntranceType::rideExit : EntranceType::rideEntrance;
 
+            const AxToolDriver driving;               // the place key is Ctrl+Enter; see the flag
             onToolUpdate(WIDX_ENTRANCE, *screenPos); // resolve the station-edge position/direction
 
             // The tool resolves a facing only for a tile that actually borders the station platform,
@@ -4122,7 +4148,7 @@ namespace OpenRCT2::Ui::Windows
         CoordsXY mapCoords;
         auto& im = GetInputManager();
 
-        if (!_trackPlaceCtrlState)
+        if (!_trackPlaceCtrlState && !_axDrivingPlacementTool)
         {
             if (im.isModifierKeyPressed(ModifierKey::ctrl))
             {
@@ -4147,7 +4173,7 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        if (!_trackPlaceShiftState)
+        if (!_trackPlaceShiftState && !_axDrivingPlacementTool)
         {
             if (im.isModifierKeyPressed(ModifierKey::shift))
             {
