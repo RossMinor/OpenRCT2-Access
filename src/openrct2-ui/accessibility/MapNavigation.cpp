@@ -454,7 +454,8 @@ namespace OpenRCT2::Ui::Accessibility
 
     // Builds the spoken description of a sign-capable element (banner, wall, or large scenery). If
     // the element carries a banner with custom text, it is appended so the player hears what the
-    // sign actually says, e.g. "Sign, reading Main Street". Falls back to just the base label.
+    // sign actually says, e.g. "Sign, Main Street" - the object type, then the words on it. Falls
+    // back to just the base label.
     static std::string DescribeSign(const std::string& base, const Banner* banner)
     {
         if (banner == nullptr)
@@ -462,7 +463,16 @@ namespace OpenRCT2::Ui::Accessibility
         std::string text = banner->getText();
         if (text.empty())
             return base;
-        return base + ", reading " + text;
+        return base + ", " + text;
+    }
+
+    // ", Mini Coaster 1" for a ride entrance or exit - the ride whose name the structure carries.
+    // Empty when the ride has gone, so the line still reads.
+    static std::string EntranceRideNameText(const EntranceElement& entrance)
+    {
+        if (auto ride = GetRide(entrance.getRideIndex()); ride != nullptr)
+            return ", " + ride->getName();
+        return {};
     }
 
     static std::string DescribeTrackPiece(
@@ -628,19 +638,24 @@ namespace OpenRCT2::Ui::Accessibility
                 switch (entrance->getEntranceType())
                 {
                     case EntranceType::parkEntrance:
-                        parts.push_back("Park entrance");
+                    {
+                        // The park entrance displays the park's name across it; read it like a sign.
+                        const std::string parkName = getGameState().park.name;
+                        parts.push_back(parkName.empty() ? "Park entrance" : "Park entrance, " + parkName);
                         break;
+                    }
                     case EntranceType::rideEntrance:
                         // The doorway (where guests enter) faces opposite the element's stored
-                        // direction, which points toward the station platform.
+                        // direction, which points toward the station platform. The structure carries
+                        // the ride's name on it, so name the ride too.
                         parts.push_back(
-                            std::string("Ride entrance, facing ") + GetScreenDirectionName(GetEntranceFacing(*entrance))
-                            + PathConnectionText(tile, *el));
+                            "Ride entrance" + EntranceRideNameText(*entrance) + ", facing "
+                            + GetScreenDirectionName(GetEntranceFacing(*entrance)) + PathConnectionText(tile, *el));
                         break;
                     case EntranceType::rideExit:
                         parts.push_back(
-                            std::string("Ride exit, facing ") + GetScreenDirectionName(GetEntranceFacing(*entrance))
-                            + PathConnectionText(tile, *el));
+                            "Ride exit" + EntranceRideNameText(*entrance) + ", facing "
+                            + GetScreenDirectionName(GetEntranceFacing(*entrance)) + PathConnectionText(tile, *el));
                         break;
                 }
             }
@@ -672,6 +687,16 @@ namespace OpenRCT2::Ui::Accessibility
 
                 // A ramp reads as sloped so the player can tell a hill piece from a flat one.
                 parts.push_back(p->isSloped() ? "Sloped " + label : label);
+
+                // The arch over a queue displays the name of the ride the queue leads to. It is a
+                // sign like any other, so read what it says.
+                if (p->hasQueueBanner())
+                {
+                    if (auto ride = GetRide(p->getRideIndex()); ride != nullptr)
+                        parts.push_back("Queue sign, " + ride->getName());
+                    else
+                        parts.push_back("Queue sign");
+                }
 
                 // Railings are the supports and side fencing, and they are a SEPARATE object from
                 // the surface - so a path can legitimately carry railings that look nothing like it.
