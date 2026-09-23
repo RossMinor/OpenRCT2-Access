@@ -70,7 +70,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Shift + Left or Right: Snaps the camera 90 degrees in either direction.
 - E: Jumps focus to the entrance of the park.
 - Control + arrow keys: Jumps to the nearest object in that direction and reads the coordinates it lands on. What it looks for is set by the filter below.
-- Control + Shift + Up or Down: Chooses what Control + arrows jump to: rides and stalls, scenery, footpath objects (bins, benches, lamps), hazards (litter, vomit, and vandalised objects), or your own zones. It starts on rides and stalls. On zones, Control + arrows step to the nearest *other* zone in that direction rather than to the next tile of the one you are already standing in.
+- Control + Shift + Up or Down: Chooses what Control + arrows jump to: rides and stalls, scenery, footpath objects (bins, benches, lamps), hazards (litter, vomit, and vandalised objects), your own zones, or paths (including queues). It starts on rides and stalls. On zones, Control + arrows step to the nearest *other* zone in that direction rather than to the next tile of the one you are already standing in.
 - Control + E: Jumps between the entrance and exit of the ride you are hovering over.
 - Shift + 1 ... 9, 0: Place a waypoint at the current location.
 - Control + 1 ... 9, 0: Jump to the waypoint of that number.
