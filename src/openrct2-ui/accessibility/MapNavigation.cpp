@@ -3725,8 +3725,9 @@ namespace OpenRCT2::Ui::Accessibility
         footpathObjects,
         hazards,
         zones,
+        paths,
     };
-    static constexpr int32_t kJumpCategoryCount = 5;
+    static constexpr int32_t kJumpCategoryCount = 6;
     static JumpCategory _jumpCategory = JumpCategory::ridesAndStalls;
 
     // Spoken name of a category, announced when cycling.
@@ -3742,6 +3743,8 @@ namespace OpenRCT2::Ui::Accessibility
                 return "Hazards";
             case JumpCategory::zones:
                 return "Zones";
+            case JumpCategory::paths:
+                return "Paths";
             case JumpCategory::ridesAndStalls:
                 break;
         }
@@ -3761,6 +3764,8 @@ namespace OpenRCT2::Ui::Accessibility
                 return "hazards";
             case JumpCategory::zones:
                 return "zones";
+            case JumpCategory::paths:
+                return "paths";
             case JumpCategory::ridesAndStalls:
                 break;
         }
@@ -3832,6 +3837,19 @@ namespace OpenRCT2::Ui::Accessibility
                 const int32_t here = ZoneIndexAtTile(_cursor);
                 const int32_t there = ZoneIndexAtTile(tile);
                 return there >= 0 && there != here;
+            }
+
+            case JumpCategory::paths:
+            {
+                // Any footpath underfoot, queues included - a queue is a path a guest walks on, and
+                // someone hunting for "the path over there" means that too. Per tile, like scenery:
+                // from off the path this finds the nearest one, and from on it the next tile along.
+                for (auto* pathEl : TileElementsView<PathElement>(coords))
+                {
+                    if (!pathEl->isGhost())
+                        return true;
+                }
+                return false;
             }
 
             case JumpCategory::ridesAndStalls:
