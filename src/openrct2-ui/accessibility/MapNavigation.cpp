@@ -189,6 +189,11 @@ namespace OpenRCT2::Ui::Accessibility
     // map cursor is disabled. Toggled with Ctrl+Space. Default false = keyboard cursor mode.
     static bool _mouseMode = false;
 
+    // When true, scenery (small, large and walls - what the Scenery jump filter finds) is left out of the
+    // readout while browsing: arrow-key moves, brush sweeps and mouse hover. Deliberate reads - jumps,
+    // the Delete picker, Shift+Home/End - still name it. Toggled with Ctrl+F2; not saved.
+    static bool _hideSceneryWhileBrowsing = false;
+
     // Edge length (in tiles) of the square brush used for clearing scenery and terraforming.
     // Cycles 1, 3, 5, 7. Larger brushes carve out flat pads for big rides in one keypress.
     static int32_t _brushSize = 1;
@@ -586,7 +591,7 @@ namespace OpenRCT2::Ui::Accessibility
         return IsAccessPointConnected(tile, el) ? ", connected to path" : ", not connected to path";
     }
 
-    static std::vector<std::string> GatherTileFeatures(const TileCoordsXY& tile)
+    static std::vector<std::string> GatherTileFeatures(const TileCoordsXY& tile, bool skipScenery = false)
     {
         // Built in a single canonical bottom-to-top order (lowest feature first): water, then the
         // tile elements in the order they are stored (which is by height), then litter on top. The
@@ -738,18 +743,18 @@ namespace OpenRCT2::Ui::Accessibility
                 // player can type custom text on them. Read that text so it is not lost.
                 parts.push_back(DescribeSign("Sign", b->getBanner()));
             }
-            else if (auto* w = el->asWall(); w != nullptr)
+            else if (auto* w = el->asWall(); w != nullptr && !skipScenery)
             {
                 std::string name = GetObjectName(ObjectType::walls, w->getEntryIndex());
                 // A wall can itself be a sign carrying custom text (e.g. a wall-mounted sign).
                 parts.push_back(DescribeSign(name.empty() ? "Fence" : name, w->getBanner()));
             }
-            else if (auto* ss = el->asSmallScenery(); ss != nullptr)
+            else if (auto* ss = el->asSmallScenery(); ss != nullptr && !skipScenery)
             {
                 std::string name = GetObjectName(ObjectType::smallScenery, ss->getEntryIndex());
                 parts.push_back(name.empty() ? "Scenery" : name);
             }
-            else if (auto* ls = el->asLargeScenery(); ls != nullptr)
+            else if (auto* ls = el->asLargeScenery(); ls != nullptr && !skipScenery)
             {
                 std::string name = GetObjectName(ObjectType::largeScenery, ls->getEntryIndex());
                 // Large scenery with a banner is a sign (the big stand-alone signs); read its text.
@@ -868,9 +873,9 @@ namespace OpenRCT2::Ui::Accessibility
     // bridge and back on says the height again.
     static std::vector<int32_t> _lastSpokenTileElevations;
 
-    static TileReadout DescribeTileReadout(const TileCoordsXY& tile)
+    static TileReadout DescribeTileReadout(const TileCoordsXY& tile, bool skipScenery = false)
     {
-        auto parts = GatherTileFeatures(tile);
+        auto parts = GatherTileFeatures(tile, skipScenery);
 
         auto* surface = MapGetSurfaceElementAt(tile);
         const bool owned = surface != nullptr && surface->hasOwnership(OwnershipFlag::landOwned);
@@ -950,7 +955,7 @@ namespace OpenRCT2::Ui::Accessibility
             for (int32_t x = minX; x <= maxX; x++)
             {
                 const TileCoordsXY tile{ x, y };
-                for (auto& part : GatherTileFeatures(tile))
+                for (auto& part : GatherTileFeatures(tile, _hideSceneryWhileBrowsing))
                 {
                     sb.add(part);
                     anyFeature = true;
@@ -1353,7 +1358,8 @@ namespace OpenRCT2::Ui::Accessibility
         // the whole brush area, one by one, so the player can survey it in a single move. The 1x1
         // brush reads the single cursor tile exactly as before. Only the read-out widens - the
         // step/elevation sounds and boundary cues above stay tied to the centre tile.
-        TileReadout readout = (_brushSize > 1) ? DescribeBrushArea() : DescribeTileReadout(_cursor);
+        TileReadout readout = (_brushSize > 1) ? DescribeBrushArea()
+                                               : DescribeTileReadout(_cursor, _hideSceneryWhileBrowsing);
         std::string description = std::move(readout.text);
         // While a ride-placement preview is frozen, read its footprint tiles as though the ride were
         // already there, so the player can arrow over the preview and trace its shape/position.
@@ -2997,7 +3003,8 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 // Only name the tile type when it actually changes, e.g. water <-> land - not
                 // "Water"/"Empty" on every press - and keep the move-time change baseline in sync.
-                const std::string tileType = GetTileDescription(sample);
+                // Read the way arrow moves do, so it compares like with like against their baseline.
+                const std::string tileType = DescribeTileReadout(sample, _hideSceneryWhileBrowsing).text;
                 const bool typeChanged = (tileType != _lastTileDescription);
                 _lastTileDescription = tileType;
                 if (typeChanged)
@@ -3811,13 +3818,19 @@ namespace OpenRCT2::Ui::Accessibility
             case JumpCategory::scenery:
             {
                 // Trees, flowers, shrubs and statues are small scenery; gazebos and the larger props
-                // are large scenery. Both are "scenery" to a player, so both count.
+                // are large scenery; fences, walls and hedges are walls. The game files all three
+                // under scenery (SceneryGroupObject), so all three count.
                 for (auto* el : TileElementsView<SmallSceneryElement>(coords))
                 {
                     if (!el->isGhost())
                         return true;
                 }
                 for (auto* el : TileElementsView<LargeSceneryElement>(coords))
+                {
+                    if (!el->isGhost())
+                        return true;
+                }
+                for (auto* el : TileElementsView<WallElement>(coords))
                 {
                     if (!el->isGhost())
                         return true;
@@ -5253,6 +5266,15 @@ namespace OpenRCT2::Ui::Accessibility
             return true;
         }
 
+        // Ctrl+F2 toggles reading scenery while browsing the map (see _hideSceneryWhileBrowsing).
+        if (key == SDLK_F2 && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)))
+        {
+            _hideSceneryWhileBrowsing = !_hideSceneryWhileBrowsing;
+            ScreenReaderSpeak(_hideSceneryWhileBrowsing ? "Scenery reading off" : "Scenery reading on");
+            _lastHandledKey = key;
+            return true;
+        }
+
         // Bare F1 speaks context-sensitive help for whatever the player is currently doing. Any
         // modified F1 (e.g. Shift+F1, now the land tool) falls through to the game's own shortcuts.
         if (key == SDLK_F1 && !(e.modifiers & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT)))
@@ -5587,7 +5609,7 @@ namespace OpenRCT2::Ui::Accessibility
             return;
 
         // Read the hovered tile on change, tracked separately from the keyboard cursor.
-        std::string description = GetTileDescription(tile);
+        std::string description = DescribeTileReadout(tile, _hideSceneryWhileBrowsing).text;
         if (description != _lastHoverDescription)
         {
             ScreenReaderSpeak(description);
