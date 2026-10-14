@@ -4,6 +4,25 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.1.4 (2026-10-13)
+------------------------------------------------------------------------
+- Q reads the queue you are standing on: the ride it leads to, how long it is, where it
+  starts and whether a path leads into it, then directions from where you are to the ride
+  entrance, such as "right 3, up 1, left 2 on a ramp up to elevation 3". Each number is how
+  many times to press that arrow key. On a ride entrance, it gives the way out to the start
+  of the queue. Shift + Q gives only the directions. This makes switchbacks much easier to
+  follow, since the rows of a switchback sit side by side without being joined.
+- Control + F2 turns scenery reading on or off. While it is off, trees, plants, statues,
+  fences and walls are not read as you move the cursor or the mouse. They can still be
+  found by jumping, the Delete menu and Shift + Home or End.
+- The scenery filter for Control + arrows now finds fences and walls too.
+- A new Paths filter for Control + arrows jumps to the nearest path or queue. Choose it with
+  Control + Shift + Up or Down.
+- Ride entrances and exits, the sign over the start of a queue, and the park entrance now
+  read the name written on them, for example "Queue sign, Mini Coaster 1".
+- Fixed Control + Enter building a ride's track pieces lower than the cursor when building
+  on sloped ground.
+
 1.1.3 (2026-09-21)
 ------------------------------------------------------------------------
 - Directions now follow your camera. A ride entrance, exit, stall or piece of scenery reads
