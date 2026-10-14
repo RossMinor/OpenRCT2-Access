@@ -15,6 +15,7 @@
 #include "ElevationTone.h"
 #include "GuestRescue.h"
 #include "MenuNavigation.h"
+#include "QueueRoute.h"
 #include "graph/GraphScreens.h"
 #include "RidePlacement.h"
 #include "SceneryPlacement.h"
@@ -4651,7 +4652,7 @@ namespace OpenRCT2::Ui::Accessibility
             && key != SDLK_f && key != SDLK_LEFTBRACKET && key != SDLK_RIGHTBRACKET
             && key != SDLK_x && key != SDLK_b && key != SDLK_o && key != SDLK_l
             && key != SDLK_k && key != SDLK_HOME && key != SDLK_END && key != SDLK_PAGEUP
-            && key != SDLK_PAGEDOWN && key != SDLK_DELETE && key != SDLK_z)
+            && key != SDLK_PAGEDOWN && key != SDLK_DELETE && key != SDLK_z && key != SDLK_q)
             return false;
 
         // A window owns the keyboard, so the map cursor must not change the world underneath it.
@@ -4780,6 +4781,13 @@ namespace OpenRCT2::Ui::Accessibility
                 break;
             case SDLK_f:
                 ReportFacing();
+                break;
+            case SDLK_q:
+                // Q reads the queue under the cursor and the way from here along it; Shift+Q gives
+                // only the directions to the entrance. Read-only.
+                if (modifiers & (KMOD_CTRL | KMOD_ALT))
+                    return false;
+                ScreenReaderSpeak(DescribeQueueRoute(_cursor, _scanHeight, (modifiers & KMOD_SHIFT) != 0));
                 break;
             case SDLK_LEFTBRACKET:
                 CycleAnnouncementHistory(-1);
