@@ -3620,15 +3620,18 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(std::string("Facing ") + GetWorldDirectionName(CameraFacingDirection()));
     }
 
-    // The ride whose footprint the cursor is within: first the ride whose track sits on the cursor
-    // tile (the common case, when the player has arrowed onto the structure), otherwise - for a
-    // cursor inside a ride's area but not on a track tile, e.g. the empty middle of a loop - the
-    // smallest-area ride whose tile bounding box contains the cursor. Null when the cursor is not in
-    // any ride. The bounding-box fallback does a single map scan and only runs when the cursor is not
-    // directly on track, so the usual case stays cheap.
+    static RideId RideIdAtCursor();
+
+    // The ride whose footprint the cursor is within: first the ride whose track, entrance or exit
+    // sits on the cursor tile (the common case, when the player has arrowed onto the structure, and
+    // where Ctrl+E itself leaves the cursor - an entrance often sits outside the track's bounding
+    // box), otherwise - for a cursor inside a ride's area but not on a ride tile, e.g. the empty
+    // middle of a loop - the smallest-area ride whose tile bounding box contains the cursor. Null
+    // when the cursor is not in any ride. The bounding-box fallback does a single map scan and only
+    // runs when the cursor is not directly on the ride, so the usual case stays cheap.
     static RideId RideContainingCursor()
     {
-        if (const RideId onTile = GetRideAtTile(_cursor); !onTile.IsNull())
+        if (const RideId onTile = RideIdAtCursor(); !onTile.IsNull())
             return onTile;
 
         struct Bounds
