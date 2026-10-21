@@ -78,6 +78,7 @@
 #include <openrct2/interface/Window.h>
 #include <openrct2/interface/WindowBase.h>
 #include <openrct2/interface/WindowClasses.h>
+#include <openrct2/scenes/editor/EditorStep.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/localisation/Formatting.h>
 #include <openrct2/localisation/Localisation.Date.h>
@@ -189,6 +190,20 @@ namespace OpenRCT2::Ui::Accessibility
     // When true, the mouse drives the game normally (edge scroll, clicks) and the arrow-key
     // map cursor is disabled. Toggled with Ctrl+Space. Default false = keyboard cursor mode.
     static bool _mouseMode = false;
+
+    // The scenario editor's landscape step - the one step of the editor with a map to work on. The
+    // game shows its land, water, path, scenery and clear-scenery tools on this step and no other,
+    // so this is where the map cursor runs outside a park.
+    static bool IsEditorLandscapeStep()
+    {
+        return gLegacyScene == LegacyScene::scenarioEditor && getGameState().editorStep == Editor::Step::landscapeEditor;
+    }
+
+    // A scene with a map for the cursor to walk: a park being played, or the editor's landscape step.
+    static bool IsMapCursorScene()
+    {
+        return gLegacyScene == LegacyScene::playing || IsEditorLandscapeStep();
+    }
 
     // When true, scenery (small, large and walls - what the Scenery jump filter finds) is left out of the
     // readout while browsing: arrow-key moves, brush sweeps and mouse hover. Deliberate reads - jumps,
@@ -5047,6 +5062,21 @@ namespace OpenRCT2::Ui::Accessibility
             ScreenReaderSpeak("Mouse mode is on. Press Control Space to switch back to keyboard mode.");
             return;
         }
+        // The free map cursor on the scenario editor's landscape step.
+        if (IsEditorLandscapeStep())
+        {
+            ScreenReaderSpeak(
+                "Scenario editor, landscape. Arrow keys move around the map. C reads the current tile and "
+                "coordinates. Space builds a footpath, D removes one, L cycles the path slope, End and Home "
+                "lower and raise the build height. Page Up and Page Down raise and lower land, hold Control "
+                "for water or Shift to zoom. X clears scenery, B changes the brush size, K places markers. "
+                "Delete removes one thing at the cursor. Shift with a number sets a waypoint, Control with "
+                "a number jumps to it. Control with an arrow jumps to the nearest object in that direction. "
+                "Control P checks whether the current tile connects to the park entrance. Shift P opens the "
+                "path menu and Shift X the scenery menu. Tab opens the toolbar menu, where the editor's "
+                "steps are. Control F1 opens the accessibility settings.");
+            return;
+        }
         // Default: the free map cursor during play.
         ScreenReaderSpeak(
             "Map cursor. Arrow keys move around the park. C reads the current tile and coordinates. "
@@ -5148,6 +5178,57 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(SpeedLabel(1, newSlow));
     }
 
+    // Forget the cursor's session whenever there is no map to walk - a park closing, the editor
+    // moving to a step without a map - so the next map starts clean rather than with markers,
+    // waypoints and a position from the last one. The toolbar's menu mode is the caller's to decide:
+    // the editor keeps it, since Tab into the toolbar is how the editor's steps are reached.
+    static void ResetMapCursorSession()
+    {
+        _initialised = false;
+        _statusMode = false;
+        _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
+        _areaConfirmPending = AreaCommand::none;
+        _areaConfirmedMask = 0;
+        // Zones themselves persist per park (Zones.cpp swaps them as the park changes); it is
+        // only the transient UI around them that resets here.
+        _zoneListMode = false;
+        _zoneOverlapConfirmArmed = false;
+        _pendingZoneTiles.clear();
+        _lastSpokenZone = -1;
+        std::fill(std::begin(_waypointSet), std::end(_waypointSet), false); // and any waypoints
+    }
+
+    // Keys with no meaning on the editor's landscape step - there is no running park: no money, no
+    // time, no guests, no rides, and the game hides the windows these would open. Each answers with
+    // why rather than doing nothing or something odd. Returns the refusal, or null to let it through.
+    static const char* EditorLandscapeRefusal(uint32_t key, uint32_t modifiers)
+    {
+        const bool ctrl = (modifiers & KMOD_CTRL) != 0;
+        const bool shift = (modifiers & KMOD_SHIFT) != 0;
+        const bool alt = (modifiers & KMOD_ALT) != 0;
+        if (alt)
+            return nullptr;
+        constexpr const char* kNotInEditor = "Not available in the scenario editor";
+
+        if (!ctrl && !shift && (key == SDLK_m || key == SDLK_t || key == SDLK_p || key == SDLK_z))
+            return kNotInEditor; // cash, park status, pause, zones (keyed to a save file it lacks)
+        if (ctrl && !shift
+            && (key == SDLK_EQUALS || key == SDLK_KP_PLUS || key == SDLK_MINUS || key == SDLK_KP_MINUS
+                || key == SDLK_h || key == SDLK_e))
+            return kNotInEditor; // game speed, guest rescue, ride entrance/exit
+        if (!shift && (key == SDLK_RETURN || key == SDLK_KP_ENTER))
+            return kNotInEditor; // open what is here / build on a ride; Shift+Enter still rotates
+        if (shift && !ctrl
+            && (key == SDLK_b || key == SDLK_c || key == SDLK_f || key == SDLK_m || key == SDLK_d || key == SDLK_r
+                || key == SDLK_i || key == SDLK_g || key == SDLK_s))
+            return kNotInEditor; // track breaks, and the park's windows
+        if (!ctrl && key == SDLK_o)
+            return "Land ownership is not available in the scenario editor yet";
+        return nullptr;
+    }
+
+    static uint32_t _lastRefusedEditorKey = 0;
+
     bool HandleMapNavigationKey(const InputEvent& e)
     {
         if (e.deviceKind != InputDeviceKind::keyboard)
@@ -5161,8 +5242,12 @@ namespace OpenRCT2::Ui::Accessibility
         // This branch has to come before the guard below, which not only refuses the key but clears
         // _menuMode on every press - with it in charge the toolbar's isActive gate could never be
         // true in the editor, which is why the editor had no keyboard access at all.
-        if (isInEditorMode() || isInTrackDesignerOrManager())
+        //
+        // The scenario editor's landscape step is the exception: it has a map to work on, so it skips
+        // this branch and runs the map cursor below, like a park.
+        if ((isInEditorMode() || isInTrackDesignerOrManager()) && !IsEditorLandscapeStep())
         {
+            ResetMapCursorSession();
             const uint32_t editorKey = e.button;
             if (e.state != InputEventState::down)
             {
@@ -5184,22 +5269,11 @@ namespace OpenRCT2::Ui::Accessibility
             return false;
         }
 
-        // Only active during normal gameplay. Reset so a freshly loaded park rescans.
-        if (gLegacyScene != LegacyScene::playing)
+        // Only active where there is a map to walk. Reset so a freshly loaded park rescans.
+        if (!IsMapCursorScene())
         {
-            _initialised = false;
+            ResetMapCursorSession();
             _menuMode = false;
-            _statusMode = false;
-            _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
-            _areaConfirmPending = AreaCommand::none;
-            _areaConfirmedMask = 0;
-            // Zones themselves persist per park (Zones.cpp swaps them as the park changes); it is
-            // only the transient UI around them that resets here.
-            _zoneListMode = false;
-            _zoneOverlapConfirmArmed = false;
-            _pendingZoneTiles.clear();
-            _lastSpokenZone = -1;
-            std::fill(std::begin(_waypointSet), std::end(_waypointSet), false); // and any waypoints
             return false;
         }
 
@@ -5265,6 +5339,21 @@ namespace OpenRCT2::Ui::Accessibility
             _lastHandledKey = key;
             return true;
         }
+
+        // On the editor's landscape step, the park-only keys say why they do nothing. Not in mouse
+        // mode, where keys belong to the game. Said once per key, not on every repeat of a held key.
+        if (IsEditorLandscapeStep() && !_mouseMode)
+        {
+            if (const char* refusal = EditorLandscapeRefusal(key, e.modifiers); refusal != nullptr)
+            {
+                if (key != _lastRefusedEditorKey)
+                    ScreenReaderSpeak(refusal);
+                _lastRefusedEditorKey = key;
+                _lastHandledKey = key;
+                return true;
+            }
+        }
+        _lastRefusedEditorKey = 0;
 
         // Ctrl+F1 opens the accessibility mod's own settings window.
         if (key == SDLK_F1 && (e.modifiers & KMOD_CTRL) && !(e.modifiers & (KMOD_SHIFT | KMOD_ALT)))
@@ -5512,7 +5601,7 @@ namespace OpenRCT2::Ui::Accessibility
 
     bool IsMapCursorActive()
     {
-        return gLegacyScene == LegacyScene::playing && !_menuMode && !_mouseMode;
+        return IsMapCursorScene() && !_menuMode && !_mouseMode;
     }
 
     bool IsInMenuMode()
@@ -5526,7 +5615,7 @@ namespace OpenRCT2::Ui::Accessibility
         // (and accessible windows). In these states the arrow keys belong to navigation, so the
         // engine's arrow-key view scrolling must be suppressed or the camera (and positional audio)
         // drifts while the cursor stays put. Only mouse mode lets the keyboard scroll the view.
-        return gLegacyScene == LegacyScene::playing && !_mouseMode;
+        return IsMapCursorScene() && !_mouseMode;
     }
 
     std::string DescribeTile(const TileCoordsXY& tile)
@@ -5583,7 +5672,7 @@ namespace OpenRCT2::Ui::Accessibility
         // reads aloud whatever tile it is over - but it never moves the keyboard cursor (_cursor)
         // or the camera. Camera scrolling for the mouse is the engine's normal edge-scrolling,
         // which is only enabled in mouse mode.
-        if (gLegacyScene != LegacyScene::playing)
+        if (!IsMapCursorScene())
         {
             _mouseTracking = false;
             return;
