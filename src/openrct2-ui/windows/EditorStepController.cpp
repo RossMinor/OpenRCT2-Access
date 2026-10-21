@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -426,6 +427,36 @@ namespace OpenRCT2::Ui::Windows
             && gLegacyScene != LegacyScene::trackDesignsManager)
             return {};
         return OpenRCT2::FormatStringID(Editor::getStepStringId(getGameState().editorStep));
+    }
+
+    bool HasEditorStepsTab()
+    {
+        return !EditorStepButtonsForAccessibility().empty();
+    }
+
+    void BuildEditorStepsTab(Accessibility::Graph::GraphBuilder& b)
+    {
+        using namespace Accessibility::Graph;
+        b.PushContext("Editor steps");
+        if (auto step = EditorCurrentStepName(); !step.empty())
+        {
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static("Editor step"));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(step, AnnouncementKinds::kValue));
+            b.AddItem(ControlId::Structural("steps:current"), std::move(vt));
+        }
+        for (const auto& button : EditorStepButtonsForAccessibility())
+        {
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(button.label));
+            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.onActivate = [n = button.number]() { EditorStepButtonActivate(n); };
+            vt.focusRect = [button]() -> std::optional<GraphRect> {
+                return GraphRect{ button.x, button.y, button.width, button.height };
+            };
+            b.AddItem(ControlId::Structural("steps:" + std::to_string(button.number)), std::move(vt));
+        }
+        b.PopContext();
     }
 
     /**

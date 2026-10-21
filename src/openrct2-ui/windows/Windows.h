@@ -46,6 +46,11 @@ namespace OpenRCT2
     using ScenarioSelectCallback = void (*)(const utf8* path);
 } // namespace OpenRCT2
 
+namespace OpenRCT2::Ui::Accessibility::Graph
+{
+    class GraphBuilder;
+} // namespace OpenRCT2::Ui::Accessibility::Graph
+
 namespace OpenRCT2::Drawing
 {
     enum class Colour : uint8_t;
@@ -334,6 +339,14 @@ namespace OpenRCT2::Ui::Windows
     // outside the editor. This is the text the editor's bottom status line draws, which a sighted
     // player can see at all times and a keyboard player otherwise cannot reach at all.
     std::string EditorCurrentStepName();
+
+    // The "Editor steps" tab that each editor step window ends with: the current step, then the
+    // Back/Forward buttons. A step window is always open in front of the menu bar - the game reopens
+    // it every tick - so the menu bar's copy of these buttons cannot be reached from one. False when
+    // there is nothing to offer (the window was opened from the Cheats menu in a park), and the
+    // caller leaves the tab out.
+    bool HasEditorStepsTab();
+    void BuildEditorStepsTab(Accessibility::Graph::GraphBuilder& b);
     void RegisterStaffListGraphScreen();
     void RegisterScenarioSelectGraphScreen();
     void RegisterGuestListGraphScreen();

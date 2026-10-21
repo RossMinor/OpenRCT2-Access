@@ -1634,6 +1634,16 @@ namespace OpenRCT2::Ui::Windows
 
             onPrepareDraw(); // refresh captions and pressed states before reading them
 
+            if (_accessStepsTab)
+            {
+                if (HasEditorStepsTab())
+                {
+                    BuildEditorStepsTab(b);
+                    return;
+                }
+                _accessStepsTab = false; // the step buttons went away (left the editor): back to the page
+            }
+
             if (_accessDropdownOpen)
             {
                 b.PushContext(OpenRCT2::FormatStringID(STR_OBJECT_FILTER), "menu");
@@ -1753,10 +1763,31 @@ namespace OpenRCT2::Ui::Windows
             // Skip pages whose tab is hidden - the track designer shows only the first - so Tab
             // cannot strand the player on a page they have no way to see or leave.
             const int32_t count = static_cast<int32_t>(std::size(ObjectSelectionPages));
+
+            // Leaving the Editor steps tab: Tab carries on to the first page, Shift+Tab back to the
+            // last - the steps tab sits after the last page, like one more tab on the end.
+            if (_accessStepsTab)
+            {
+                _accessStepsTab = false;
+                int32_t landing = delta > 0 ? 0 : count - 1;
+                for (int32_t step = 0; step < count && !widgets[WIDX_TAB_1 + landing].isVisible(); step++)
+                    landing = (landing + (delta > 0 ? 1 : -1) + count) % count;
+                setPage(landing);
+                return;
+            }
+
             int32_t next = selectedTab;
             for (int32_t step = 0; step < count; step++)
             {
-                next = (next + delta + count) % count;
+                const int32_t unwrapped = next + delta;
+                next = (unwrapped + count) % count;
+                // Stepping off either end of the pages lands on the Editor steps tab, where there is
+                // one (in the editor, not when opened from the Cheats menu).
+                if ((unwrapped < 0 || unwrapped >= count) && HasEditorStepsTab())
+                {
+                    _accessStepsTab = true;
+                    return;
+                }
                 if (!widgets[WIDX_TAB_1 + next].isVisible())
                     continue;
                 setPage(next);
@@ -1777,6 +1808,10 @@ namespace OpenRCT2::Ui::Windows
 
     private:
         bool _accessDropdownOpen = false;
+
+        // On the Editor steps tab - one more tab after the object pages, holding the Back/Forward
+        // step buttons (see BuildEditorStepsTab). Keyboard only: the window keeps drawing its page.
+        bool _accessStepsTab = false;
 
         // Node keys must carry the page. These controls exist on EVERY page, so a page-independent
         // key survives a page switch: focus "persists" onto the new page's equivalent control, the
