@@ -259,6 +259,12 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         // If set, focus jumps here on the next render when present (consumed either way).
         ControlId nextSuggestedMove;
 
+        // A one-shot line a recipe's action wants said, spoken at the head of the feedback for that
+        // keypress - before the landing if focus moved, before the state line if it did not. For an
+        // action whose effect is not visible from where focus ends up ("Moved to the other list"
+        // while focus stays put). Consumed by the next activation feedback.
+        std::string nextLandingNote;
+
         // Remembered position per Tab-stop: where stop cycling lands when returning to a stop.
         std::unordered_map<std::string, ControlId> stopMemory;
 

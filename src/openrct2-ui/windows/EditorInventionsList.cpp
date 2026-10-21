@@ -7,6 +7,9 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <algorithm>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/input/MouseInput.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -21,6 +24,7 @@
 #include <openrct2/drawing/Text.h>
 #include <openrct2/interface/ColourWithFlags.h>
 #include <openrct2/interface/Cursors.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/localisation/Formatter.h>
 #include <openrct2/management/Research.h>
 #include <openrct2/object/ObjectList.h>
@@ -28,6 +32,9 @@
 #include <openrct2/ride/RideManager.hpp>
 #include <openrct2/scenes/editor/EditorController.h>
 #include <openrct2/ui/WindowManager.h>
+#include <optional>
+#include <string>
+#include <unordered_set>
 
 using namespace OpenRCT2::Drawing;
 
@@ -547,7 +554,386 @@ namespace OpenRCT2::Ui::Windows
             researchList.push_back(item);
         }
 
+        // ---- graph accessibility recipe ----
+        //
+        // The two lists as one vertical run - pre-invented, then the research order - then the three
+        // buttons. Moving an item is the mouse's drag and drop made into two presses: Enter picks an
+        // item up, Enter on another item drops it in front of that one, in either list, and each list
+        // offers an "End of list" spot while something is carried. Shift+Enter sends an item straight
+        // to the end of the other list. Every move goes through MoveResearchItem - the drop the mouse
+        // uses - and none of it is a game action, so the result is there to read when the key returns.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            onPrepareDraw(); // lay the widgets out for the current window size before boxing them
+
+            if (_axStepsTab)
+            {
+                if (HasEditorStepsTab())
+                {
+                    BuildEditorStepsTab(b);
+                    return;
+                }
+                _axStepsTab = false; // the step buttons went away (left the editor): back to the lists
+            }
+
+            // The carried item can leave the lists behind our back (Move all, a mouse drag): let go.
+            if (_axCarried.has_value() && !axFind(_axCarried->rawValue).has_value())
+                _axCarried.reset();
+
+            std::unordered_set<uint32_t> seen;
+            axBuildList(b, true, seen);
+            axBuildList(b, false, seen);
+            b.BeginStop("buttons");
+            axAddButton(b, WIDX_MOVE_ITEMS_TO_TOP, "All items moved to pre-invented");
+            axAddButton(b, WIDX_MOVE_ITEMS_TO_BOTTOM, "All items moved to items to invent");
+            axAddButton(b, WIDX_RANDOM_SHUFFLE, "Items to invent shuffled");
+        }
+
+        // Escape puts a carried item back. Otherwise it closes the window only where the window can
+        // be closed: in the scenario editor this is a step of the editor, with no close button, and
+        // closing it would strand the player between steps.
+        // Tab and Shift+Tab cycle the window's parts: the two lists, the buttons and, in the scenario
+        // editor, the Editor steps tab. A list is re-entered where the player left it, so reaching
+        // the second list never means walking the whole of the first.
+        bool AccessChangePage(int32_t dir)
+        {
+            const int32_t count = HasEditorStepsTab() ? 4 : 3;
+            const int32_t to = (axCurrentPart() + (dir < 0 ? count - 1 : 1)) % count;
+            _axStepsTab = to == 3;
+            if (!_axStepsTab)
+                Accessibility::Graph::GraphStateForClass(WindowClass::editorInventionList).nextSuggestedMove = axPartLanding(
+                    to);
+            return true;
+        }
+
+        bool AccessEscape()
+        {
+            if (_axCarried.has_value())
+            {
+                _axCarried.reset();
+                axNote("Put back");
+                return true;
+            }
+            return gLegacyScene == LegacyScene::scenarioEditor;
+        }
+
     private:
+        // The item being moved (Enter to pick up, Enter again to drop). Held by value: the lists are
+        // vectors, and every move reshuffles them under any pointer.
+        std::optional<ResearchItem> _axCarried;
+
+        // On the Editor steps tab (see AccessChangePage). Keyboard only: the window draws as before.
+        bool _axStepsTab = false;
+
+        static std::optional<uint32_t> axItemKeyValue(const std::string& key)
+        {
+            if (!key.starts_with("item:"))
+                return std::nullopt;
+            return static_cast<uint32_t>(std::strtoul(key.c_str() + 5, nullptr, 10));
+        }
+
+        // The part of the window holding focus: 0 the pre-invented list, 1 the list to invent,
+        // 2 the buttons, 3 the Editor steps tab.
+        int32_t axCurrentPart() const
+        {
+            if (_axStepsTab && HasEditorStepsTab())
+                return 3;
+            const std::string& key = Accessibility::Graph::GraphStateForClass(WindowClass::editorInventionList)
+                                         .curKey.StructuralKey();
+            if (key.starts_with("btn:"))
+                return 2;
+            if (const auto raw = axItemKeyValue(key))
+            {
+                const auto place = axFind(*raw);
+                return place.has_value() && !place->isInvented ? 1 : 0;
+            }
+            return key.ends_with(":todo") ? 1 : 0;
+        }
+
+        // Where Tab lands in a part: a list where the player left it, else its first row; the
+        // buttons on the first button.
+        Accessibility::Graph::ControlId axPartLanding(int32_t part) const
+        {
+            using namespace Accessibility::Graph;
+            if (part == 2)
+                return ControlId::Structural("btn:" + std::to_string(WIDX_MOVE_ITEMS_TO_TOP));
+
+            const bool isInvented = part == 0;
+            const std::string side = isInvented ? "pre" : "todo";
+            // The navigator remembers the last row focused in each stop (the stops carry the side).
+            const auto& memory = GraphStateForClass(WindowClass::editorInventionList).stopMemory;
+            if (const auto last = memory.find(side); last != memory.end())
+            {
+                if (const auto raw = axItemKeyValue(last->second.StructuralKey()))
+                {
+                    const auto place = axFind(*raw);
+                    if (place.has_value() && place->isInvented == isInvented)
+                        return last->second;
+                }
+            }
+
+            const auto& gameState = getGameState();
+            const auto& list = isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
+            if (!list.empty())
+                return ControlId::Structural("item:" + std::to_string(list[0].rawValue));
+            return ControlId::Structural((_axCarried.has_value() ? "end:" : "empty:") + side);
+        }
+
+        void axNote(std::string text)
+        {
+            Accessibility::Graph::GraphStateForClass(WindowClass::editorInventionList).nextLandingNote = std::move(text);
+        }
+
+        void axFocusOn(uint32_t rawValue)
+        {
+            Accessibility::Graph::GraphStateForClass(WindowClass::editorInventionList).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural("item:" + std::to_string(rawValue));
+        }
+
+        static const char* axListName(bool isInvented)
+        {
+            return isInvented ? "Items pre-invented at start of game" : "Items to invent during game";
+        }
+
+        // Which list an item is in, and where.
+        struct AxPlace
+        {
+            bool isInvented;
+            size_t index;
+        };
+
+        std::optional<AxPlace> axFind(uint32_t rawValue) const
+        {
+            const auto& gameState = getGameState();
+            for (bool isInvented : { true, false })
+            {
+                const auto& list = isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
+                for (size_t i = 0; i < list.size(); i++)
+                    if (list[i].rawValue == rawValue)
+                        return AxPlace{ isInvented, i };
+            }
+            return std::nullopt;
+        }
+
+        // Read the way the list draws it: a ride listed by type shows the type, then the vehicle.
+        static std::string axItemLabel(const ResearchItem& item)
+        {
+            std::string name = FormatStringID(item.getName());
+            if (item.type == Research::EntryType::ride
+                && !GetRideTypeDescriptor(item.baseRideType).flags.has(RtdFlag::listVehiclesSeparately))
+            {
+                const auto typeName = FormatStringID(
+                    GetRideNaming(item.baseRideType, GetRideEntryByIndex(item.entryIndex)).Name);
+                if (!typeName.empty() && typeName != name)
+                    return typeName + ", " + name;
+            }
+            return name;
+        }
+
+        // `seen` guards node identity: a research list holding the same item twice (a damaged park)
+        // would give two nodes one key, and the builder throws on that - leaving the window silent.
+        void axBuildList(Accessibility::Graph::GraphBuilder& b, bool isInvented, std::unordered_set<uint32_t>& seen)
+        {
+            using namespace Accessibility::Graph;
+            const auto& gameState = getGameState();
+            const auto& list = isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
+            const std::string side = isInvented ? "pre" : "todo";
+
+            // Each list is its own Tab-stop, so the arrows stay inside it.
+            b.BeginStop(side);
+            b.PushContext(axListName(isInvented), "list");
+            for (size_t i = 0; i < list.size(); i++)
+            {
+                const ResearchItem item = list[i]; // a copy: the build is thrown away before anything moves
+                const uint32_t raw = item.rawValue;
+                if (!seen.insert(raw).second)
+                    continue;
+
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(axItemLabel(item)));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(FormatStringID(item.getCategoryInventionString())));
+                if (item.isAlwaysResearched())
+                    vt.announcements.emplace_back(NodeAnnouncement::Static("always invented"));
+                vt.announcements.emplace_back(
+                    [this, raw]() { return _axCarried.has_value() && _axCarried->rawValue == raw ? "picked up" : ""; },
+                    true);
+                vt.onActivate = [this, raw]() { axActivate(raw); };
+                vt.onActivateShift = [this, raw]() { axSendAcross(raw); };
+                vt.focusRect = [this, isInvented, i]() { return axRowRect(isInvented, static_cast<int32_t>(i)); };
+                vt.onFocus = [this, isInvented, i]() { axScrollTo(isInvented, static_cast<int32_t>(i)); };
+                b.AddItem(ControlId::Structural("item:" + std::to_string(raw)), std::move(vt));
+            }
+
+            // Somewhere to drop after the last item - which is also the only way into an empty list.
+            if (_axCarried.has_value())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("End of list"));
+                vt.onActivate = [this, isInvented]() { axDrop(std::nullopt, isInvented); };
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("end:" + side), std::move(vt));
+            }
+            else if (list.empty())
+            {
+                // An empty list still needs a node, or its heading is never heard.
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("Empty"));
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("empty:" + side), std::move(vt));
+            }
+            b.PopContext();
+        }
+
+        void axAddButton(Accessibility::Graph::GraphBuilder& b, WidgetIndex widx, const char* done)
+        {
+            using namespace Accessibility::Graph;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(FormatStringID(widgets[widx].text)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            // The window's own handler, so the buttons do exactly what a click does.
+            vt.onActivate = [this, widx, done]() {
+                _axCarried.reset();
+                onMouseUp(widx);
+                axNote(done);
+            };
+            vt.focusRect = [this, widx]() -> std::optional<GraphRect> {
+                const auto& wd = widgets[widx];
+                return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+            };
+            b.AddItem(ControlId::Structural("btn:" + std::to_string(widx)), std::move(vt));
+        }
+
+        // Enter on an item: pick it up, or drop what is carried in front of it.
+        void axActivate(uint32_t raw)
+        {
+            const auto place = axFind(raw);
+            if (!place.has_value())
+                return;
+            if (_axCarried.has_value())
+            {
+                if (_axCarried->rawValue == raw)
+                {
+                    _axCarried.reset();
+                    axNote("Put back");
+                    return;
+                }
+                axDrop(place->index, place->isInvented);
+                return;
+            }
+
+            const auto& gameState = getGameState();
+            const auto& list = place->isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
+            if (list[place->index].isAlwaysResearched())
+            {
+                axNote("Always invented, cannot be moved");
+                return;
+            }
+            _axCarried = list[place->index];
+            axNote("Picked up");
+        }
+
+        // Drop the carried item in front of the item at `beforeIndex` in a list, or at its end.
+        void axDrop(std::optional<size_t> beforeIndex, bool isInvented)
+        {
+            if (!_axCarried.has_value())
+                return;
+            const ResearchItem carried = *_axCarried;
+            _axCarried.reset();
+
+            auto& gameState = getGameState();
+            auto& list = isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
+            // Like the mouse drop, never land among the always-invented items: slide past them.
+            ResearchItem* before = nullptr;
+            if (beforeIndex.has_value())
+            {
+                for (size_t i = *beforeIndex; i < list.size(); i++)
+                {
+                    if (!list[i].isAlwaysResearched())
+                    {
+                        before = &list[i];
+                        break;
+                    }
+                }
+            }
+            MoveResearchItem(carried, before, isInvented);
+            axFocusOn(carried.rawValue);
+            axNote("Moved");
+        }
+
+        // Shift+Enter: straight to the end of the other list, keeping the player's place.
+        void axSendAcross(uint32_t raw)
+        {
+            const auto place = axFind(raw);
+            if (!place.has_value())
+                return;
+            auto& gameState = getGameState();
+            auto& list = place->isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
+            const ResearchItem item = list[place->index];
+            if (item.isAlwaysResearched())
+            {
+                axNote("Always invented, cannot be moved");
+                return;
+            }
+            if (_axCarried.has_value() && _axCarried->rawValue == raw)
+                _axCarried.reset();
+
+            // Stay where the item was: on the one after it, or before it at the end of the list.
+            std::optional<uint32_t> stay;
+            if (place->index + 1 < list.size())
+                stay = list[place->index + 1].rawValue;
+            else if (place->index > 0)
+                stay = list[place->index - 1].rawValue;
+
+            MoveResearchItem(item, nullptr, !place->isInvented);
+            if (stay.has_value())
+                axFocusOn(*stay);
+            axNote(axItemLabel(item) + " moved to " + axListName(!place->isInvented));
+        }
+
+        Accessibility::Graph::GraphRect axRowRect(bool isInvented, int32_t row) const
+        {
+            const auto& lw = widgets[isInvented ? WIDX_PRE_RESEARCHED_SCROLL : WIDX_RESEARCH_ORDER_SCROLL];
+            const int32_t viewTop = windowPos.y + lw.top;
+            const int32_t viewBottom = windowPos.y + lw.bottom;
+            const int32_t left = windowPos.x + lw.left;
+            const int32_t right = windowPos.x + lw.right;
+
+            const int32_t rowTop = viewTop + row * kScrollableRowHeight - scrolls[isInvented ? 0 : 1].contentOffsetY;
+            int32_t top = std::max(rowTop, viewTop);
+            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
+            if (bottom <= top) // scrolled out of view: box the whole list
+            {
+                top = viewTop;
+                bottom = viewBottom;
+            }
+            return { left, top, right - left, bottom - top };
+        }
+
+        // Keep the list scrolled to the keyboard's row, so the focus box lands on something visible.
+        void axScrollTo(bool isInvented, int32_t row)
+        {
+            const WidgetIndex widx = isInvented ? WIDX_PRE_RESEARCHED_SCROLL : WIDX_RESEARCH_ORDER_SCROLL;
+            auto& scroll = scrolls[isInvented ? 0 : 1];
+            const int32_t viewHeight = widgets[widx].height() - 1;
+            const int32_t rowTop = row * kScrollableRowHeight;
+            const int32_t rowBottom = rowTop + kScrollableRowHeight;
+
+            int32_t offset = scroll.contentOffsetY;
+            if (rowTop < offset)
+                offset = rowTop;
+            else if (rowBottom > offset + viewHeight)
+                offset = rowBottom - viewHeight;
+            else
+                return; // already visible; don't fight the player's own scrolling
+
+            const auto& gameState = getGameState();
+            const size_t count = isInvented ? gameState.researchItemsInvented.size() : gameState.researchItemsUninvented.size();
+            const int32_t maxOffset = std::max(0, static_cast<int32_t>(count) * kScrollableRowHeight - viewHeight);
+            scroll.contentOffsetY = std::clamp(offset, 0, maxOffset);
+            invalidateWidget(widx);
+        }
+
         ResearchItem* GetItemFromScrollY(bool isInvented, int32_t y) const
         {
             auto& gameState = getGameState();
@@ -590,6 +976,19 @@ namespace OpenRCT2::Ui::Windows
         return windowMgr->FocusOrCreate<InventionListWindow>(
             WindowClass::editorInventionList, kWindowSize,
             { WindowFlag::noScrolling, WindowFlag::resizable, WindowFlag::centreScreen });
+    }
+
+    void RegisterEditorInventionsListGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::editorInventionList;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<InventionListWindow&>(w).BuildAccessGraph(b); };
+        screen.onEscape = [](WindowBase& w) { return static_cast<InventionListWindow&>(w).AccessEscape(); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) { return static_cast<InventionListWindow&>(w).AccessChangePage(dir); };
+        // Lists only: Left/Right have no meaning on a row, and there are no pages to change to.
+        screen.sideArrowsChangePage = false;
+        RegisterGraphScreen(std::move(screen));
     }
 #pragma endregion
 

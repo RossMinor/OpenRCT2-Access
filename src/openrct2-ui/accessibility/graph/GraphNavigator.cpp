@@ -25,6 +25,7 @@
 #include <openrct2/interface/WindowBase.h>
 #include <openrct2/ui/WindowManager.h>
 #include <unordered_set>
+#include <utility>
 
 namespace OpenRCT2::Ui::Accessibility
 {
@@ -227,6 +228,10 @@ namespace OpenRCT2::Ui::Accessibility
     // live watch so the same change isn't spoken twice.
     static void SpeakStateFeedback(KeyGraph& kg)
     {
+        // Taken first so a note never outlives the keypress it was written for.
+        std::string note;
+        if (auto* state = kg.State(); state != nullptr)
+            note = std::exchange(state->nextLandingNote, std::string());
         if (!kg.Rerender())
             return;
         auto* node = kg.CurrentNode();
@@ -235,15 +240,14 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_lastSpokenValid || !(_lastSpoken == node->id))
         {
             auto* from = _lastSpokenValid ? kg.Current()->NodeAt(_lastSpoken) : nullptr;
-            AnnounceLanding(kg, from, node);
+            AnnounceLanding(kg, from, node, note);
             return;
         }
-        if (node->vtable.stateText)
-        {
-            auto t = GuardedText(node->vtable.stateText);
-            if (!t.empty())
-                ScreenReaderSpeak(t, true);
-        }
+        std::string t = node->vtable.stateText ? GuardedText(node->vtable.stateText) : std::string();
+        if (!note.empty())
+            t = t.empty() ? note : note + ", " + t;
+        if (!t.empty())
+            ScreenReaderSpeak(t, true);
         ResetLiveBaseline(node);
         UpdateFocusRect(node);
     }
