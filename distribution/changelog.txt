@@ -4,6 +4,14 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.1.5 (2026-10-21)
+------------------------------------------------------------------------
+- Fixed Control + E. After jumping to a ride's entrance, pressing it again said "Not on a
+  ride" instead of jumping to the exit. It now steps between a ride's entrances and exits
+  again.
+- The inventions list is now accessible and can be accessed from within the Cheats menu.
+  This is part of the larger effort to make the scenario editor accessible.
+
 1.1.4 (2026-10-13)
 ------------------------------------------------------------------------
 - Q reads the queue you are standing on: the ride it leads to, how long it is, where it
