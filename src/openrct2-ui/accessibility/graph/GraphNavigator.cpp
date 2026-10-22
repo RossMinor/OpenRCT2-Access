@@ -174,30 +174,39 @@ namespace OpenRCT2::Ui::Accessibility
         _liveBaseline = ResolveLiveParts(node);
     }
 
-    static void LiveWatchTick(const GraphNode* node)
+    // The live parts that differ from the baseline, taking them into it. Empty when nothing
+    // changed (or the baseline was for another node, or the part list changed shape - both
+    // rebaseline silently rather than mis-pair old and new values).
+    static std::vector<std::string> TakeLiveChanges(const GraphNode* node)
     {
+        std::vector<std::string> changed;
         if (!_liveValid || !(_liveNodeId == node->id))
         {
             ResetLiveBaseline(node);
-            return;
+            return changed;
         }
         auto texts = ResolveLiveParts(node);
         if (texts.size() != _liveBaseline.size())
         {
-            // A rebuild grew or shrank the part list - rebaseline silently rather than mis-pair
-            // old and new values.
             _liveBaseline = std::move(texts);
-            return;
+            return changed;
         }
         for (size_t i = 0; i < texts.size(); i++)
         {
             if (texts[i] != _liveBaseline[i])
             {
                 if (!texts[i].empty())
-                    ScreenReaderSpeak(texts[i], false); // passive change: queued (A7)
+                    changed.push_back(texts[i]);
                 _liveBaseline[i] = texts[i];
             }
         }
+        return changed;
+    }
+
+    static void LiveWatchTick(const GraphNode* node)
+    {
+        for (const auto& text : TakeLiveChanges(node))
+            ScreenReaderSpeak(text, false); // passive change: queued (A7)
     }
 
     // ---- speech (the ONLY announce paths - A4) ----
@@ -225,8 +234,13 @@ namespace OpenRCT2::Ui::Accessibility
 
     // After an activation/adjust: if the action moved focus (a sub-list opened/closed), announce
     // the landing; otherwise speak the node's synchronous state line (§7.5), rebaselining the
-    // live watch so the same change isn't spoken twice.
-    static void SpeakStateFeedback(KeyGraph& kg)
+    // live watch so the same change isn't spoken twice. With no state line, speak whichever live
+    // parts the keypress has already changed - a click that takes effect at once (a toggle, a sort)
+    // - as the keypress's answer. A queued game action's change has not landed yet, so its part is
+    // still unchanged here and stays in the baseline as the old value, for the watch to speak.
+    // `spokenBefore` is ScreenReaderSpokenCount() from before the keypress ran: a recipe that spoke
+    // its own confirmation ("Sound muted") has answered, so the changed parts are taken silently.
+    static void SpeakStateFeedback(KeyGraph& kg, uint32_t spokenBefore)
     {
         // Taken first so a note never outlives the keypress it was written for.
         std::string note;
@@ -247,8 +261,22 @@ namespace OpenRCT2::Ui::Accessibility
         if (!note.empty())
             t = t.empty() ? note : note + ", " + t;
         if (!t.empty())
+        {
             ScreenReaderSpeak(t, true);
-        ResetLiveBaseline(node);
+            ResetLiveBaseline(node);
+        }
+        else if (ScreenReaderSpokenCount() != spokenBefore)
+        {
+            ResetLiveBaseline(node);
+        }
+        else
+        {
+            SpeechBuilder changed;
+            for (const auto& text : TakeLiveChanges(node))
+                changed.add(text);
+            if (!changed.empty())
+                ScreenReaderSpeak(changed.str(), true);
+        }
         UpdateFocusRect(node);
     }
 
@@ -402,9 +430,10 @@ namespace OpenRCT2::Ui::Accessibility
             {
                 const int32_t sign = key == SDLK_RIGHT ? 1 : -1;
                 // Evaluation order (§7.2): adjust -> move -> tree semantics -> page switch.
+                const uint32_t spokenBefore = ScreenReaderSpokenCount();
                 if (kg.TryAdjust(sign, false))
                 {
-                    SpeakStateFeedback(kg);
+                    SpeakStateFeedback(kg, spokenBefore);
                     return true;
                 }
                 auto r = kg.Move(key == SDLK_RIGHT ? GraphDir::right : GraphDir::left);
@@ -468,6 +497,7 @@ namespace OpenRCT2::Ui::Accessibility
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
             {
+                const uint32_t spokenBefore = ScreenReaderSpokenCount();
                 bool acted;
                 if (shift)
                     acted = kg.ActivateShift();
@@ -476,11 +506,12 @@ namespace OpenRCT2::Ui::Accessibility
                 else
                     acted = kg.Activate();
                 if (acted)
-                    SpeakStateFeedback(kg);
+                    SpeakStateFeedback(kg, spokenBefore);
                 return true; // actionless activate is consumed silently (§3.4)
             }
             case SDLK_ESCAPE:
             {
+                const uint32_t spokenBefore = ScreenReaderSpokenCount();
                 bool handled = false;
                 if (screen.onEscape)
                 {
@@ -496,7 +527,7 @@ namespace OpenRCT2::Ui::Accessibility
                 if (handled)
                 {
                     // A sub-list closed; announce where focus landed (keypress path).
-                    SpeakStateFeedback(kg);
+                    SpeakStateFeedback(kg, spokenBefore);
                 }
                 else
                 {

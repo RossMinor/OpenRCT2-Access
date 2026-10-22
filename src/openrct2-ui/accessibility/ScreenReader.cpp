@@ -22,6 +22,9 @@
 
 namespace
 {
+    // Lines handed to ScreenReaderSpeak, on any platform (see ScreenReaderSpokenCount).
+    uint32_t _spokenCount = 0;
+
     // Removes OpenRCT2 formatting tokens (e.g. "{BABYBLUE}") from text so the screen
     // reader doesn't read them aloud. Newline tokens become spaces.
     std::string StripFormatCodes(std::string_view text)
@@ -334,6 +337,7 @@ namespace OpenRCT2::Ui::Accessibility
     {
         if (utf8Text.empty())
             return;
+        _spokenCount++;
 
         const std::string clean = StripFormatCodes(utf8Text);
         if (clean.empty())
@@ -403,8 +407,10 @@ namespace OpenRCT2::Ui::Accessibility
         return "";
     }
 
-    void ScreenReaderSpeak(std::string_view, bool)
+    void ScreenReaderSpeak(std::string_view utf8Text, bool)
     {
+        if (!utf8Text.empty())
+            _spokenCount++;
     }
 } // namespace OpenRCT2::Ui::Accessibility
 
@@ -413,6 +419,11 @@ namespace OpenRCT2::Ui::Accessibility
 // Position-suffixed speech and announcement history (platform-independent).
 namespace OpenRCT2::Ui::Accessibility
 {
+    uint32_t ScreenReaderSpokenCount()
+    {
+        return _spokenCount;
+    }
+
     void ScreenReaderSpeakItem(std::string_view text, int32_t index, int32_t count)
     {
         std::string out(text);

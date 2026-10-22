@@ -59,6 +59,10 @@ namespace OpenRCT2::Ui::Accessibility
     // reader too, and nothing above this layer has to know whether a display is attached.
     void ScreenReaderSpeak(std::string_view utf8Text, bool interrupt = true);
 
+    // How many lines ScreenReaderSpeak has been handed. Compare a reading taken before running some
+    // code with one after to tell whether that code spoke for itself.
+    uint32_t ScreenReaderSpokenCount();
+
     // Speaks a menu/list item followed by its position, e.g. "Rides, 2 of 5". index is
     // zero-based; the position suffix is omitted when count is not positive.
     void ScreenReaderSpeakItem(std::string_view text, int32_t index, int32_t count);
