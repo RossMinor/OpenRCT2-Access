@@ -7,6 +7,10 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/interface/ViewportQuery.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -31,6 +35,7 @@
 #include <openrct2/entity/EntityRegistry.h>
 #include <openrct2/entity/Staff.h>
 #include <openrct2/interface/Viewport.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/object/TerrainSurfaceObject.h>
 #include <openrct2/ride/RideData.h>
 #include <openrct2/ride/TrainManager.h>
@@ -48,6 +53,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     struct ColourPair
     {
         PaletteIndex a = PaletteIndex::transparent;
@@ -1252,7 +1259,118 @@ namespace OpenRCT2::Ui::Windows
             width = std::max(minWidth, width);
             _recalculateScrollbars = true;
         }
+
+#pragma region Accessibility
+    public:
+        // ---- graph accessibility recipe ----
+        //
+        // The window's editor controls as a form: the map size, keeping it square, then the tool
+        // buttons in the order they stand on screen. The map picture itself is not declared - the map
+        // cursor reads the map. Only in the scenario editor and sandbox mode (the screen's isActive):
+        // in a park the window is just that picture, and the map cursor keeps the keys.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            onPrepareDraw(); // shows the editor controls and lays them out before they are boxed
+
+            axAddSize(b, WIDX_MAP_SIZE_SPINNER_X, Vocab::kMapSizeX, ResizeDirection::x);
+            axAddSize(b, WIDX_MAP_SIZE_SPINNER_Y, Vocab::kMapSizeY, ResizeDirection::y);
+
+            if (widgets[WIDX_MAP_SIZE_LINK].isVisible())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kMapKeepSquare));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(
+                    [this]() { return std::string(Vocab::Checked(_mapWidthAndHeightLinked)); }, true,
+                    AnnouncementKinds::kValue);
+                // The game only offers it while the map is square.
+                vt.announcements.emplace_back(
+                    [this]() { return std::string(isWidgetDisabled(WIDX_MAP_SIZE_LINK) ? Vocab::kUnavailable : ""); }, true);
+                vt.onActivate = [this]() {
+                    if (!isWidgetDisabled(WIDX_MAP_SIZE_LINK))
+                        onMouseUp(WIDX_MAP_SIZE_LINK);
+                };
+                // Window-local, so it has changed by the time the key returns; on a refused press it
+                // still answers, with the state that stands.
+                vt.stateText = [this]() {
+                    return Accessibility::JoinSpeech({ Vocab::Checked(_mapWidthAndHeightLinked),
+                                                       isWidgetDisabled(WIDX_MAP_SIZE_LINK) ? Vocab::kUnavailable : "" });
+                };
+                vt.focusRect = [this]() { return std::optional<GraphRect>(axWidgetRect(WIDX_MAP_SIZE_LINK)); };
+                b.AddItem(ControlId::Structural("map:link"), std::move(vt));
+            }
+
+            axAddButton(b, WIDX_SET_LAND_RIGHTS, Vocab::kMapSetLandRights);
+            axAddButton(b, WIDX_PEOPLE_STARTING_POSITION, Vocab::kMapGuestStarts);
+            axAddButton(b, WIDX_BUILD_PARK_ENTRANCE, Vocab::kMapBuildEntrance);
+            axAddButton(b, WIDX_MAP_GENERATOR, Vocab::kMapGenerator);
+        }
+
+    private:
+        Accessibility::Graph::GraphRect axWidgetRect(WidgetIndex widx) const
+        {
+            const auto& wd = widgets[widx];
+            return { windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+        }
+
+        // A map size spinner. Left/Right are its own arrows, one tile at a time; Enter types a size,
+        // as clicking the number does. The size changes through a game action, readable only a tick
+        // later, so the value is LIVE and is read when the change lands.
+        void axAddSize(
+            Accessibility::Graph::GraphBuilder& b, WidgetIndex widx, const char* label, ResizeDirection direction)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[widx].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSpinner, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(
+                [direction]() {
+                    const auto& size = getGameState().mapSize;
+                    return std::to_string((direction == ResizeDirection::x ? size.x : size.y) - 2); // practical size
+                },
+                true, AnnouncementKinds::kValue);
+            vt.onAdjust = [this, widx](int32_t sign, bool) {
+                // The spinner's own arrows sit right after its number in the widget list.
+                onMouseDown(static_cast<WidgetIndex>(sign > 0 ? widx + 1 : widx + 2));
+            };
+            vt.onActivate = [this, widx]() { InputMapSize(widx); };
+            vt.focusRect = [this, widx]() { return std::optional<GraphRect>(axWidgetRect(widx)); };
+            b.AddItem(ControlId::Structural(widx == WIDX_MAP_SIZE_SPINNER_X ? "map:sizex" : "map:sizey"), std::move(vt));
+        }
+
+        // A tool button: does what clicking it does.
+        void axAddButton(Accessibility::Graph::GraphBuilder& b, WidgetIndex widx, const char* label)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[widx].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
+            vt.onActivate = [this, widx]() { onMouseUp(widx); };
+            vt.focusRect = [this, widx]() { return std::optional<GraphRect>(axWidgetRect(widx)); };
+            b.AddItem(ControlId::Structural("map:btn:" + std::to_string(widx)), std::move(vt));
+        }
+#pragma endregion
     };
+
+    void RegisterMapGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::map;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<MapWindow&>(w).BuildAccessGraph(b); };
+        // Gated: the window holds the keyboard only where it has controls (the scenario editor,
+        // sandbox mode), and only as a fallback, so a window opened from it - Land rights, the
+        // footpath tools - takes the keys first, and closing that one comes back here.
+        screen.isActive = []() { return isEditorOrSandbox(); };
+        screen.screenName = []() { return FormatStringID(kWindowTitle); };
+        screen.sideArrowsChangePage = false; // a form: Left/Right belong to the spinners
+        RegisterGraphScreen(std::move(screen));
+    }
 
     WindowBase* MapOpen()
     {

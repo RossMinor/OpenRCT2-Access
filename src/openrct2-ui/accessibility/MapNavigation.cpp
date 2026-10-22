@@ -5222,9 +5222,9 @@ namespace OpenRCT2::Ui::Accessibility
         if (!shift && (key == SDLK_RETURN || key == SDLK_KP_ENTER))
             return kNotInEditor; // open what is here / build on a ride; Shift+Enter still rotates
         if (shift && !ctrl
-            && (key == SDLK_b || key == SDLK_c || key == SDLK_f || key == SDLK_m || key == SDLK_d || key == SDLK_r
-                || key == SDLK_i || key == SDLK_g || key == SDLK_s))
-            return kNotInEditor; // track breaks, and the park's windows
+            && (key == SDLK_b || key == SDLK_c || key == SDLK_f || key == SDLK_d || key == SDLK_r || key == SDLK_i
+                || key == SDLK_g || key == SDLK_s))
+            return kNotInEditor; // track breaks, and the park's windows (Shift+M opens the Map window)
         if (!ctrl && key == SDLK_o)
             return "Land ownership is not available in the scenario editor yet";
         return nullptr;
@@ -5347,6 +5347,14 @@ namespace OpenRCT2::Ui::Accessibility
         // mode, where keys belong to the game. Said once per key, not on every repeat of a held key.
         if (IsEditorLandscapeStep() && !_mouseMode)
         {
+            // Shift+M reopens the Map window - the landscape step's tools live there - in place of
+            // the park's Recent Messages, which the editor has none of. The window announces itself.
+            if (key == SDLK_m && (e.modifiers & KMOD_SHIFT) && !(e.modifiers & (KMOD_CTRL | KMOD_ALT)))
+            {
+                ContextOpenWindow(WindowClass::map);
+                _lastHandledKey = key;
+                return true;
+            }
             if (const char* refusal = EditorLandscapeRefusal(key, e.modifiers); refusal != nullptr)
             {
                 if (key != _lastRefusedEditorKey)

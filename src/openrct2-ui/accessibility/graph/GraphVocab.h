@@ -40,6 +40,8 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kRoleCheckbox = "checkbox";
     inline constexpr const char* kRoleComboBox = "combo box";
     inline constexpr const char* kRoleEdit = "edit";
+    inline constexpr const char* kRoleSpinner = "spinner";
+    inline constexpr const char* kUnavailable = "unavailable";
 
     // State words. An "off" state always has a word: an empty part is never spoken, so a control
     // that only ever said "checked" would answer an uncheck with silence.
@@ -74,6 +76,16 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     // Editor step windows (the shared "Editor steps" tab).
     inline constexpr const char* kEditorSteps = "Editor steps";
     inline constexpr const char* kEditorStep = "Editor step";
+
+    // Map window (scenario editor and sandbox mode). Its tool buttons are pictures with long
+    // tooltips, so they get short names; F1 still reads the game's tooltip.
+    inline constexpr const char* kMapSizeX = "Map size X";
+    inline constexpr const char* kMapSizeY = "Map size Y";
+    inline constexpr const char* kMapKeepSquare = "Keep map square";
+    inline constexpr const char* kMapSetLandRights = "Set land rights";
+    inline constexpr const char* kMapGuestStarts = "Set guest starting positions";
+    inline constexpr const char* kMapBuildEntrance = "Build park entrance";
+    inline constexpr const char* kMapGenerator = "Map generator";
 
     // Object selection.
     inline constexpr const char* kObjCategory = "Category";
