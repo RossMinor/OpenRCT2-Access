@@ -128,4 +128,14 @@ namespace OpenRCT2::Ui::Accessibility
     // moves the focus to the tile under the pointer and reads it. Keyboard-driven warps are
     // ignored so the two input methods share a single focus without fighting.
     void UpdateMapCursorFromMouse();
+
+    // The area the map cursor's area commands act on - the brush around the cursor, or the marked
+    // rectangle when two markers are set - in world coordinates, clamped to the playable map. For a
+    // window that applies its own tool from the keyboard (the editor's Land rights settings).
+    MapRange KeyboardToolArea();
+
+    // That area in words, for saying what a keyboard-applied tool is about to change: "the marked
+    // area, top left X 3, Y 20, bottom right X 14, Y 9, 12 by 12 tiles", "3 by 3 tiles around X 40,
+    // Y 52", or "the tile at X 40, Y 52".
+    std::string DescribeKeyboardToolArea();
 } // namespace OpenRCT2::Ui::Accessibility

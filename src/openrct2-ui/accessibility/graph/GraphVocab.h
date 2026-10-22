@@ -87,6 +87,18 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kMapBuildEntrance = "Build park entrance";
     inline constexpr const char* kMapGenerator = "Map generator";
 
+    // Land rights (scenario editor and sandbox mode): the five ownership settings, applied from the
+    // keyboard to the map cursor's brush or marked area.
+    inline std::string LandRightsAppliesTo(const std::string& area)
+    {
+        return "Applies to " + area;
+    }
+
+    inline std::string LandRightsApplied(const std::string& setting, const std::string& area)
+    {
+        return setting + " set on " + area;
+    }
+
     // Object selection.
     inline constexpr const char* kObjCategory = "Category";
     inline constexpr const char* kObjFilter = "Filter";

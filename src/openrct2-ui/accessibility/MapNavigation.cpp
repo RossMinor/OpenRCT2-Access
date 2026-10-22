@@ -889,6 +889,27 @@ namespace OpenRCT2::Ui::Accessibility
     // bridge and back on says the height again.
     static std::vector<int32_t> _lastSpokenTileElevations;
 
+    // What the land is when the park does not own it, in lower case: "outside park" - or, in the
+    // scenario editor, where deciding exactly this is the job, the setting the editor gave it:
+    // owned construction rights, land or construction rights for sale.
+    static std::string UnownedLandText(const SurfaceElement* surface)
+    {
+        if (surface != nullptr && isInEditorMode())
+        {
+            const OwnershipFlags ownership = surface->getOwnership();
+            SpeechBuilder sb;
+            if (ownership.has(OwnershipFlag::constructionRightsOwned))
+                sb.add("construction rights");
+            if (ownership.has(OwnershipFlag::landForSale))
+                sb.add("land for sale");
+            if (ownership.has(OwnershipFlag::constructionRightsForSale))
+                sb.add("construction rights for sale");
+            if (!sb.empty())
+                return sb.str();
+        }
+        return "outside park";
+    }
+
     static TileReadout DescribeTileReadout(const TileCoordsXY& tile, bool skipScenery = false)
     {
         auto parts = GatherTileFeatures(tile, skipScenery);
@@ -899,7 +920,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (parts.empty())
         {
             _lastSpokenTileElevations.clear();
-            std::string bare = owned ? "Empty" : "Outside park";
+            std::string bare = owned ? "Empty" : UnownedLandText(surface);
+            bare[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(bare[0])));
             return { bare, true, {}, { bare } };
         }
 
@@ -910,7 +932,7 @@ namespace OpenRCT2::Ui::Accessibility
             sb.add(part);
         // The land beneath everything: note when the tile is outside the owned park area.
         if (!owned)
-            sb.add("outside park");
+            sb.add(UnownedLandText(surface));
 
         // Then the height of everything standing above the ground here, per the elevation-reading
         // setting: every tile, only when the set of heights changes, or never.
@@ -5226,7 +5248,7 @@ namespace OpenRCT2::Ui::Accessibility
                 || key == SDLK_g || key == SDLK_s))
             return kNotInEditor; // track breaks, and the park's windows (Shift+M opens the Map window)
         if (!ctrl && key == SDLK_o)
-            return "Land ownership is not available in the scenario editor yet";
+            return "In the scenario editor, O sets land rights"; // plain O is handled before this
         return nullptr;
     }
 
@@ -5352,6 +5374,14 @@ namespace OpenRCT2::Ui::Accessibility
             if (key == SDLK_m && (e.modifiers & KMOD_SHIFT) && !(e.modifiers & (KMOD_CTRL | KMOD_ALT)))
             {
                 ContextOpenWindow(WindowClass::map);
+                _lastHandledKey = key;
+                return true;
+            }
+            // O opens the game's Land rights window, whose five ownership settings apply to the
+            // brush or marked area (in place of the park's buying, which the editor has no use for).
+            if (key == SDLK_o && !(e.modifiers & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT)))
+            {
+                ContextOpenWindow(WindowClass::landRights);
                 _lastHandledKey = key;
                 return true;
             }
@@ -5723,5 +5753,43 @@ namespace OpenRCT2::Ui::Accessibility
             ScreenReaderSpeak(description);
             _lastHoverDescription = std::move(description);
         }
+    }
+
+    MapRange KeyboardToolArea()
+    {
+        if (!_initialised)
+            InitialiseCursor();
+        int32_t ax, ay, bx, by;
+        GetTerraformBounds(ax, ay, bx, by);
+        return MapRange(ax, ay, bx, by);
+    }
+
+    std::string DescribeKeyboardToolArea()
+    {
+        if (!_initialised)
+            InitialiseCursor();
+        int32_t ax, ay, bx, by;
+        GetTerraformBounds(ax, ay, bx, by);
+        const int32_t w = (bx - ax) / kCoordsXYStep + 1;
+        const int32_t h = (by - ay) / kCoordsXYStep + 1;
+        const std::string size = std::to_string(w) + " by " + std::to_string(h) + " tiles";
+
+        if (HasMarkedArea())
+        {
+            // Corners from the spoken values, which run opposite to tile indices (trap 12.6).
+            const TileCoordsXY corner0{ ax / kCoordsXYStep, ay / kCoordsXYStep };
+            const TileCoordsXY corner1{ bx / kCoordsXYStep, by / kCoordsXYStep };
+            const int32_t leftX = std::min(SpokenCoordX(corner0), SpokenCoordX(corner1));
+            const int32_t rightX = std::max(SpokenCoordX(corner0), SpokenCoordX(corner1));
+            const int32_t bottomY = std::min(SpokenCoordY(corner0), SpokenCoordY(corner1));
+            const int32_t topY = std::max(SpokenCoordY(corner0), SpokenCoordY(corner1));
+            return "the marked area, top left X " + std::to_string(leftX) + ", Y " + std::to_string(topY)
+                + ", bottom right X " + std::to_string(rightX) + ", Y " + std::to_string(bottomY) + ", " + size;
+        }
+
+        const std::string at = "X " + std::to_string(SpokenCoordX(_cursor)) + ", Y " + std::to_string(SpokenCoordY(_cursor));
+        if (w == 1 && h == 1)
+            return "the tile at " + at;
+        return size + " around " + at;
     }
 } // namespace OpenRCT2::Ui::Accessibility

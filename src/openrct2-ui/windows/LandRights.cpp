@@ -7,7 +7,11 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -24,6 +28,7 @@
 #include <openrct2/drawing/Text.h>
 #include <openrct2/interface/Viewport.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/world/Map.h>
 #include <openrct2/world/MapSelection.h>
@@ -34,6 +39,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr ScreenSize kInGameSize = { 94, 94 };
     static constexpr ScreenSize kEditorSize = { 280, 104 };
 
@@ -698,7 +705,77 @@ namespace OpenRCT2::Ui::Windows
             SwitchToMode(modes[cur]);
             Accessibility::ScreenReaderSpeak("Mode, " + axModeName(modes[cur]));
         }
+
+    public:
+        // ---- graph accessibility recipe (scenario editor and sandbox mode only) ----
+        //
+        // The five ownership settings as a list, opening on the one the window has chosen. Enter
+        // applies a setting to the map cursor's area - its brush, or the marked rectangle - with the
+        // window's own land rights action, the one its mouse tool runs over a dragged area, then
+        // closes the window. The list's heading says which tiles that is, so choosing is the
+        // confirmation. The window's tool size is left out: the map cursor's brush (B) is the area.
+        // In a park this screen stands aside and the window keeps its older keyboard support above.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            onPrepareDraw(); // the pressed setting and which settings show
+
+            b.PushContext(Vocab::LandRightsAppliesTo(Accessibility::DescribeKeyboardToolArea()), Vocab::kRoleList);
+            for (const WidgetIndex widx : { WIDX_LAND_OWNED_CHECKBOX, WIDX_LAND_SALE_CHECKBOX,
+                                            WIDX_CONSTRUCTION_RIGHTS_OWNED_CHECKBOX, WIDX_CONSTRUCTION_RIGHTS_SALE_CHECKBOX,
+                                            WIDX_UNOWNED_LAND_CHECKBOX })
+            {
+                if (!widgets[widx].isVisible())
+                    continue;
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(FormatStringID(widgets[widx].text)));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(
+                    NodeAnnouncement::Static(isWidgetPressed(widx) ? Vocab::kChecked : "", AnnouncementKinds::kSelected));
+                vt.onActivate = [this, widx]() { axApply(widx); };
+                vt.focusRect = [this, widx]() -> std::optional<GraphRect> {
+                    const auto& wd = widgets[widx];
+                    return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+                };
+                b.AddItem(ControlId::Structural("rights:" + std::to_string(widx)), std::move(vt));
+            }
+            b.PopContext();
+        }
+
+    private:
+        void axApply(WidgetIndex widx)
+        {
+            onMouseUp(widx); // the window's own switch to that setting
+
+            const std::string setting = FormatStringID(widgets[widx].text);
+            const std::string area = Accessibility::DescribeKeyboardToolArea();
+            auto action = GameActions::LandSetRightsAction(
+                Accessibility::KeyboardToolArea(), GameActions::LandSetRightSetting::setOwnershipWithChecks,
+                GetDesiredOwnership());
+            // A game action raised from the UI runs a tick later (trap 12.2): say it when it lands.
+            // Queued, so it follows whatever the closing window hands focus back to says.
+            action.SetCallback([setting, area](const GameActions::GameAction*, const GameActions::Result* result) {
+                if (result->error != GameActions::Status::ok)
+                    return; // the error window speaks
+                Accessibility::ScreenReaderSpeak(Vocab::LandRightsApplied(setting, area), false);
+            });
+            GameActions::Execute(&action, getGameState());
+            close();
+        }
     };
+
+    void RegisterLandRightsGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::landRights;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<LandRightsWindow&>(w).BuildAccessGraph(b); };
+        // Only where the window sets ownership rather than buying it; gated, so it is a fallback like
+        // the Map window it opens from, and in a park the older keyboard support keeps the window.
+        screen.isActive = []() { return isInEditorMode() || getGameState().cheats.sandboxMode; };
+        screen.screenName = []() { return FormatStringID(kWindowTitle); };
+        RegisterGraphScreen(std::move(screen));
+    }
 
     WindowBase* LandRightsOpen()
     {
