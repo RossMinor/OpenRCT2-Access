@@ -2656,17 +2656,15 @@ namespace OpenRCT2::Ui::Accessibility
 
     // Warps the cursor to the numbered waypoint in the given slot, centring the view and reading the
     // waypoint number, what is on the tile, and its coordinates. Announces if the slot is empty.
-    static void JumpToWaypoint(int32_t slot)
+    // The landing every deliberate jump shares: move the cursor, bring the view to it, sound the
+    // elevation tone and put the focus elevation back on the ground. Returns the tile's description,
+    // which the caller speaks with whatever names the jump.
+    static std::string LandCursorOn(const TileCoordsXY& tile)
     {
-        if (!_waypointSet[slot])
-        {
-            ScreenReaderSpeak("Waypoint " + std::to_string(slot + 1) + " not set");
-            return;
-        }
         if (!_initialised)
             InitialiseCursor();
 
-        _cursor = _waypoints[slot];
+        _cursor = tile;
         _menuMode = false;
         CentreViewportOnCursor();
 
@@ -2679,11 +2677,64 @@ namespace OpenRCT2::Ui::Accessibility
             _scanLocked = false; // a deliberate jump lands the focus back on the ground
         }
 
-        const std::string description = GetTileDescription(_cursor);
+        std::string description = GetTileDescription(_cursor);
         _lastTileDescription = description;
-        ScreenReaderSpeak(
-            "Waypoint " + std::to_string(slot + 1) + ", " + description + ", X "
-            + std::to_string(SpokenCoordX(_cursor)) + ", Y " + std::to_string(SpokenCoordY(_cursor)));
+        return description;
+    }
+
+    static void JumpToWaypoint(int32_t slot)
+    {
+        if (!_waypointSet[slot])
+        {
+            ScreenReaderSpeak("Waypoint " + std::to_string(slot + 1) + " not set");
+            return;
+        }
+        const std::string description = LandCursorOn(_waypoints[slot]);
+        ScreenReaderSpeak("Waypoint " + std::to_string(slot + 1) + ", " + description + ", " + SpokenTileCoordsText(_cursor));
+    }
+
+    // Ctrl+G's prompt answered: the two numbers typed, X then Y, as C reports them - "50 45",
+    // "50, 45" and "X 50 Y 45" all land on X 50, Y 45.
+    static void GoToTypedCoordinates(std::string_view text)
+    {
+        std::vector<int32_t> numbers;
+        for (size_t i = 0; i < text.size();)
+        {
+            if (!std::isdigit(static_cast<unsigned char>(text[i])))
+            {
+                i++;
+                continue;
+            }
+            int32_t value = 0;
+            for (; i < text.size() && std::isdigit(static_cast<unsigned char>(text[i])); i++)
+                value = std::min(value * 10 + (text[i] - '0'), 100000);
+            numbers.push_back(value);
+        }
+        if (numbers.size() != 2)
+        {
+            ScreenReaderSpeak("Type two numbers, X then Y, for example 50 45");
+            return;
+        }
+
+        // Spoken coordinates run opposite to tile indices: spoken = (mapSize - 2) - tile.
+        const auto mapSize = getGameState().mapSize;
+        const TileCoordsXY tile{ (mapSize.x - 2) - numbers[0], (mapSize.y - 2) - numbers[1] };
+        if (tile.x < 1 || tile.y < 1 || tile.x > mapSize.x - 2 || tile.y > mapSize.y - 2)
+        {
+            ScreenReaderSpeak(
+                "X " + std::to_string(numbers[0]) + ", Y " + std::to_string(numbers[1]) + " is off the map. X runs from 0 to "
+                + std::to_string(mapSize.x - 3) + " and Y from 0 to " + std::to_string(mapSize.y - 3));
+            return;
+        }
+        const std::string description = LandCursorOn(tile);
+        ScreenReaderSpeak(description + ", " + SpokenTileCoordsText(_cursor));
+    }
+
+    static void OpenGoToCoordinatesPrompt()
+    {
+        Windows::WindowTextInputOpen(
+            "Go to coordinates", "Type X then Y, for example 50 45", "", 16,
+            [](std::string_view text) { GoToTypedCoordinates(text); }, []() { ScreenReaderSpeak("Cancelled"); });
     }
 
     // Removes small and large scenery (trees, bushes, statues, etc.) across the brush area.
@@ -4718,6 +4769,13 @@ namespace OpenRCT2::Ui::Accessibility
                 EnterRideConstructionAtCursor();
             else
                 OpenRideOrGateInfoAtCursor();
+            return true;
+        }
+
+        // Ctrl+G: go to typed coordinates.
+        if (key == SDLK_g && (modifiers & KMOD_CTRL) && !(modifiers & (KMOD_SHIFT | KMOD_ALT)))
+        {
+            OpenGoToCoordinatesPrompt();
             return true;
         }
 

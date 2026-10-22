@@ -76,6 +76,7 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Shift + Q: Gives only the directions from where you are on a queue to the ride entrance, without the rest.
 - Shift + 1 ... 9, 0: Place a waypoint at the current location.
 - Control + 1 ... 9, 0: Jump to the waypoint of that number.
+- Control + G: Go to coordinates. Type the X and then the Y you want to jump to, for example "50 45" for X 50, Y 45, and press Enter.
 
 ### Information
 
