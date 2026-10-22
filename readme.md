@@ -81,6 +81,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 
 - Tab: Opens the Tools Menu.
 - F1: Mod/game help. Reports actions or commands that can be used anywhere in the game.
+- F1 in a menu or window: Reads the hint for the option you are on, the same tip a sighted player sees when they point the mouse at it. If that option has no hint, you hear the help for the window instead.
+- Backtick (`) in a menu or window: Tells you where you are - the window, the section you are in, and the option you are on with its setting and position.
 - Control + F1: Opens the mod settings.
 - Control + F2: Turns scenery reading on or off. While it is off, trees, plants, statues, fences and walls are not read as you move the cursor or the mouse. They are still found by Control + arrows with the scenery filter, the Delete menu, and Shift + Home or End. It turns back on each time you start the game.
 - Typing into any text box - naming a zone, renaming a ride or a member of staff, naming a save file - now speaks each character as you type it and says what backspace removed. Turn it off with the **Typing echo** setting in the mod settings (Control + F1) if you would rather type in silence.

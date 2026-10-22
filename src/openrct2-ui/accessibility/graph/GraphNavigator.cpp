@@ -23,6 +23,7 @@
 #include <openrct2/Diagnostic.h>
 #include <openrct2/interface/Window.h>
 #include <openrct2/interface/WindowBase.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/ui/WindowManager.h>
 #include <unordered_set>
 #include <utility>
@@ -236,7 +237,9 @@ namespace OpenRCT2::Ui::Accessibility
     // the landing; otherwise speak the node's synchronous state line (§7.5), rebaselining the
     // live watch so the same change isn't spoken twice. With no state line, speak whichever live
     // parts the keypress has already changed - a click that takes effect at once (a toggle, a sort)
-    // - as the keypress's answer. A queued game action's change has not landed yet, so its part is
+    // - as the keypress's answer. That last step is this mod's extension beyond §7.5, which leaves
+    // synchronous changes to StateText alone: it makes every control answer its press, including
+    // ones whose recipe never declared a state line. A queued game action's change has not landed yet, so its part is
     // still unchanged here and stays in the baseline as the old value, for the watch to speak.
     // `spokenBefore` is ScreenReaderSpokenCount() from before the keypress ran: a recipe that spoke
     // its own confirmation ("Sound muted") has answered, so the changed parts are taken silently.
@@ -332,6 +335,80 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         auto* from = _lastSpokenValid ? kg.Current()->NodeAt(_lastSpoken) : nullptr;
         AnnounceLanding(kg, from, node);
+    }
+
+    // The game's own tooltip for the widget under a control's focus box: what the mouse would show,
+    // through the window's own onTooltip, so dynamic tooltips come out formatted as on screen. Not
+    // while a dropdown is open - its rows sit over the window's widgets.
+    static std::string WidgetTooltipText(const GraphNode* node, WindowBase& w)
+    {
+        auto* windowMgr = GetWindowManager();
+        if (node == nullptr || !node->vtable.focusRect || windowMgr == nullptr
+            || windowMgr->FindByClass(WindowClass::dropdown) != nullptr)
+            return {};
+        try
+        {
+            const auto rect = node->vtable.focusRect();
+            if (!rect.has_value())
+                return {};
+            const ScreenCoordsXY centre{ rect->x + rect->width / 2, rect->y + rect->height / 2 };
+            const WidgetIndex widx = windowMgr->FindWidgetFromPoint(w, centre);
+            if (widx == kWidgetIndexNull || widx >= w.widgets.size())
+                return {};
+            const auto& widget = w.widgets[widx];
+            if (widget.flags.has(WidgetFlag::tooltipIsString))
+                return widget.sztooltip != nullptr ? std::string(widget.sztooltip) : std::string();
+            auto result = w.onTooltip(widx, widget.tooltip);
+            if (result.str == kStringIdNone)
+                return {};
+            return FormatStringIDLegacy(result.str, result.args.Data());
+        }
+        catch (...)
+        {
+            LogRecipeFailure(w.classification, "tooltip threw");
+            return {};
+        }
+    }
+
+    // F1 (§7.2): a control's own onTooltip owns the whole behaviour; otherwise the game's tooltip
+    // for its widget. False when there is neither - then F1 falls through to the map cursor's
+    // context help, which explains the open window's keys (where the spec would say "no tooltip").
+    static bool SpeakTooltip(KeyGraph& kg, WindowBase& w)
+    {
+        if (kg.Tooltip())
+            return true;
+        const std::string text = WidgetTooltipText(kg.CurrentNode(), w);
+        if (text.empty())
+            return false;
+        ScreenReaderSpeak(text, true);
+        return true;
+    }
+
+    // The window's name: the screen's own, else the window's caption where it holds plain text.
+    static std::string WindowNameText(const GraphScreen& screen, const WindowBase& w)
+    {
+        if (screen.screenName)
+            return GuardedText(screen.screenName);
+        for (const auto& widget : w.widgets)
+        {
+            if (widget.type == WidgetType::caption && widget.flags.has(WidgetFlag::textIsString) && widget.string != nullptr)
+                return widget.string;
+        }
+        return {};
+    }
+
+    // Backtick (§7.2 "where am I"): the window, then the focused control with its whole context
+    // chain, state and position - what a first landing on it would say.
+    static void SpeakWhereAmI(KeyGraph& kg, const GraphScreen& screen, WindowBase& w)
+    {
+        if (!kg.Rerender())
+            return;
+        SpeechBuilder sb;
+        sb.add(WindowNameText(screen, w));
+        if (auto* node = kg.CurrentNode(); node != nullptr)
+            sb.add(GraphAnnouncer::ComposeFull(node));
+        if (!sb.empty())
+            ScreenReaderSpeak(sb.str(), true);
     }
 
     static void AnnounceTree(KeyGraph& kg, const KeyGraph::TreeResult& tr)
@@ -478,7 +555,41 @@ namespace OpenRCT2::Ui::Accessibility
                     AnnounceMove(kg, r);
                     return true;
                 }
-                return false; // no pages: fall through (Tab still opens the tools menu)
+                {
+                    // Zones (§4.3, §7.7): a screen built as several Tab-stops gets its Tab cycling
+                    // here, wrapping, landing where each stop was left (else its selected member,
+                    // else its first control). One stop means no zones: fall through, so Tab still
+                    // opens the tools menu.
+                    auto r = kg.MoveStop(shift ? -1 : 1, true);
+                    if (!r.moved)
+                        return false;
+                    AnnounceMove(kg, r);
+                    return true;
+                }
+            case SDLK_F1:
+                // The tooltip verb (§7.2).
+                if (shift || ctrl || alt)
+                    return false;
+                return SpeakTooltip(kg, w);
+            case SDLK_BACKQUOTE:
+                // "Where am I" (§7.2). Only while a window has the keyboard - on the map the key is
+                // still the game's console.
+                if (shift || ctrl || alt)
+                    return false;
+                SpeakWhereAmI(kg, screen, w);
+                return true;
+            case SDLK_BACKSPACE:
+            {
+                // The secondary activation (§7.2). Claimed only by a control that has one: the
+                // game binds Backspace to "close the top window", and that stays everywhere else.
+                if (shift || ctrl || alt)
+                    return false;
+                const uint32_t spokenBefore = ScreenReaderSpokenCount();
+                if (!kg.Secondary())
+                    return false;
+                SpeakStateFeedback(kg, spokenBefore);
+                return true;
+            }
             case SDLK_HOME:
             case SDLK_END:
             {
