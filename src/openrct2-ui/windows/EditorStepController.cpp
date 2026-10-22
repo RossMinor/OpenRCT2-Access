@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/interface/Theme.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -35,6 +36,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr ScreenSize kWindowSize = { 200, 32 };
 
     enum EditorStepControllerWidgetIdx : WidgetIndex
@@ -437,11 +440,11 @@ namespace OpenRCT2::Ui::Windows
     void BuildEditorStepsTab(Accessibility::Graph::GraphBuilder& b)
     {
         using namespace Accessibility::Graph;
-        b.PushContext("Editor steps");
+        b.PushContext(Vocab::kEditorSteps);
         if (auto step = EditorCurrentStepName(); !step.empty())
         {
             NodeVtable vt;
-            vt.announcements.emplace_back(NodeAnnouncement::Static("Editor step"));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kEditorStep));
             vt.announcements.emplace_back(NodeAnnouncement::Static(step, AnnouncementKinds::kValue));
             b.AddItem(ControlId::Structural("steps:current"), std::move(vt));
         }
@@ -449,7 +452,7 @@ namespace OpenRCT2::Ui::Windows
         {
             NodeVtable vt;
             vt.announcements.emplace_back(NodeAnnouncement::Static(button.label));
-            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
             vt.onActivate = [n = button.number]() { EditorStepButtonActivate(n); };
             vt.focusRect = [button]() -> std::optional<GraphRect> {
                 return GraphRect{ button.x, button.y, button.width, button.height };

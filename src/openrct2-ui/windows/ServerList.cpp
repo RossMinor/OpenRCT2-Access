@@ -14,6 +14,7 @@
     #include <openrct2-ui/accessibility/MapNavigation.h>
     #include <openrct2-ui/accessibility/ScreenReader.h>
     #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+    #include <openrct2-ui/accessibility/graph/GraphVocab.h>
     #include <openrct2-ui/accessibility/graph/GraphScreens.h>
     #include <openrct2-ui/interface/Dropdown.h>
     #include <openrct2-ui/interface/Widget.h>
@@ -38,6 +39,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr ScreenSize kMinimumWindowSize = { 500, 288 };
     static constexpr ScreenSize kMaximumWindowSize = { 1200, 788 };
     static constexpr ScreenSize kWindowSize = kMinimumWindowSize;
@@ -507,7 +510,7 @@ namespace OpenRCT2::Ui::Windows
             {
                 NodeVtable vt;
                 vt.announcements.emplace_back(NodeAnnouncement::Static(kButtons[j]));
-                vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
                 vt.onActivate = [this, w = kBtn[j]]() { onMouseUp(w); };
                 vt.focusRect = [this, idx = count + j]() { return accessServerRect(idx); };
                 b.AddItem(ControlId::Structural("btn:" + std::to_string(j)), std::move(vt));

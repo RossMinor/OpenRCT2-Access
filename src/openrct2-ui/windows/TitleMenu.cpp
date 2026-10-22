@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <openrct2-ui/accessibility/AccessCrashHandler.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
@@ -35,6 +36,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     using namespace OpenRCT2::Drawing;
 
     enum WindowTitleMenuWidgetIdx : WidgetIndex
@@ -341,7 +344,7 @@ namespace OpenRCT2::Ui::Windows
 
             if (_accessDropdownOpen)
             {
-                b.PushContext(getMenuItemName(WIDX_GAME_TOOLS), "menu");
+                b.PushContext(getMenuItemName(WIDX_GAME_TOOLS), Vocab::kRoleDropdown);
                 for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
                     if (gDropdown.items[i].isSeparator())

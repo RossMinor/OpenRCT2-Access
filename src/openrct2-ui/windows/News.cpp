@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <iterator>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -41,6 +42,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr ScreenSize kWindowSize = { 400, 300 };
     static constexpr uint8_t kItemSeparatorHeight = 2;
 
@@ -392,10 +395,10 @@ namespace OpenRCT2::Ui::Windows
                 NodeVtable vt;
                 vt.announcements.emplace_back(
                     [i]() { return OpenRCT2::FormatStringID(kNewsItemOptionDefinitions[i].caption); });
-                vt.announcements.emplace_back(NodeAnnouncement::Static("checkbox", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
                 vt.announcements.emplace_back(
                     [this, i]() {
-                        return GetNotificationValueRef(kNewsItemOptionDefinitions[i]) ? "checked" : "unchecked";
+                        return GetNotificationValueRef(kNewsItemOptionDefinitions[i]) ? Vocab::kChecked : Vocab::kUnchecked;
                     },
                     false, AnnouncementKinds::kValue);
                 vt.onActivate = [this, i]() {
@@ -405,8 +408,8 @@ namespace OpenRCT2::Ui::Windows
                     invalidate();
                 };
                 vt.stateText = [this, i]() {
-                    return GetNotificationValueRef(kNewsItemOptionDefinitions[i]) ? std::string("checked")
-                                                                                 : std::string("unchecked");
+                    return GetNotificationValueRef(kNewsItemOptionDefinitions[i]) ? std::string(Vocab::kChecked)
+                                                                                 : std::string(Vocab::kUnchecked);
                 };
                 b.AddItem(ControlId::Structural("opt:" + std::to_string(i)), std::move(vt));
             }

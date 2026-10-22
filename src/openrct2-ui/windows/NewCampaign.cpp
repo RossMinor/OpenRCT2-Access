@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
@@ -34,6 +35,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr StringId kWindowTitle = kStringIdNone;
     static constexpr ScreenSize kWindowSize = { 350, 109 };
 
@@ -353,7 +356,8 @@ namespace OpenRCT2::Ui::Windows
                 const bool isItem = (Campaign.campaign_type == ADVERTISING_CAMPAIGN_FOOD_OR_DRINK_FREE);
                 std::string value = ncWidgetText(WIDX_RIDE_DROPDOWN);
                 items.push_back(
-                    { std::string(isItem ? "Item" : "Ride") + ", combo box, " + (value.empty() ? "not selected" : value),
+                    { Accessibility::JoinSpeech(
+                          { isItem ? "Item" : "Ride", Vocab::kRoleComboBox, value.empty() ? Vocab::kNothingChosen : value }),
                       NcKind::dropdown, WIDX_RIDE_DROPDOWN_BUTTON });
             }
 
@@ -420,7 +424,7 @@ namespace OpenRCT2::Ui::Windows
 
             if (_accessDropdownOpen)
             {
-                b.PushContext("Ride", "menu");
+                b.PushContext("Ride", Vocab::kRoleDropdown);
                 for (int32_t k = 0; k < gDropdown.numItems; k++)
                 {
                     if (gDropdown.items[k].isSeparator())

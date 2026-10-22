@@ -8,6 +8,7 @@
  *****************************************************************************/
 
 #include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -48,6 +49,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr StringId kWindowTitle = kStringIdNone;
 
     static constexpr ScreenSize kWindowSize = { 190, 180 };
@@ -421,7 +424,7 @@ namespace OpenRCT2::Ui::Windows
                     if (const auto comma = ctx.find(", "); comma != std::string::npos)
                         ctx = ctx.substr(0, comma);
                 }
-                b.PushContext(ctx, "menu");
+                b.PushContext(ctx, Vocab::kRoleDropdown);
                 for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
                     if (gDropdown.items[i].isSeparator())
@@ -433,7 +436,7 @@ namespace OpenRCT2::Ui::Windows
                     NodeVtable vt;
                     vt.announcements.emplace_back(NodeAnnouncement::Static(text));
                     if (item.isChecked() || (item.type == Dropdown::ItemType::colour && i == gDropdown.defaultIndex))
-                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kSelected, AnnouncementKinds::kSelected));
                     if (item.isDisabled())
                         vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
                     vt.onActivate = [this, i]() { sxCommitDropdown(i); };
@@ -474,7 +477,7 @@ namespace OpenRCT2::Ui::Windows
                         // moment of checking it. The live part speaks it once it actually lands.
                         vt.announcements.emplace_back(
                             [this, w = it.widget]() {
-                                return widgetIsPressed(*this, w) ? std::string("checked") : std::string("unchecked");
+                                return widgetIsPressed(*this, w) ? std::string(Vocab::kChecked) : std::string(Vocab::kUnchecked);
                             },
                             true, Accessibility::Graph::AnnouncementKinds::kValue);
                         break;

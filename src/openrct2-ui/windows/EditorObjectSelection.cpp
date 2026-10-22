@@ -11,6 +11,7 @@
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -56,6 +57,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum : uint16_t
     {
         FILTER_NONE = 0,
@@ -1647,7 +1650,7 @@ namespace OpenRCT2::Ui::Windows
 
             if (_accessDropdownOpen)
             {
-                b.PushContext(OpenRCT2::FormatStringID(STR_OBJECT_FILTER), "menu");
+                b.PushContext(OpenRCT2::FormatStringID(STR_OBJECT_FILTER), Vocab::kRoleDropdown);
                 for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
                     if (gDropdown.items[i].isSeparator())
@@ -1655,7 +1658,7 @@ namespace OpenRCT2::Ui::Windows
                     NodeVtable vt;
                     vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
                     if (gDropdown.items[i].isChecked())
-                        vt.announcements.emplace_back(NodeAnnouncement::Static("checked", AnnouncementKinds::kSelected));
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kChecked, AnnouncementKinds::kSelected));
                     // Every option is a checkbox, so the menu stays open while they are set: Enter
                     // checks or unchecks one (taking effect at once, as a click does), and Escape
                     // closes the menu keeping what is checked.
@@ -1663,7 +1666,7 @@ namespace OpenRCT2::Ui::Windows
                     vt.stateText = [i]() -> std::string {
                         if (i >= gDropdown.numItems)
                             return {};
-                        return gDropdown.items[i].isChecked() ? "checked" : "unchecked";
+                        return Vocab::Checked(gDropdown.items[i].isChecked());
                     };
                     vt.onFocus = [i]() { Accessibility::SetKeyboardDropdownIndex(i); };
                     b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
@@ -1685,8 +1688,8 @@ namespace OpenRCT2::Ui::Windows
             if (!currentPage.subTabs.empty())
             {
                 NodeVtable vt;
-                vt.announcements.emplace_back(NodeAnnouncement::Static("Category"));
-                vt.announcements.emplace_back(NodeAnnouncement::Static("combo box", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kObjCategory));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleComboBox, AnnouncementKinds::kRole));
                 vt.announcements.emplace_back(
                     [this]() {
                         const auto& page = ObjectSelectionPages[selectedTab];
@@ -1710,8 +1713,8 @@ namespace OpenRCT2::Ui::Windows
             if (widgets[WIDX_FILTER_DROPDOWN].type != WidgetType::empty)
             {
                 NodeVtable vt;
-                vt.announcements.emplace_back(NodeAnnouncement::Static("Filter"));
-                vt.announcements.emplace_back(NodeAnnouncement::Static("combo box", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kObjFilter));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleComboBox, AnnouncementKinds::kRole));
                 vt.announcements.emplace_back(
                     [this]() { return axFilterText(); }, true, AnnouncementKinds::kValue);
                 vt.onActivate = [this]() { axOpenDropdown(); };
@@ -1730,8 +1733,8 @@ namespace OpenRCT2::Ui::Windows
             if (widgets[WIDX_FILTER_TEXT_BOX].isVisible())
             {
                 NodeVtable vt;
-                vt.announcements.emplace_back(NodeAnnouncement::Static("Search"));
-                vt.announcements.emplace_back(NodeAnnouncement::Static("edit", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kObjSearch));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleEdit, AnnouncementKinds::kRole));
                 vt.announcements.emplace_back([this]() { return axSearchText(); }, true, AnnouncementKinds::kValue);
                 vt.onActivate = [this]() {
                     WindowTextInputRawOpen(
@@ -1744,34 +1747,37 @@ namespace OpenRCT2::Ui::Windows
             // Clear is only offered while there is something to clear.
             if (!_filter.empty() && widgets[WIDX_FILTER_CLEAR_BUTTON].isVisible())
             {
-                axAddButton(b, "clear", "Clear search", WIDX_FILTER_CLEAR_BUTTON);
+                axAddButton(b, "clear", Vocab::kObjClearSearch, WIDX_FILTER_CLEAR_BUTTON);
             }
 
             // The ride page's column headings, which sort the list.
             if (widgets[WIDX_LIST_SORT_TYPE].isVisible())
             {
-                axAddSortButton(b, "sorttype", "Sort by type", WIDX_LIST_SORT_TYPE, RIDE_SORT_TYPE);
-                axAddSortButton(b, "sortname", "Sort by name", WIDX_LIST_SORT_RIDE, RIDE_SORT_RIDE);
+                axAddSortButton(b, "sorttype", Vocab::kObjSortByType, WIDX_LIST_SORT_TYPE, RIDE_SORT_TYPE);
+                axAddSortButton(b, "sortname", Vocab::kObjSortByName, WIDX_LIST_SORT_RIDE, RIDE_SORT_RIDE);
             }
 
             // How many objects of this page's type are in the scenario, against the limit.
             if (gLegacyScene != LegacyScene::trackDesignsManager)
             {
                 NodeVtable vt;
-                vt.announcements.emplace_back(NodeAnnouncement::Static("Objects selected"));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kObjSelectedCount));
                 vt.announcements.emplace_back(
                     [this]() {
                         const auto type = GetSelectedObjectType();
-                        return std::to_string(Editor::_numSelectedObjectsForType[EnumValue(type)]) + " of "
-                            + std::to_string(getObjectEntryGroupCount(type));
+                        return Vocab::Position(
+                            static_cast<int32_t>(Editor::_numSelectedObjectsForType[EnumValue(type)]),
+                            static_cast<int32_t>(getObjectEntryGroupCount(type)));
                     },
                     true, AnnouncementKinds::kValue);
                 vt.excludeFromSearch = true;
                 b.AddItem(ControlId::Structural(axKey("count")), std::move(vt));
             }
 
-            // The objects themselves. Identity is the object's own name, so focus stays on the same
-            // object across a re-sort, a filter change or a rebuild.
+            // The objects themselves, as their own list, so "n of m" counts objects only and not the
+            // controls above them (spec §4.6). Identity is the object's own name, so focus stays on
+            // the same object across a re-sort, a filter change or a rebuild.
+            b.PushContext(Vocab::kObjList, Vocab::kRoleList);
             int32_t rowPos = 0;
             for (size_t i = 0; i < _listItems.size(); i++)
             {
@@ -1820,10 +1826,11 @@ namespace OpenRCT2::Ui::Windows
             {
                 // An empty page still needs a node or the screen goes silent.
                 NodeVtable vt;
-                vt.announcements.emplace_back(NodeAnnouncement::Static("No objects match the current filter"));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kObjNoMatches));
                 vt.excludeFromSearch = true;
                 b.AddItem(ControlId::Structural(axKey("empty")), std::move(vt));
             }
+            b.PopContext(); // the objects
 
             b.PopContext();
         }
@@ -1928,10 +1935,10 @@ namespace OpenRCT2::Ui::Windows
                 return {};
             const auto objectFlags = *_listItems[i].flags;
             if (objectFlags.has(ObjectSelectionFlag::flag5))
-                return "unavailable";
-            std::string state = objectFlags.has(ObjectSelectionFlag::selected) ? "selected" : "unselected";
+                return Vocab::kObjUnavailable;
+            std::string state = Vocab::Selected(objectFlags.has(ObjectSelectionFlag::selected));
             if (objectFlags.hasAny(ObjectSelectionFlag::inUse, ObjectSelectionFlag::alwaysRequired))
-                state += ", required";
+                state = Accessibility::JoinSpeech({ state, Vocab::kObjRequired });
             return state;
         }
 
@@ -1987,7 +1994,7 @@ namespace OpenRCT2::Ui::Windows
             using namespace Accessibility::Graph;
             NodeVtable vt;
             vt.announcements.emplace_back(NodeAnnouncement::Static(std::move(label)));
-            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
             vt.onActivate = [this, widx]() {
                 onMouseUp(widx);
                 // Clear takes its own button away: land back on the search box it emptied.
@@ -2008,7 +2015,7 @@ namespace OpenRCT2::Ui::Windows
             using namespace Accessibility::Graph;
             NodeVtable vt;
             vt.announcements.emplace_back(NodeAnnouncement::Static(label));
-            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
             vt.announcements.emplace_back([this, sortType]() { return axSortOrder(sortType); }, true, AnnouncementKinds::kValue);
             vt.onActivate = [this, widx]() { onMouseUp(widx); };
             vt.stateText = [this, label, sortType]() { return std::string(label) + ", " + axSortOrder(sortType); };
@@ -2020,18 +2027,18 @@ namespace OpenRCT2::Ui::Windows
         {
             if (_listSortType != sortType)
                 return {};
-            return _listSortDescending ? "Z to A" : "A to Z";
+            return _listSortDescending ? Vocab::kObjSortDescending : Vocab::kObjSortAscending;
         }
 
         std::string axSearchText() const
         {
             if (_filter.empty())
-                return "empty";
+                return Vocab::kEmpty;
             size_t count = 0;
             for (const auto& item : _listItems)
                 if (item.repositoryItem != nullptr)
                     count++;
-            return _filter + ", " + std::to_string(count) + (count == 1 ? " object" : " objects");
+            return Accessibility::JoinSpeech({ _filter, Vocab::ObjCount(count) });
         }
 
         // Show object i in the preview panel through the window's own hover handler, so the picture
@@ -2110,13 +2117,13 @@ namespace OpenRCT2::Ui::Windows
                 }
             }
 
-            sb.add("Source, " + FormatStringID(ObjectManagerGetSourceGameString(repositoryItem->GetFirstSourceGame())));
+            sb.add(Accessibility::JoinSpeech({ Vocab::kObjSource, FormatStringID(ObjectManagerGetSourceGameString(repositoryItem->GetFirstSourceGame())) }));
             if (!repositoryItem->Authors.empty())
             {
                 Accessibility::SpeechBuilder authors;
                 for (const auto& author : repositoryItem->Authors)
                     authors.add(author);
-                sb.add((repositoryItem->Authors.size() == 1 ? "Author, " : "Authors, ") + authors.str());
+                sb.add(Accessibility::JoinSpeech({ repositoryItem->Authors.size() == 1 ? Vocab::kObjAuthor : Vocab::kObjAuthors, authors.str() }));
             }
             if (object != nullptr && object->UsesFallbackImages())
                 sb.add(FormatStringID(STR_OBJECT_USES_FALLBACK_IMAGES));
@@ -2129,14 +2136,14 @@ namespace OpenRCT2::Ui::Windows
         void axReload(size_t i)
         {
             axPreview(i);
-            std::string note = "Only selected objects can be reloaded";
+            std::string note = Vocab::kObjReloadOnlySelected;
             if (selectedListItem == static_cast<int32_t>(i) && _loadedObject != nullptr)
             {
                 auto& objectManager = GetContext()->GetObjectManager();
                 if (objectManager.GetLoadedObjectEntryIndex(_loadedObject->GetDescriptor()) != kObjectEntryIndexNull)
                 {
                     onMouseUp(WIDX_RELOAD_OBJECT);
-                    note = "Reloaded";
+                    note = Vocab::kObjReloaded;
                 }
             }
             Accessibility::Graph::GraphStateForClass(WindowClass::editorObjectSelection).nextLandingNote = std::move(note);

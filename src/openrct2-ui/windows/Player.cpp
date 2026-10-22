@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -37,6 +38,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum WindowPlayerPage
     {
         WINDOW_PLAYER_PAGE_OVERVIEW,
@@ -239,7 +242,7 @@ namespace OpenRCT2::Ui::Windows
 
             if (_accessDropdownOpen)
             {
-                b.PushContext("Group", "menu");
+                b.PushContext("Group", Vocab::kRoleDropdown);
                 for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
                     if (gDropdown.items[i].isSeparator())
@@ -247,7 +250,7 @@ namespace OpenRCT2::Ui::Windows
                     NodeVtable vt;
                     vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
                     if (gDropdown.items[i].isChecked())
-                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kSelected, AnnouncementKinds::kSelected));
                     vt.onActivate = [this, i]() { accessCommitDropdown(i); };
                                         // Keep the engine's drawn highlight on the row the keyboard is on; it clears
                     // that field from the mouse every tick, so it has to be re-asserted.

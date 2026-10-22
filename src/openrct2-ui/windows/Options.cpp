@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <openrct2-ui/accessibility/ListNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
@@ -73,6 +74,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum WindowOptionsPage
     {
         WINDOW_OPTIONS_PAGE_DISPLAY,
@@ -729,7 +732,7 @@ namespace OpenRCT2::Ui::Windows
             switch (kind)
             {
                 case AccessControlKind::checkbox:
-                    return widgetIsPressed(*this, w) ? "checked" : "unchecked";
+                    return widgetIsPressed(*this, w) ? Vocab::kChecked : Vocab::kUnchecked;
                 case AccessControlKind::slider:
                     return std::to_string(GetScrollPercentage(widgets[w], scrolls[accessSliderScrollIndex(w)]))
                         + " percent";
@@ -753,7 +756,7 @@ namespace OpenRCT2::Ui::Windows
                     return "";
                 }
                 case AccessControlKind::button:
-                    return widgetIsPressed(*this, w) ? "on" : "";
+                    return widgetIsPressed(*this, w) ? Vocab::kOn : "";
                 default:
                     return "";
             }
@@ -851,7 +854,7 @@ namespace OpenRCT2::Ui::Windows
             if (_accessDropdownOpen)
             {
                 const auto owner = static_cast<WidgetIndex>(_accessDropdownChevron - 1);
-                b.PushContext(accessControlLabel(owner, classifyAccessControl(owner)), "menu");
+                b.PushContext(accessControlLabel(owner, classifyAccessControl(owner)), Vocab::kRoleDropdown);
                 for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
                     if (gDropdown.items[i].isSeparator())
@@ -860,7 +863,7 @@ namespace OpenRCT2::Ui::Windows
                     vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
                     if (gDropdown.items[i].isChecked())
                         vt.announcements.emplace_back(
-                            NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                            NodeAnnouncement::Static(Vocab::kSelected, AnnouncementKinds::kSelected));
                     if (gDropdown.items[i].isDisabled())
                         vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
                     vt.onActivate = [this, i]() { accessCommitDropdown(i); };

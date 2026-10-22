@@ -13,6 +13,7 @@
 
     #include <openrct2-ui/accessibility/ScreenReader.h>
     #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+    #include <openrct2-ui/accessibility/graph/GraphVocab.h>
     #include <openrct2-ui/accessibility/graph/GraphScreens.h>
     #include <openrct2-ui/interface/Widget.h>
     #include <openrct2-ui/interface/Window.h>
@@ -31,6 +32,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum WindowServerStartWidgetIdx : WidgetIndex
     {
         WIDX_BACKGROUND,
@@ -272,7 +275,7 @@ namespace OpenRCT2::Ui::Windows
                 vt.announcements.emplace_back(NodeAnnouncement::Static(std::string(labelText(f))));
                 if (f == AxField::startServer || f == AxField::loadServer)
                 {
-                    vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
                     vt.onActivate = [this, f]() { onMouseUp(widgetForField(f)); };
                 }
                 else
@@ -367,7 +370,7 @@ namespace OpenRCT2::Ui::Windows
                 // Never speak the password itself; just whether one is set.
                 case AxField::password:    return _password[0] ? "set" : "not set";
                 case AxField::maxPlayers:  return std::to_string(Config::Get().network.maxplayers);
-                case AxField::advertise:   return Config::Get().network.advertise ? "on" : "off";
+                case AxField::advertise:   return Config::Get().network.advertise ? Vocab::kOn : Vocab::kOff;
                 case AxField::startServer:
                 case AxField::loadServer:  return {};
             }

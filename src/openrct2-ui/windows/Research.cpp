@@ -9,6 +9,7 @@
 
 #include <iterator>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -33,6 +34,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr ScreenSize kWindowSizeDevelopment = { 300, 196 };
     static constexpr ScreenSize kWindowSizeFunding = { 320, 207 };
 
@@ -255,7 +258,7 @@ namespace OpenRCT2::Ui::Windows
                 const int32_t mask = 1 << i;
                 const bool enabled = (gameState.researchUncompletedCategories & mask) != 0;
                 const char* state = !enabled ? "fully researched"
-                                             : ((gameState.researchPriorities & mask) ? "checked" : "unchecked");
+                                             : ((gameState.researchPriorities & mask) ? Vocab::kChecked : Vocab::kUnchecked);
                 items.push_back(
                     { OpenRCT2::FormatStringID(kLabels[i]) + ", " + state + ", checkbox", i, enabled });
             }
@@ -293,7 +296,7 @@ namespace OpenRCT2::Ui::Windows
             const int32_t mask = 1 << category;
             if ((gameState.researchUncompletedCategories & mask) == 0)
                 return "fully researched";
-            return (gameState.researchPriorities & mask) ? "checked" : "unchecked";
+            return (gameState.researchPriorities & mask) ? Vocab::kChecked : Vocab::kUnchecked;
         }
 
         // ---- graph accessibility recipe ----

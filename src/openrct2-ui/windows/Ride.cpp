@@ -14,6 +14,7 @@
 #include <memory>
 #include <openrct2-ui/UiStringIds.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
@@ -89,6 +90,8 @@ using namespace OpenRCT2::TrackMetadata;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr int32_t kMinimumWindowWidth = 316;
 
     static constexpr StringId kWindowTitle = STR_RIDE_WINDOW_TITLE;
@@ -1270,7 +1273,7 @@ namespace OpenRCT2::Ui::Windows
                     if (widgets[WIDX_VEHICLE_REVERSED_TRAINS_CHECKBOX].type == WidgetType::checkbox)
                         control(
                             "Reversed trains", AxKind::checkbox, WIDX_VEHICLE_REVERSED_TRAINS_CHECKBOX,
-                            widgetIsPressed(*this, WIDX_VEHICLE_REVERSED_TRAINS_CHECKBOX) ? "checked" : "unchecked");
+                            widgetIsPressed(*this, WIDX_VEHICLE_REVERSED_TRAINS_CHECKBOX) ? Vocab::kChecked : Vocab::kUnchecked);
                     break;
                 }
                 case WINDOW_RIDE_PAGE_OPERATING:
@@ -1392,7 +1395,7 @@ namespace OpenRCT2::Ui::Windows
                 {
                     control(
                         "Play music", AxKind::checkbox, WIDX_PLAY_MUSIC,
-                        widgetIsPressed(*this, WIDX_PLAY_MUSIC) ? "checked" : "unchecked");
+                        widgetIsPressed(*this, WIDX_PLAY_MUSIC) ? Vocab::kChecked : Vocab::kUnchecked);
                     if (widgets[WIDX_MUSIC].type == WidgetType::dropdownMenu)
                         control("Music style", AxKind::dropdown, WIDX_MUSIC_DROPDOWN, axWidgetText(WIDX_MUSIC));
                     break;
@@ -1420,7 +1423,7 @@ namespace OpenRCT2::Ui::Windows
                     if (widgets[WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX].type == WidgetType::checkbox)
                         control(
                             "Random colour per item", AxKind::checkbox, WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX,
-                            widgetIsPressed(*this, WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX) ? "checked" : "unchecked");
+                            widgetIsPressed(*this, WIDX_SELL_ITEM_RANDOM_COLOUR_CHECKBOX) ? Vocab::kChecked : Vocab::kUnchecked);
                     if (widgets[WIDX_ENTRANCE_STYLE].type == WidgetType::dropdownMenu)
                         control(
                             "Station entrance style", AxKind::dropdown, WIDX_ENTRANCE_STYLE_DROPDOWN,

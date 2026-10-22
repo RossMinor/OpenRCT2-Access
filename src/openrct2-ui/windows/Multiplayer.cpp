@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cassert>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -39,6 +40,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum
     {
         WINDOW_MULTIPLAYER_PAGE_INFORMATION,
@@ -940,7 +943,7 @@ namespace OpenRCT2::Ui::Windows
 
             if (_accessDropdownOpen)
             {
-                b.PushContext("Group", "menu");
+                b.PushContext("Group", Vocab::kRoleDropdown);
                 for (int32_t k = 0; k < gDropdown.numItems; k++)
                 {
                     if (gDropdown.items[k].isSeparator())
@@ -948,7 +951,7 @@ namespace OpenRCT2::Ui::Windows
                     NodeVtable vt;
                     vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[k].text));
                     if (gDropdown.items[k].isChecked())
-                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kSelected, AnnouncementKinds::kSelected));
                     vt.onActivate = [this, k]() { accessCommitDropdown(k); };
                     // Keep the engine's drawn highlight on the row the keyboard is on; it clears
                     // that field from the mouse every tick, so it has to be re-asserted.
@@ -1153,7 +1156,7 @@ namespace OpenRCT2::Ui::Windows
                         return {};
                     const auto wi = opts[i];
                     return Accessibility::JoinSpeech(
-                        { FormatStringID(widgets[wi].text), "checkbox", isWidgetPressed(wi) ? "checked" : "unchecked" });
+                        { FormatStringID(widgets[wi].text), Vocab::kRoleCheckbox, isWidgetPressed(wi) ? Vocab::kChecked : Vocab::kUnchecked });
                 }
             }
             return {};
@@ -1169,7 +1172,7 @@ namespace OpenRCT2::Ui::Windows
                     const auto opts = optionCheckboxes();
                     if (i < 0 || i >= static_cast<int32_t>(opts.size()))
                         return {};
-                    return isWidgetPressed(opts[i]) ? "checked" : "unchecked";
+                    return isWidgetPressed(opts[i]) ? Vocab::kChecked : Vocab::kUnchecked;
                 }
                 case WINDOW_MULTIPLAYER_PAGE_GROUPS:
                 {

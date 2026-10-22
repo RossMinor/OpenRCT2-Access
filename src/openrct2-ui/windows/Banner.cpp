@@ -10,6 +10,7 @@
 #include "../UiStringIds.h"
 
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -39,6 +40,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr StringId kWindowTitle = STR_BANNER_WINDOW_TITLE;
     static constexpr ScreenSize kWindowSize = { 113, 96 };
 
@@ -352,7 +355,7 @@ namespace OpenRCT2::Ui::Windows
                 }
                 case AxKind::noEntry:
                     return std::string("No entry banner, ")
-                        + (banner != nullptr && banner->flags.has(BannerFlag::noEntry) ? "on" : "off");
+                        + (banner != nullptr && banner->flags.has(BannerFlag::noEntry) ? Vocab::kOn : Vocab::kOff);
                 case AxKind::mainColour:
                     return "Sign colour, " + (banner != nullptr ? axColourName(banner->colour) : std::string());
                 case AxKind::textColour:
@@ -412,7 +415,7 @@ namespace OpenRCT2::Ui::Windows
                         vt.onActivate = [this]() { onMouseUp(WIDX_BANNER_NO_ENTRY); };
                         vt.stateText = [this]() {
                             auto* banner = GetBanner(GetBannerIndex());
-                            return std::string(banner != nullptr && banner->flags.has(BannerFlag::noEntry) ? "on" : "off");
+                            return std::string(banner != nullptr && banner->flags.has(BannerFlag::noEntry) ? Vocab::kOn : Vocab::kOff);
                         };
                         break;
                     case AxKind::mainColour:

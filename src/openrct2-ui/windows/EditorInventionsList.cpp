@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/input/MouseInput.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -40,6 +41,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
 #pragma region Widgets
 
     static constexpr ScreenSize kWindowSize = { 600, 400 };
@@ -556,8 +559,9 @@ namespace OpenRCT2::Ui::Windows
 
         // ---- graph accessibility recipe ----
         //
-        // The two lists as one vertical run - pre-invented, then the research order - then the three
-        // buttons. Moving an item is the mouse's drag and drop made into two presses: Enter picks an
+        // Each list, the buttons and (in the scenario editor) the Editor steps tab are their own
+        // Tab-stops: the arrows stay inside one, and the navigator cycles them with Tab, returning to
+        // where each was left. Moving an item is the mouse's drag and drop made into two presses: Enter picks an
         // item up, Enter on another item drops it in front of that one, in either list, and each list
         // offers an "End of list" spot while something is carried. Shift+Enter sends an item straight
         // to the end of the other list. Every move goes through MoveResearchItem - the drop the mouse
@@ -567,16 +571,6 @@ namespace OpenRCT2::Ui::Windows
             using namespace Accessibility::Graph;
             onPrepareDraw(); // lay the widgets out for the current window size before boxing them
 
-            if (_axStepsTab)
-            {
-                if (HasEditorStepsTab())
-                {
-                    BuildEditorStepsTab(b);
-                    return;
-                }
-                _axStepsTab = false; // the step buttons went away (left the editor): back to the lists
-            }
-
             // The carried item can leave the lists behind our back (Move all, a mouse drag): let go.
             if (_axCarried.has_value() && !axFind(_axCarried->rawValue).has_value())
                 _axCarried.reset();
@@ -585,34 +579,27 @@ namespace OpenRCT2::Ui::Windows
             axBuildList(b, true, seen);
             axBuildList(b, false, seen);
             b.BeginStop("buttons");
-            axAddButton(b, WIDX_MOVE_ITEMS_TO_TOP, "All items moved to pre-invented");
-            axAddButton(b, WIDX_MOVE_ITEMS_TO_BOTTOM, "All items moved to items to invent");
-            axAddButton(b, WIDX_RANDOM_SHUFFLE, "Items to invent shuffled");
+            axAddButton(b, WIDX_MOVE_ITEMS_TO_TOP, Vocab::kInvAllToPreInvented);
+            axAddButton(b, WIDX_MOVE_ITEMS_TO_BOTTOM, Vocab::kInvAllToInvent);
+            axAddButton(b, WIDX_RANDOM_SHUFFLE, Vocab::kInvShuffled);
+
+            // In the scenario editor only (never when opened from the Cheats menu).
+            if (HasEditorStepsTab())
+            {
+                b.BeginStop("steps");
+                BuildEditorStepsTab(b);
+            }
         }
 
         // Escape puts a carried item back. Otherwise it closes the window only where the window can
         // be closed: in the scenario editor this is a step of the editor, with no close button, and
         // closing it would strand the player between steps.
-        // Tab and Shift+Tab cycle the window's parts: the two lists, the buttons and, in the scenario
-        // editor, the Editor steps tab. A list is re-entered where the player left it, so reaching
-        // the second list never means walking the whole of the first.
-        bool AccessChangePage(int32_t dir)
-        {
-            const int32_t count = HasEditorStepsTab() ? 4 : 3;
-            const int32_t to = (axCurrentPart() + (dir < 0 ? count - 1 : 1)) % count;
-            _axStepsTab = to == 3;
-            if (!_axStepsTab)
-                Accessibility::Graph::GraphStateForClass(WindowClass::editorInventionList).nextSuggestedMove = axPartLanding(
-                    to);
-            return true;
-        }
-
         bool AccessEscape()
         {
             if (_axCarried.has_value())
             {
                 _axCarried.reset();
-                axNote("Put back");
+                axNote(Vocab::kInvPutBack);
                 return true;
             }
             return gLegacyScene == LegacyScene::scenarioEditor;
@@ -622,63 +609,6 @@ namespace OpenRCT2::Ui::Windows
         // The item being moved (Enter to pick up, Enter again to drop). Held by value: the lists are
         // vectors, and every move reshuffles them under any pointer.
         std::optional<ResearchItem> _axCarried;
-
-        // On the Editor steps tab (see AccessChangePage). Keyboard only: the window draws as before.
-        bool _axStepsTab = false;
-
-        static std::optional<uint32_t> axItemKeyValue(const std::string& key)
-        {
-            if (!key.starts_with("item:"))
-                return std::nullopt;
-            return static_cast<uint32_t>(std::strtoul(key.c_str() + 5, nullptr, 10));
-        }
-
-        // The part of the window holding focus: 0 the pre-invented list, 1 the list to invent,
-        // 2 the buttons, 3 the Editor steps tab.
-        int32_t axCurrentPart() const
-        {
-            if (_axStepsTab && HasEditorStepsTab())
-                return 3;
-            const std::string& key = Accessibility::Graph::GraphStateForClass(WindowClass::editorInventionList)
-                                         .curKey.StructuralKey();
-            if (key.starts_with("btn:"))
-                return 2;
-            if (const auto raw = axItemKeyValue(key))
-            {
-                const auto place = axFind(*raw);
-                return place.has_value() && !place->isInvented ? 1 : 0;
-            }
-            return key.ends_with(":todo") ? 1 : 0;
-        }
-
-        // Where Tab lands in a part: a list where the player left it, else its first row; the
-        // buttons on the first button.
-        Accessibility::Graph::ControlId axPartLanding(int32_t part) const
-        {
-            using namespace Accessibility::Graph;
-            if (part == 2)
-                return ControlId::Structural("btn:" + std::to_string(WIDX_MOVE_ITEMS_TO_TOP));
-
-            const bool isInvented = part == 0;
-            const std::string side = isInvented ? "pre" : "todo";
-            // The navigator remembers the last row focused in each stop (the stops carry the side).
-            const auto& memory = GraphStateForClass(WindowClass::editorInventionList).stopMemory;
-            if (const auto last = memory.find(side); last != memory.end())
-            {
-                if (const auto raw = axItemKeyValue(last->second.StructuralKey()))
-                {
-                    const auto place = axFind(*raw);
-                    if (place.has_value() && place->isInvented == isInvented)
-                        return last->second;
-                }
-            }
-
-            const auto& gameState = getGameState();
-            const auto& list = isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
-            if (!list.empty())
-                return ControlId::Structural("item:" + std::to_string(list[0].rawValue));
-            return ControlId::Structural((_axCarried.has_value() ? "end:" : "empty:") + side);
-        }
 
         void axNote(std::string text)
         {
@@ -693,7 +623,7 @@ namespace OpenRCT2::Ui::Windows
 
         static const char* axListName(bool isInvented)
         {
-            return isInvented ? "Items pre-invented at start of game" : "Items to invent during game";
+            return isInvented ? Vocab::kInvPreInvented : Vocab::kInvToInvent;
         }
 
         // Which list an item is in, and where.
@@ -742,7 +672,7 @@ namespace OpenRCT2::Ui::Windows
 
             // Each list is its own Tab-stop, so the arrows stay inside it.
             b.BeginStop(side);
-            b.PushContext(axListName(isInvented), "list");
+            b.PushContext(axListName(isInvented), Vocab::kRoleList);
             for (size_t i = 0; i < list.size(); i++)
             {
                 const ResearchItem item = list[i]; // a copy: the build is thrown away before anything moves
@@ -754,9 +684,9 @@ namespace OpenRCT2::Ui::Windows
                 vt.announcements.emplace_back(NodeAnnouncement::Static(axItemLabel(item)));
                 vt.announcements.emplace_back(NodeAnnouncement::Static(FormatStringID(item.getCategoryInventionString())));
                 if (item.isAlwaysResearched())
-                    vt.announcements.emplace_back(NodeAnnouncement::Static("always invented"));
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kInvAlwaysInvented));
                 vt.announcements.emplace_back(
-                    [this, raw]() { return _axCarried.has_value() && _axCarried->rawValue == raw ? "picked up" : ""; },
+                    [this, raw]() { return _axCarried.has_value() && _axCarried->rawValue == raw ? Vocab::kInvCarried : ""; },
                     true);
                 vt.onActivate = [this, raw]() { axActivate(raw); };
                 vt.onActivateShift = [this, raw]() { axSendAcross(raw); };
@@ -769,7 +699,7 @@ namespace OpenRCT2::Ui::Windows
             if (_axCarried.has_value())
             {
                 NodeVtable vt;
-                vt.announcements.emplace_back(NodeAnnouncement::Static("End of list"));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kInvEndOfList));
                 vt.onActivate = [this, isInvented]() { axDrop(std::nullopt, isInvented); };
                 vt.excludeFromSearch = true;
                 b.AddItem(ControlId::Structural("end:" + side), std::move(vt));
@@ -778,7 +708,7 @@ namespace OpenRCT2::Ui::Windows
             {
                 // An empty list still needs a node, or its heading is never heard.
                 NodeVtable vt;
-                vt.announcements.emplace_back(NodeAnnouncement::Static("Empty"));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kInvEmpty));
                 vt.excludeFromSearch = true;
                 b.AddItem(ControlId::Structural("empty:" + side), std::move(vt));
             }
@@ -790,7 +720,7 @@ namespace OpenRCT2::Ui::Windows
             using namespace Accessibility::Graph;
             NodeVtable vt;
             vt.announcements.emplace_back(NodeAnnouncement::Static(FormatStringID(widgets[widx].text)));
-            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
             // The window's own handler, so the buttons do exactly what a click does.
             vt.onActivate = [this, widx, done]() {
                 _axCarried.reset();
@@ -815,7 +745,7 @@ namespace OpenRCT2::Ui::Windows
                 if (_axCarried->rawValue == raw)
                 {
                     _axCarried.reset();
-                    axNote("Put back");
+                    axNote(Vocab::kInvPutBack);
                     return;
                 }
                 axDrop(place->index, place->isInvented);
@@ -826,11 +756,11 @@ namespace OpenRCT2::Ui::Windows
             const auto& list = place->isInvented ? gameState.researchItemsInvented : gameState.researchItemsUninvented;
             if (list[place->index].isAlwaysResearched())
             {
-                axNote("Always invented, cannot be moved");
+                axNote(Vocab::kInvCannotMove);
                 return;
             }
             _axCarried = list[place->index];
-            axNote("Picked up");
+            axNote(Vocab::kInvPickedUp);
         }
 
         // Drop the carried item in front of the item at `beforeIndex` in a list, or at its end.
@@ -858,7 +788,7 @@ namespace OpenRCT2::Ui::Windows
             }
             MoveResearchItem(carried, before, isInvented);
             axFocusOn(carried.rawValue);
-            axNote("Moved");
+            axNote(Vocab::kInvMoved);
         }
 
         // Shift+Enter: straight to the end of the other list, keeping the player's place.
@@ -872,7 +802,7 @@ namespace OpenRCT2::Ui::Windows
             const ResearchItem item = list[place->index];
             if (item.isAlwaysResearched())
             {
-                axNote("Always invented, cannot be moved");
+                axNote(Vocab::kInvCannotMove);
                 return;
             }
             if (_axCarried.has_value() && _axCarried->rawValue == raw)
@@ -888,7 +818,7 @@ namespace OpenRCT2::Ui::Windows
             MoveResearchItem(item, nullptr, !place->isInvented);
             if (stay.has_value())
                 axFocusOn(*stay);
-            axNote(axItemLabel(item) + " moved to " + axListName(!place->isInvented));
+            axNote(Vocab::InvMovedTo(axItemLabel(item), axListName(!place->isInvented)));
         }
 
         Accessibility::Graph::GraphRect axRowRect(bool isInvented, int32_t row) const
@@ -985,7 +915,6 @@ namespace OpenRCT2::Ui::Windows
         screen.windowClass = WindowClass::editorInventionList;
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<InventionListWindow&>(w).BuildAccessGraph(b); };
         screen.onEscape = [](WindowBase& w) { return static_cast<InventionListWindow&>(w).AccessEscape(); };
-        screen.onTabKey = [](WindowBase& w, int32_t dir) { return static_cast<InventionListWindow&>(w).AccessChangePage(dir); };
         // Lists only: Left/Right have no meaning on a row, and there are no pages to change to.
         screen.sideArrowsChangePage = false;
         RegisterGraphScreen(std::move(screen));

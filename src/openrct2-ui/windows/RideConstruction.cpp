@@ -9,6 +9,7 @@
 
 #include <limits>
 #include <openrct2-ui/accessibility/Elevation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/ProvisionalElements.h>
@@ -80,6 +81,8 @@ using OpenRCT2::GameActions::MazeBuildMode;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     bool gDisableErrorWindowSound = false;
 
     static RideConstructionState _rideConstructionState2;
@@ -1646,7 +1649,7 @@ namespace OpenRCT2::Ui::Windows
                     return std::string("Banking, ") + ((idx >= 0) ? opts[idx].label : "no bank") + axLockedSuffix(opts);
                 }
                 case AxField::chain:
-                    return std::string("Chain lift, ") + (_currentTrackHasLiftHill ? "on" : "off")
+                    return std::string("Chain lift, ") + (_currentTrackHasLiftHill ? Vocab::kOn : Vocab::kOff)
                         + (widgetIsDisabled(*this, WIDX_CHAIN_LIFT) ? ", locked" : "");
                 case AxField::construct:
                     return "Construct. " + axComposedPiece();
@@ -1747,7 +1750,7 @@ namespace OpenRCT2::Ui::Windows
             }
             onMouseDown(WIDX_CHAIN_LIFT);
             Accessibility::ScreenReaderSpeak(
-                std::string("Chain lift ") + (_currentTrackHasLiftHill ? "on" : "off") + ". " + axValidityAndCost());
+                std::string("Chain lift ") + (_currentTrackHasLiftHill ? Vocab::kOn : Vocab::kOff) + ". " + axValidityAndCost());
         }
 
         // Rotates the build direction (the vanilla Rotate button). delta > 0 turns one way, < 0 the

@@ -14,6 +14,7 @@
 #include <iterator>
 #include <limits>
 #include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -61,6 +62,8 @@ using namespace OpenRCT2::Numerics;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum WindowTopToolbarWidgetIdx : WidgetIndex
     {
         WIDX_PAUSE,
@@ -1084,7 +1087,7 @@ namespace OpenRCT2::Ui::Windows
 
             if (_accessibilityDropdownOpen)
             {
-                b.PushContext(getToolbarItemName(_accessibilityDropdownParent), "menu");
+                b.PushContext(getToolbarItemName(_accessibilityDropdownParent), Vocab::kRoleDropdown);
                 for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
                     if (gDropdown.items[i].isSeparator())
@@ -1098,7 +1101,7 @@ namespace OpenRCT2::Ui::Windows
                         [i]() -> std::string {
                             if (i >= gDropdown.numItems)
                                 return {};
-                            return gDropdown.items[i].isChecked() ? "checked" : "";
+                            return gDropdown.items[i].isChecked() ? Vocab::kChecked : "";
                         },
                         true, AnnouncementKinds::kValue);
                     if (gDropdown.items[i].isDisabled())

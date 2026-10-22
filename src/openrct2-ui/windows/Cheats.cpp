@@ -11,6 +11,7 @@
 
 #include <iterator>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -39,6 +40,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     constexpr auto kCheatsMoneyDefault = 10000.00_GBP;
     constexpr auto kCheatsMoneyIncrement = 5000.00_GBP;
 
@@ -632,7 +635,7 @@ static StringId window_cheats_page_titles[] = {
             switch (kind)
             {
                 case AccessControlKind::checkbox:
-                    return widgetIsPressed(*this, w) ? "checked" : "unchecked";
+                    return widgetIsPressed(*this, w) ? Vocab::kChecked : Vocab::kUnchecked;
                 case AccessControlKind::spinner:
                     if (page == WINDOW_CHEATS_PAGE_MONEY && w == WIDX_MONEY_SPINNER)
                         return OpenRCT2::FormatStringID(STR_CURRENCY_FORMAT, _moneySpinnerValue);
@@ -655,7 +658,7 @@ static StringId window_cheats_page_titles[] = {
                     return "";
                 }
                 case AccessControlKind::button:
-                    return widgetIsPressed(*this, w) ? "on" : "";
+                    return widgetIsPressed(*this, w) ? Vocab::kOn : "";
                 default:
                     return "";
             }
@@ -751,7 +754,7 @@ static StringId window_cheats_page_titles[] = {
             if (_accessDropdownOpen)
             {
                 const auto owner = static_cast<WidgetIndex>(_accessDropdownChevron - 1);
-                b.PushContext(accessControlLabel(owner, classifyAccessControl(owner)), "menu");
+                b.PushContext(accessControlLabel(owner, classifyAccessControl(owner)), Vocab::kRoleDropdown);
                 for (int32_t i = 0; i < gDropdown.numItems; i++)
                 {
                     if (gDropdown.items[i].isSeparator())
@@ -759,7 +762,7 @@ static StringId window_cheats_page_titles[] = {
                     NodeVtable vt;
                     vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
                     if (gDropdown.items[i].isChecked())
-                        vt.announcements.emplace_back(NodeAnnouncement::Static("selected", AnnouncementKinds::kSelected));
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kSelected, AnnouncementKinds::kSelected));
                     if (gDropdown.items[i].isDisabled())
                         vt.announcements.emplace_back(NodeAnnouncement::Static("unavailable"));
                     vt.onActivate = [this, i]() { accessCommitDropdown(i); };
