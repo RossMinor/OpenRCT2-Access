@@ -314,6 +314,7 @@ namespace OpenRCT2::Ui::Windows
     void RegisterEditorInventionsListGraphScreen();
     void RegisterMapGraphScreen();
     void RegisterLandRightsGraphScreen();
+    void RegisterEditorParkEntranceGraphScreen();
 
     // Puts the toolbar's keyboard focus on its first button. Called when Tab steps into the
     // toolbar, so entering always starts at the left-hand end.

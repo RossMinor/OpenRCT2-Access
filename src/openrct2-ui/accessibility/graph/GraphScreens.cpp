@@ -9,6 +9,8 @@
 
 #include "GraphScreens.h"
 
+#include "../EditorPlacement.h"
+
 #include "../MenuNavigation.h"
 
 #include <openrct2-ui/interface/Window.h>
@@ -103,6 +105,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterEditorInventionsListGraphScreen();
         Windows::RegisterMapGraphScreen();
         Windows::RegisterLandRightsGraphScreen();
+        Windows::RegisterEditorParkEntranceGraphScreen();
 
         // Modal confirmation prompts share one generic button-driven recipe. demolishRidePrompt is
         // used by both the demolish and refurbish prompts (different C++ classes, same window class).
@@ -202,6 +205,10 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         // While placing a pre-built ride, the keyboard map cursor positions it, so no window
         // should capture the keys (same guard as the legacy dispatcher).
         if (windowMgr->FindByClass(WindowClass::trackDesignPlace) != nullptr)
+            return nullptr;
+        // Likewise while the scenario editor's park entrance is being placed: the Map window it was
+        // started from stays open behind, and must not take the arrows from the cursor.
+        if (IsEditorPlacementActive())
             return nullptr;
 
         // WindowVisitEach walks the window list back-to-front, so the last navigable window it

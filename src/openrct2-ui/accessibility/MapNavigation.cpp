@@ -12,6 +12,7 @@
 #include "AccessSounds.h"
 #include "Direction.h"
 #include "Elevation.h"
+#include "EditorPlacement.h"
 #include "ElevationTone.h"
 #include "GuestRescue.h"
 #include "MenuNavigation.h"
@@ -53,6 +54,7 @@
 #include <openrct2/actions/scenery/WallRemoveAction.h>
 #include <openrct2/actions/track/TrackRemoveAction.h>
 #include <openrct2/actions/park/LandBuyRightsAction.h>
+#include <openrct2/actions/park/ParkEntranceRemoveAction.h>
 #include <openrct2/actions/peep/PeepPickupAction.h>
 #include <openrct2/actions/terraform/LandLowerAction.h>
 #include <openrct2/actions/terraform/LandRaiseAction.h>
@@ -662,7 +664,12 @@ namespace OpenRCT2::Ui::Accessibility
                     {
                         // The park entrance displays the park's name across it; read it like a sign.
                         const std::string parkName = getGameState().park.name;
-                        parts.push_back(parkName.empty() ? "Park entrance" : "Park entrance, " + parkName);
+                        std::string text = parkName.empty() ? "Park entrance" : "Park entrance, " + parkName;
+                        // In the scenario editor, where the path to the map edge has to leave from its
+                        // outside, say which way that is (the stored direction points into the park).
+                        if (isInEditorMode())
+                            text += std::string(", outside facing ") + GetScreenDirectionName(DirectionReverse(entrance->getDirection()));
+                        parts.push_back(std::move(text));
                         break;
                     }
                     case EntranceType::rideEntrance:
@@ -1407,6 +1414,13 @@ namespace OpenRCT2::Ui::Accessibility
             // Shop / flat-ride footprint: a small area, so always read (onPreviewTile) regardless of the
             // tile-speech mode, letting the player trace each of its few tiles.
             description = readout.bareGround ? *previewLabel : (*previewLabel + ", " + description);
+            readout.bareGround = false;
+            onPreviewTile = true;
+        }
+        else if (auto editorLabel = EditorPlacementPreviewLabel(_cursor); editorLabel.has_value())
+        {
+            // The park entrance: three tiles, always read, as with a stall's footprint.
+            description = readout.bareGround ? *editorLabel : (*editorLabel + ", " + description);
             readout.bareGround = false;
             onPreviewTile = true;
         }
@@ -3259,6 +3273,7 @@ namespace OpenRCT2::Ui::Accessibility
             banner,
             rideEntranceExit,
             track,
+            parkEntrance,
         };
 
         Kind kind{};
@@ -3361,9 +3376,28 @@ namespace OpenRCT2::Ui::Accessibility
             }
             else if (auto* e = el->asEntrance(); e != nullptr)
             {
-                // Park entrances are left out: they are removed through the park's own tools, and a
-                // stray Delete on the gate would take the entrance off a working park.
+                // Park entrances are left out in a park: a stray Delete on the gate would take the
+                // entrance off a working park. In the scenario editor, placing and moving the entrance
+                // is the job, and Delete is the keyboard's way to take one away (the mouse right-clicks).
                 const EntranceType type = e->getEntranceType();
+                if (type == EntranceType::parkEntrance && isInEditorMode())
+                {
+                    // The remove action wants the entrance's own position - its middle tile, as the
+                    // park lists it - from whichever of its three tiles the cursor is on.
+                    for (const auto& entrance : getGameState().park.entrances)
+                    {
+                        if (std::abs(entrance.x - world.x) <= kCoordsXYStep && std::abs(entrance.y - world.y) <= kCoordsXYStep
+                            && entrance.z == el->getBaseZ())
+                        {
+                            DeleteCandidate c;
+                            c.kind = DeleteCandidate::Kind::parkEntrance;
+                            c.loc = entrance;
+                            c.label = "Park entrance";
+                            out.push_back(std::move(c));
+                            break;
+                        }
+                    }
+                }
                 if (type == EntranceType::rideEntrance || type == EntranceType::rideExit)
                 {
                     DeleteCandidate c;
@@ -3452,6 +3486,11 @@ namespace OpenRCT2::Ui::Accessibility
             case DeleteCandidate::Kind::track:
             {
                 auto a = GameActions::TrackRemoveAction(c.trackType, c.trackSequence, c.loc);
+                return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
+            }
+            case DeleteCandidate::Kind::parkEntrance:
+            {
+                auto a = GameActions::ParkEntranceRemoveAction(CoordsXYZ{ c.loc.x, c.loc.y, c.loc.z });
                 return GameActions::Execute(&a, gs).error == GameActions::Status::ok;
             }
         }
@@ -4513,6 +4552,32 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
 
+        // Scenario editor placement (the park entrance): the same keys as stall placement. Arrows fall
+        // through to move the cursor, so the preview can be explored.
+        if (IsEditorPlacementActive())
+        {
+            switch (key)
+            {
+                case SDLK_r:
+                    EditorPlacementRotate();
+                    return true;
+                case SDLK_SPACE:
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER:
+                    if (!_initialised)
+                        InitialiseCursor();
+                    EditorPlacementAtTile(_cursor);
+                    return true;
+                case SDLK_BACKSPACE:
+                    if (auto origin = EditorPlacementPickup(); origin.has_value())
+                        SnapCursorToPickedUpPreview(origin->ToCoordsXY());
+                    return true;
+                case SDLK_ESCAPE:
+                    EditorPlacementCancel();
+                    return true;
+            }
+        }
+
         // Scenery placement: cursor positions the object, R rotates (small/large), Space places
         // (Enter still does too, so nothing already learned breaks), Escape finishes. Shift+W/A/S/D picks the tile edge (walls/banners) and Shift+Q/E/Z/C picks
         // the corner (small scenery), as the player sees the tile - top/bottom/left/right. Plain
@@ -5028,6 +5093,14 @@ namespace OpenRCT2::Ui::Accessibility
                 "Placing a ride. Arrow keys move the cursor, Enter places it, R rotates, Escape cancels.");
             return;
         }
+        // Scenario editor placement (the park entrance).
+        if (IsEditorPlacementActive())
+        {
+            ScreenReaderSpeak(
+                "Placing the park entrance. Arrow keys move it, R rotates it, Enter shows where it would go, Enter "
+                "again builds it, Backspace picks it back up, Escape cancels.");
+            return;
+        }
         // Keyboard-driven scenery placement.
         if (IsAccessibleSceneryPlacementActive())
         {
@@ -5209,6 +5282,7 @@ namespace OpenRCT2::Ui::Accessibility
     // the editor keeps it, since Tab into the toolbar is how the editor's steps are reached.
     static void ResetMapCursorSession()
     {
+        EditorPlacementReset();
         _initialised = false;
         _statusMode = false;
         _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
@@ -5241,7 +5315,7 @@ namespace OpenRCT2::Ui::Accessibility
             && (key == SDLK_EQUALS || key == SDLK_KP_PLUS || key == SDLK_MINUS || key == SDLK_KP_MINUS
                 || key == SDLK_h || key == SDLK_e))
             return kNotInEditor; // game speed, guest rescue, ride entrance/exit
-        if (!shift && (key == SDLK_RETURN || key == SDLK_KP_ENTER))
+        if (!shift && (key == SDLK_RETURN || key == SDLK_KP_ENTER) && !IsEditorPlacementActive())
             return kNotInEditor; // open what is here / build on a ride; Shift+Enter still rotates
         if (shift && !ctrl
             && (key == SDLK_b || key == SDLK_c || key == SDLK_f || key == SDLK_d || key == SDLK_r || key == SDLK_i

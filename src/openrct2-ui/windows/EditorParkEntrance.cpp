@@ -7,6 +7,10 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/EditorPlacement.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/interface/ViewportInteraction.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -23,6 +27,7 @@
 #include <openrct2/drawing/Rectangle.h>
 #include <openrct2/drawing/RenderTarget.h>
 #include <openrct2/interface/Viewport.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/interface/WidgetIndexGlobals.h>
 #include <openrct2/object/EntranceObject.h>
 #include <openrct2/object/ObjectLimits.h>
@@ -40,6 +45,8 @@ using OpenRCT2::GameActions::CommandFlag;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr StringId kWindowTitle = STR_OBJECT_SELECTION_PARK_ENTRANCE;
     static constexpr int32_t kImageSize = 116;
     static constexpr int32_t kNumColumns = 4;
@@ -415,7 +422,57 @@ namespace OpenRCT2::Ui::Windows
             Audio::Play(Audio::SoundId::click1, 0, windowPos.x + (width / 2));
             invalidate();
         }
+
+#pragma region Accessibility
+        // ---- graph accessibility recipe ----
+        //
+        // The entrance styles chosen in object selection, as a list opening on the selected one.
+        // Enter picks a style as clicking it does, closes the window and hands the entrance to the map
+        // cursor to place (EditorPlacement), where R rotates it - the window's Rotate button turns the
+        // mouse tool's preview, which the keyboard does not use.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            b.PushContext(Vocab::kEntranceStyles, Vocab::kRoleList);
+            for (const auto& entrance : _entranceTypes)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(FormatStringID(entrance.stringId)));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(
+                    entrance.entryIndex == _selectedEntranceType ? Vocab::kSelected : "", AnnouncementKinds::kSelected));
+                vt.onActivate = [this, index = entrance.entryIndex]() { axPlace(index); };
+                b.AddItem(ControlId::Structural("entrance:" + std::to_string(entrance.entryIndex)), std::move(vt));
+            }
+            if (_entranceTypes.empty())
+            {
+                // Object selection makes the player choose one, so this should not happen; but an empty
+                // list must still say something, or the window is silent.
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kEntranceNoStyles));
+                b.AddItem(ControlId::Structural("entrance:none"), std::move(vt));
+            }
+            b.PopContext();
+        }
+
+    private:
+        void axPlace(ObjectEntryIndex entranceType)
+        {
+            _selectedEntranceType = entranceType;
+            close();
+            Accessibility::BeginParkEntrancePlacement(entranceType);
+        }
+#pragma endregion
     };
+
+    void RegisterEditorParkEntranceGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::editorParkEntrance;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<EditorParkEntrance&>(w).BuildAccessGraph(b); };
+        screen.screenName = []() { return FormatStringID(kWindowTitle); };
+        RegisterGraphScreen(std::move(screen));
+    }
 
     WindowBase* EditorParkEntranceOpen()
     {

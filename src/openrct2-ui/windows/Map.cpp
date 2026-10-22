@@ -1350,7 +1350,17 @@ namespace OpenRCT2::Ui::Windows
             NodeVtable vt;
             vt.announcements.emplace_back(NodeAnnouncement::Static(label));
             vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
-            vt.onActivate = [this, widx]() { onMouseUp(widx); };
+            vt.onActivate = [this, widx]() {
+                if (widx == WIDX_SET_LAND_RIGHTS)
+                {
+                    // From the keyboard, land rights are set on the map itself (O, with K markers for an
+                    // area), so this closes the window and says so rather than opening the mouse tool.
+                    close();
+                    Accessibility::ScreenReaderSpeak(Vocab::kMapLandRightsHint);
+                    return;
+                }
+                onMouseUp(widx);
+            };
             vt.focusRect = [this, widx]() { return std::optional<GraphRect>(axWidgetRect(widx)); };
             b.AddItem(ControlId::Structural("map:btn:" + std::to_string(widx)), std::move(vt));
         }

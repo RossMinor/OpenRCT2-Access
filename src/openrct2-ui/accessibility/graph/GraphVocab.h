@@ -86,6 +86,9 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kMapGuestStarts = "Set guest starting positions";
     inline constexpr const char* kMapBuildEntrance = "Build park entrance";
     inline constexpr const char* kMapGenerator = "Map generator";
+    // Ross's wording (2026-10-22): Set land rights closes the Map window and says how it is done.
+    inline constexpr const char* kMapLandRightsHint
+        = "Use O to set the land rights of the tile you are on. Use K to set rights within a specified area.";
 
     // Land rights (scenario editor and sandbox mode): the five ownership settings, applied from the
     // keyboard to the map cursor's brush or marked area.
@@ -98,6 +101,10 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     {
         return setting + " set on " + area;
     }
+
+    // Park entrance window (scenario editor).
+    inline constexpr const char* kEntranceStyles = "Entrance styles";
+    inline constexpr const char* kEntranceNoStyles = "No entrance styles. Choose one in object selection.";
 
     // Object selection.
     inline constexpr const char* kObjCategory = "Category";
