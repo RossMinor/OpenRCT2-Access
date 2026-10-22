@@ -7,6 +7,7 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/EditorPlacement.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
@@ -1357,6 +1358,13 @@ namespace OpenRCT2::Ui::Windows
                     // area), so this closes the window and says so rather than opening the mouse tool.
                     close();
                     Accessibility::ScreenReaderSpeak(Vocab::kMapLandRightsHint);
+                    return;
+                }
+                if (widx == WIDX_PEOPLE_STARTING_POSITION)
+                {
+                    // The map cursor places them (EditorPlacement); this window waits behind, as it does
+                    // for the park entrance, and takes the keyboard back when placing finishes.
+                    Accessibility::BeginGuestStartPlacement();
                     return;
                 }
                 onMouseUp(widx);

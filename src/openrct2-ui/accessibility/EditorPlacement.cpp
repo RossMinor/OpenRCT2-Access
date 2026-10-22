@@ -19,6 +19,7 @@
 #include <openrct2/GameState.h>
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/park/ParkEntrancePlaceAction.h>
+#include <openrct2/actions/peep/PeepSpawnPlaceAction.h>
 #include <openrct2/audio/Audio.h>
 #include <openrct2/world/Footpath.h>
 #include <openrct2/world/Map.h>
@@ -27,8 +28,19 @@
 
 namespace OpenRCT2::Ui::Accessibility
 {
+    enum class Kind : uint8_t
+    {
+        parkEntrance,
+        guestStart,
+    };
+
     static bool _active = false;
+    static Kind _kind = Kind::parkEntrance;
     static ObjectEntryIndex _entranceType = 0;
+    // The way new guests walk from a start. The game stores the opposite: the start sits on the
+    // tile's edge in its stored direction and guests walk away from it (GenerateGuest, Park.cpp).
+    // Kept between placements, so a row of starts along a map edge needs turning only once.
+    static Direction _walkDirection = 0;
     // The entrance's own direction, as the game stores it: pointing into the park. Guests arrive
     // from the opposite side - the outside - which is what the player is told it faces.
     static Direction _direction = 0;
@@ -86,6 +98,7 @@ namespace OpenRCT2::Ui::Accessibility
     void BeginParkEntrancePlacement(ObjectEntryIndex entranceType)
     {
         _active = true;
+        _kind = Kind::parkEntrance;
         _entranceType = entranceType;
         _previewing = false;
         // Start with the outside toward the bottom of the screen, whichever way the camera is turned.
@@ -102,15 +115,88 @@ namespace OpenRCT2::Ui::Accessibility
             + ". Arrow keys move it, R rotates, Enter places, Escape cancels.");
     }
 
+    void BeginGuestStartPlacement()
+    {
+        _active = true;
+        _kind = Kind::guestStart;
+        _previewing = false;
+        ScreenReaderSpeak(
+            std::string("Placing guest starting positions, guests walk ") + GetScreenDirectionName(_walkDirection)
+            + ". Move to a path outside the park, R turns the way guests walk, Enter places a start or removes one, "
+              "Escape finishes.");
+    }
+
     bool IsEditorPlacementActive()
     {
         return _active;
+    }
+
+    // The path a start on this tile stands on: the one at the cursor's working elevation, else the
+    // lowest. Nullopt with no path, and the caller passes the ground so the game gives its reason.
+    static std::optional<int32_t> GuestStartPathZ(const TileCoordsXY& tile)
+    {
+        const int32_t workingZ = GetCursorWorkingZ();
+        std::optional<int32_t> lowest;
+        TileElement* el = MapGetFirstElementAt(tile);
+        if (el == nullptr)
+            return std::nullopt;
+        do
+        {
+            if (el->asPath() == nullptr || el->isGhost())
+                continue;
+            const int32_t z = el->getBaseZ();
+            if (z == workingZ)
+                return z;
+            if (!lowest.has_value() || z < *lowest)
+                lowest = z;
+        } while (!(el++)->isLastForTile());
+        return lowest;
+    }
+
+    static void PlaceGuestStart(const TileCoordsXY& tile)
+    {
+        const CoordsXY world = tile.ToCoordsXY();
+        int32_t z = 0;
+        if (auto pathZ = GuestStartPathZ(tile); pathZ.has_value())
+            z = *pathZ;
+        else if (const auto* surface = MapGetSurfaceElementAt(world); surface != nullptr)
+            z = surface->getBaseZ();
+
+        // The game's place action removes a start already on the tile instead of adding one.
+        bool removing = false;
+        for (const auto& spawn : getGameState().peepSpawns)
+        {
+            if (CoordsXY{ spawn.x, spawn.y }.ToTileStart() == world)
+                removing = true;
+        }
+
+        auto action = GameActions::PeepSpawnPlaceAction(CoordsXYZD{ world.x, world.y, z, DirectionReverse(_walkDirection) });
+        // Raised from the UI, it lands a tick later (trap 12.2). A refusal - no path, or not outside
+        // the park - is spoken by the error window, in the game's own words.
+        action.SetCallback([removing](const GameActions::GameAction*, const GameActions::Result* result) {
+            if (result->error != GameActions::Status::ok)
+                return;
+            if (removing)
+            {
+                ScreenReaderSpeak("Guest start removed");
+                return;
+            }
+            Audio::Play3D(Audio::SoundId::placeItem, result->position);
+            ScreenReaderSpeak(std::string("Guest start placed, guests walk ") + GetScreenDirectionName(_walkDirection));
+        });
+        GameActions::Execute(&action, getGameState());
     }
 
     void EditorPlacementRotate()
     {
         if (!_active)
             return;
+        if (_kind == Kind::guestStart)
+        {
+            _walkDirection = (_walkDirection + 1) & 3;
+            ScreenReaderSpeak(std::string("Guests walk ") + GetScreenDirectionName(_walkDirection));
+            return;
+        }
         if (_previewing)
         {
             ScreenReaderSpeak("Press Backspace to move it before rotating");
@@ -124,6 +210,11 @@ namespace OpenRCT2::Ui::Accessibility
     {
         if (!_active)
             return;
+        if (_kind == Kind::guestStart)
+        {
+            PlaceGuestStart(tile);
+            return;
+        }
 
         if (!_previewing)
         {
@@ -189,13 +280,24 @@ namespace OpenRCT2::Ui::Accessibility
             return;
         _active = false;
         _previewing = false;
-        ScreenReaderSpeak("Placement cancelled");
+        // Each guest start is placed as it goes, so leaving keeps them; an entrance not yet built is
+        // abandoned.
+        ScreenReaderSpeak(_kind == Kind::guestStart ? "Finished placing guest starts" : "Placement cancelled");
     }
 
     void EditorPlacementReset()
     {
         _active = false;
         _previewing = false;
+    }
+
+    std::string EditorPlacementHelp()
+    {
+        if (_kind == Kind::guestStart)
+            return "Placing guest starting positions. Arrow keys move, R turns the way guests walk, Enter places a "
+                   "start on a path outside the park, or removes the start already there, Escape finishes.";
+        return "Placing the park entrance. Arrow keys move it, R rotates it, Enter shows where it would go, Enter "
+               "again builds it, Backspace picks it back up, Escape cancels.";
     }
 
     std::optional<std::string> EditorPlacementPreviewLabel(const TileCoordsXY& tile)

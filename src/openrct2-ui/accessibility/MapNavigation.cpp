@@ -793,6 +793,18 @@ namespace OpenRCT2::Ui::Accessibility
         // highest feature - appended last in the canonical bottom-to-top order.
         GatherGroundLitter(tile, parts);
 
+        // In the scenario editor, where they are set: guest starting positions, with the way new
+        // guests walk from them (opposite the stored direction - GenerateGuest, Park.cpp).
+        if (isInEditorMode())
+        {
+            const CoordsXY tileWorld = tile.ToCoordsXY();
+            for (const auto& spawn : getGameState().peepSpawns)
+            {
+                if (CoordsXY{ spawn.x, spawn.y }.ToTileStart() == tileWorld)
+                    parts.push_back(std::string("Guest start, facing ") + GetScreenDirectionName(DirectionReverse(spawn.direction)));
+            }
+        }
+
         // Default reads lowest-to-highest (as built). In highest-to-lowest mode, reverse the whole
         // list so the topmost feature is announced first - the exact mirror of the default order.
         if (Config::Get().sound.accessibilityTileReadingOrder == kTileReadingOrderHighestFirst)
@@ -5151,12 +5163,10 @@ namespace OpenRCT2::Ui::Accessibility
                 "Placing a ride. Arrow keys move the cursor, Enter places it, R rotates, Escape cancels.");
             return;
         }
-        // Scenario editor placement (the park entrance).
+        // Scenario editor placement (the park entrance, guest starts).
         if (IsEditorPlacementActive())
         {
-            ScreenReaderSpeak(
-                "Placing the park entrance. Arrow keys move it, R rotates it, Enter shows where it would go, Enter "
-                "again builds it, Backspace picks it back up, Escape cancels.");
+            ScreenReaderSpeak(EditorPlacementHelp());
             return;
         }
         // Keyboard-driven scenery placement.
