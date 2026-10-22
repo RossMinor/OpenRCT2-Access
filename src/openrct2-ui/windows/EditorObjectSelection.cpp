@@ -9,6 +9,7 @@
 
 #include <bit>
 #include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -1655,7 +1656,15 @@ namespace OpenRCT2::Ui::Windows
                     vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
                     if (gDropdown.items[i].isChecked())
                         vt.announcements.emplace_back(NodeAnnouncement::Static("checked", AnnouncementKinds::kSelected));
-                    vt.onActivate = [this, i]() { axCommitDropdown(i); };
+                    // Every option is a checkbox, so the menu stays open while they are set: Enter
+                    // checks or unchecks one (taking effect at once, as a click does), and Escape
+                    // closes the menu keeping what is checked.
+                    vt.onActivate = [this, i]() { axToggleDropdownItem(i); };
+                    vt.stateText = [i]() -> std::string {
+                        if (i >= gDropdown.numItems)
+                            return {};
+                        return gDropdown.items[i].isChecked() ? "checked" : "unchecked";
+                    };
                     vt.onFocus = [i]() { Accessibility::SetKeyboardDropdownIndex(i); };
                     b.AddItem(ControlId::Structural("dd:" + std::to_string(i)), std::move(vt));
                 }
@@ -1665,6 +1674,10 @@ namespace OpenRCT2::Ui::Windows
 
             const auto& currentPage = ObjectSelectionPages[selectedTab];
             b.PushContext(OpenRCT2::FormatStringID(currentPage.Caption));
+
+            // Only shown when this window is the Track designs manager's ride picker.
+            if (widgets[WIDX_INSTALL_TRACK].isVisible())
+                axAddButton(b, "install", OpenRCT2::FormatStringID(STR_INSTALL_NEW_TRACK_DESIGN), WIDX_INSTALL_TRACK);
 
             // A page split into categories (rides, scenery, paths...) cycles them in place with
             // Left/Right rather than spending a node per category: the categories only decide what
@@ -1710,6 +1723,53 @@ namespace OpenRCT2::Ui::Windows
                 b.AddItem(ControlId::Structural(axKey("filter")), std::move(vt));
             }
 
+            // The search box. Enter opens the shared text prompt (screen-reader aware, with typing
+            // echo) rather than the inline box, whose caret would trap the keyboard; the prompt hands
+            // its text back through onTextInput, as the inline box does. The value is LIVE, so the
+            // new search and how many objects it leaves are read once the prompt closes.
+            if (widgets[WIDX_FILTER_TEXT_BOX].isVisible())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("Search"));
+                vt.announcements.emplace_back(NodeAnnouncement::Static("edit", AnnouncementKinds::kRole));
+                vt.announcements.emplace_back([this]() { return axSearchText(); }, true, AnnouncementKinds::kValue);
+                vt.onActivate = [this]() {
+                    WindowTextInputRawOpen(
+                        this, WIDX_FILTER_TEXT_BOX, STR_OBJECT_SEARCH, kStringIdEmpty, {}, _filter.c_str(), kTextInputSize);
+                };
+                vt.focusRect = [this]() { return std::optional<GraphRect>(axWidgetRect(WIDX_FILTER_TEXT_BOX)); };
+                b.AddItem(ControlId::Structural(axKey("search")), std::move(vt));
+            }
+
+            // Clear is only offered while there is something to clear.
+            if (!_filter.empty() && widgets[WIDX_FILTER_CLEAR_BUTTON].isVisible())
+            {
+                axAddButton(b, "clear", "Clear search", WIDX_FILTER_CLEAR_BUTTON);
+            }
+
+            // The ride page's column headings, which sort the list.
+            if (widgets[WIDX_LIST_SORT_TYPE].isVisible())
+            {
+                axAddSortButton(b, "sorttype", "Sort by type", WIDX_LIST_SORT_TYPE, RIDE_SORT_TYPE);
+                axAddSortButton(b, "sortname", "Sort by name", WIDX_LIST_SORT_RIDE, RIDE_SORT_RIDE);
+            }
+
+            // How many objects of this page's type are in the scenario, against the limit.
+            if (gLegacyScene != LegacyScene::trackDesignsManager)
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static("Objects selected"));
+                vt.announcements.emplace_back(
+                    [this]() {
+                        const auto type = GetSelectedObjectType();
+                        return std::to_string(Editor::_numSelectedObjectsForType[EnumValue(type)]) + " of "
+                            + std::to_string(getObjectEntryGroupCount(type));
+                    },
+                    true, AnnouncementKinds::kValue);
+                vt.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural(axKey("count")), std::move(vt));
+            }
+
             // The objects themselves. Identity is the object's own name, so focus stays on the same
             // object across a re-sort, a filter change or a rebuild.
             int32_t rowPos = 0;
@@ -1725,11 +1785,22 @@ namespace OpenRCT2::Ui::Windows
                 // its members), so a row's state can change without the player touching that row.
                 vt.announcements.emplace_back(
                     [this, i]() { return axRowState(i); }, true, AnnouncementKinds::kSelected);
+                // Everything the details panel shows for the object, read on landing. Not LIVE, so
+                // it is resolved only for the row being announced: it loads the object to read it.
+                vt.announcements.emplace_back([this, i]() { return axRowDetails(i); });
                 vt.onActivate = [this, i]() { axToggle(i); };
+                // The window's Reload object button, for object makers, which only exists while the
+                // debugging tools are on.
+                if (Config::Get().general.debuggingTools)
+                    vt.onActivateCtrl = [this, i]() { axReload(i); };
                 vt.focusRect = [this, rowPos]() { return std::optional<GraphRect>(axRowRect(rowPos)); };
-                // Keep the list scrolled to the row the keyboard is on, so a sighted player sees
-                // what is being read and the focus box lands on something visible.
-                vt.onFocus = [this, rowPos]() { axScrollTo(rowPos); };
+                // Keep the list scrolled to the row the keyboard is on, and show that object in the
+                // preview, so a sighted player sees what is being read and the focus box lands on
+                // something visible.
+                vt.onFocus = [this, i, rowPos]() {
+                    axScrollTo(rowPos);
+                    axPreview(i);
+                };
                 // Identity is the object's IDENTIFIER ("rct2.rides.arrt"), not its display name.
                 // Names are not unique - the ride page ships two different objects both called
                 // "Corkscrew Roller Coaster Trains" - and a duplicate id makes the builder throw,
@@ -1795,7 +1866,7 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        // Escape closes an open filter list first, keeping the window.
+        // Escape closes an open filter list first, keeping the window and what was checked.
         bool AccessEscape()
         {
             if (!_accessDropdownOpen)
@@ -1858,7 +1929,7 @@ namespace OpenRCT2::Ui::Windows
             const auto objectFlags = *_listItems[i].flags;
             if (objectFlags.has(ObjectSelectionFlag::flag5))
                 return "unavailable";
-            std::string state = objectFlags.has(ObjectSelectionFlag::selected) ? "selected" : "not selected";
+            std::string state = objectFlags.has(ObjectSelectionFlag::selected) ? "selected" : "unselected";
             if (objectFlags.hasAny(ObjectSelectionFlag::inUse, ObjectSelectionFlag::alwaysRequired))
                 state += ", required";
             return state;
@@ -1904,6 +1975,173 @@ namespace OpenRCT2::Ui::Windows
             invalidateWidget(WIDX_LIST);
         }
 
+        Accessibility::Graph::GraphRect axWidgetRect(WidgetIndex widx) const
+        {
+            const auto& wd = widgets[widx];
+            return { windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+        }
+
+        // A button that does exactly what clicking it does.
+        void axAddButton(Accessibility::Graph::GraphBuilder& b, const char* key, std::string label, WidgetIndex widx)
+        {
+            using namespace Accessibility::Graph;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(std::move(label)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.onActivate = [this, widx]() {
+                onMouseUp(widx);
+                // Clear takes its own button away: land back on the search box it emptied.
+                if (widx == WIDX_FILTER_CLEAR_BUTTON)
+                    GraphStateForClass(WindowClass::editorObjectSelection).nextSuggestedMove = ControlId::Structural(
+                        axKey("search"));
+            };
+            vt.focusRect = [this, widx]() { return std::optional<GraphRect>(axWidgetRect(widx)); };
+            b.AddItem(ControlId::Structural(axKey(key)), std::move(vt));
+        }
+
+        // A sort heading: says which order it is sorting in when it is the active one. Pressing the
+        // active heading again reverses it, as a click does; either way the press answers with the
+        // heading and the order it now sorts in ("Sort by type, Z to A").
+        void axAddSortButton(
+            Accessibility::Graph::GraphBuilder& b, const char* key, const char* label, WidgetIndex widx, int32_t sortType)
+        {
+            using namespace Accessibility::Graph;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.announcements.emplace_back(NodeAnnouncement::Static("button", AnnouncementKinds::kRole));
+            vt.announcements.emplace_back([this, sortType]() { return axSortOrder(sortType); }, true, AnnouncementKinds::kValue);
+            vt.onActivate = [this, widx]() { onMouseUp(widx); };
+            vt.stateText = [this, label, sortType]() { return std::string(label) + ", " + axSortOrder(sortType); };
+            vt.focusRect = [this, widx]() { return std::optional<GraphRect>(axWidgetRect(widx)); };
+            b.AddItem(ControlId::Structural(axKey(key)), std::move(vt));
+        }
+
+        std::string axSortOrder(int32_t sortType) const
+        {
+            if (_listSortType != sortType)
+                return {};
+            return _listSortDescending ? "Z to A" : "A to Z";
+        }
+
+        std::string axSearchText() const
+        {
+            if (_filter.empty())
+                return "empty";
+            size_t count = 0;
+            for (const auto& item : _listItems)
+                if (item.repositoryItem != nullptr)
+                    count++;
+            return _filter + ", " + std::to_string(count) + (count == 1 ? " object" : " objects");
+        }
+
+        // Show object i in the preview panel through the window's own hover handler, so the picture
+        // and details follow the keyboard exactly as they follow the mouse (an unavailable object
+        // shows nothing, as on hover). Does nothing if it is already the one shown.
+        void axPreview(size_t i)
+        {
+            if (i >= _listItems.size())
+                return;
+            onScrollMouseOver(0, { 0, static_cast<int32_t>(i) * kScrollableRowHeight });
+        }
+
+        // The details panel in words, in the order it draws them: the compatibility warning, the
+        // description, what the object holds (a stall's goods, a scenery group's size, a music
+        // style's tracks), the guest or staff type an animation is for, the source game, the
+        // authors and the fallback image warning. The ride type is already part of the row's name.
+        std::string axRowDetails(size_t i)
+        {
+            if (i >= _listItems.size() || _listItems[i].repositoryItem == nullptr)
+                return {};
+            const auto* repositoryItem = _listItems[i].repositoryItem;
+            axPreview(i);
+            Object* object = selectedListItem == static_cast<int32_t>(i) ? _loadedObject.get() : nullptr;
+
+            Accessibility::SpeechBuilder sb;
+            if (object != nullptr)
+            {
+                if (object->IsCompatibilityObject())
+                    sb.add(FormatStringID(STR_OBJECT_SELECTION_COMPAT_OBJECT_DESCRIPTION));
+                sb.add(ObjectGetDescription(object));
+
+                const auto type = GetSelectedObjectType();
+                if (type == ObjectType::ride)
+                {
+                    const auto& rideEntry = reinterpret_cast<RideObject*>(object)->GetEntry();
+                    std::string sells;
+                    for (const auto shopItem : rideEntry.shop_item)
+                    {
+                        if (shopItem == ShopItem::none)
+                            continue;
+                        if (!sells.empty())
+                            sells += ", ";
+                        sells += LanguageGetString(GetShopItemDescriptor(shopItem).Naming.Plural);
+                    }
+                    if (!sells.empty())
+                        sb.add(FormatStringID(STR_RIDE_OBJECT_SHOP_SELLS, sells.c_str()));
+                }
+                else if (type == ObjectType::sceneryGroup)
+                {
+                    const auto* group = reinterpret_cast<SceneryGroupObject*>(object);
+                    sb.add(FormatStringID(STR_INCLUDES_X_OBJECTS, static_cast<uint16_t>(group->GetNumIncludedObjects())));
+                }
+                else if (type == ObjectType::music)
+                {
+                    const auto* music = reinterpret_cast<MusicObject*>(object);
+                    Accessibility::SpeechBuilder tracks;
+                    for (size_t t = 0; t < music->GetTrackCount(); t++)
+                    {
+                        const auto* track = music->GetTrack(t);
+                        if (track->Name.empty())
+                            continue;
+                        tracks.add(
+                            track->Composer.empty()
+                                ? FormatStringID(STR_MUSIC_OBJECT_TRACK_LIST_ITEM, track->Name.c_str())
+                                : FormatStringID(
+                                      STR_MUSIC_OBJECT_TRACK_LIST_ITEM_WITH_COMPOSER, track->Name.c_str(),
+                                      track->Composer.c_str()));
+                    }
+                    if (!tracks.empty())
+                        sb.add(FormatStringID(STR_MUSIC_OBJECT_TRACK_HEADER)).add(tracks.str());
+                }
+                else if (type == ObjectType::peepAnimations)
+                {
+                    const auto* animations = reinterpret_cast<PeepAnimationsObject*>(object);
+                    sb.add(FormatStringID(GetAnimationPeepTypeStringId(animations->GetPeepType())));
+                }
+            }
+
+            sb.add("Source, " + FormatStringID(ObjectManagerGetSourceGameString(repositoryItem->GetFirstSourceGame())));
+            if (!repositoryItem->Authors.empty())
+            {
+                Accessibility::SpeechBuilder authors;
+                for (const auto& author : repositoryItem->Authors)
+                    authors.add(author);
+                sb.add((repositoryItem->Authors.size() == 1 ? "Author, " : "Authors, ") + authors.str());
+            }
+            if (object != nullptr && object->UsesFallbackImages())
+                sb.add(FormatStringID(STR_OBJECT_USES_FALLBACK_IMAGES));
+            return sb.str();
+        }
+
+        // Ctrl+Enter (debugging tools only): the window's Reload object button, on this object. The
+        // button reloads only an object the game has loaded - one that is selected - and silently
+        // does nothing otherwise, so say which happened.
+        void axReload(size_t i)
+        {
+            axPreview(i);
+            std::string note = "Only selected objects can be reloaded";
+            if (selectedListItem == static_cast<int32_t>(i) && _loadedObject != nullptr)
+            {
+                auto& objectManager = GetContext()->GetObjectManager();
+                if (objectManager.GetLoadedObjectEntryIndex(_loadedObject->GetDescriptor()) != kObjectEntryIndexNull)
+                {
+                    onMouseUp(WIDX_RELOAD_OBJECT);
+                    note = "Reloaded";
+                }
+            }
+            Accessibility::Graph::GraphStateForClass(WindowClass::editorObjectSelection).nextLandingNote = std::move(note);
+        }
+
         // Reuse the window's own click handler rather than re-deriving what selecting an object
         // means: it owns the scenery-group side effects, the "cannot deselect, it is in use"
         // errors and the filter refresh. Row i sits at y = i * kScrollableRowHeight in the scroll.
@@ -1939,15 +2177,23 @@ namespace OpenRCT2::Ui::Windows
             _accessDropdownOpen = false;
         }
 
-        void axCommitDropdown(int32_t idx)
+        // Enter on a filter option: the window's own handler applies it, as a click would, but the
+        // list stays open, so its check marks are brought up to date with the filter (the window
+        // only sets them when it opens the list). Choosing one of "selected only" / "non-selected
+        // only" clears the other.
+        void axToggleDropdownItem(int32_t idx)
         {
-            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
-                && !gDropdown.items[idx].isDisabled();
-            axCloseDropdown();
-            if (valid)
-                onDropdown(WIDX_FILTER_DROPDOWN_BTN, idx);
-            Accessibility::Graph::GraphStateForClass(WindowClass::editorObjectSelection).nextSuggestedMove
-                = Accessibility::Graph::ControlId::Structural(axKey("filter"));
+            if (idx < 0 || idx >= gDropdown.numItems || gDropdown.items[idx].isSeparator()
+                || gDropdown.items[idx].isDisabled())
+                return;
+            onDropdown(WIDX_FILTER_DROPDOWN_BTN, idx);
+            for (int32_t i = 0; i < _numSourceGameItems && i < gDropdown.numItems; i++)
+                gDropdown.items[i].setChecked((_filterFlags & (1 << i)) != 0);
+            if (gLegacyScene != LegacyScene::trackDesignsManager && DDIX_FILTER_NONSELECTED < gDropdown.numItems)
+            {
+                gDropdown.items[DDIX_FILTER_SELECTED].setChecked(IsFilterActive(FILTER_SELECTED));
+                gDropdown.items[DDIX_FILTER_NONSELECTED].setChecked(IsFilterActive(FILTER_NONSELECTED));
+            }
         }
 
     public:
