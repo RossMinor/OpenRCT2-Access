@@ -333,5 +333,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
     inline constexpr const char* kFollowing
         = "Following someone with the camera, which moves with them. Escape stops following.";
 
-    inline constexpr const char* kNetworkStatus = "Connection status. Escape cancels.";
+    inline constexpr const char* kNetworkStatus
+        = "Connection status. Each step of connecting is read as it happens; Enter repeats the latest. Escape "
+          "cancels the connection.";
 } // namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help

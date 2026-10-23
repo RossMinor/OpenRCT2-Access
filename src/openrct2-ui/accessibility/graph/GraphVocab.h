@@ -163,6 +163,9 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kNotANumber = "Not a number";
     inline constexpr const char* kCancelled = "Cancelled";
 
+    // Connection status window.
+    inline constexpr const char* kConnectionStatus = "Connection status";
+
     inline std::string TypeValueRange(const std::string& from, const std::string& to)
     {
         return "Type a value from " + from + " to " + to;

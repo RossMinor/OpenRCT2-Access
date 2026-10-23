@@ -8,6 +8,9 @@
  *****************************************************************************/
 
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
@@ -19,6 +22,8 @@
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum WindowNetworkStatusWidgetIdx : WidgetIndex
     {
         WIDX_BACKGROUND,
@@ -65,24 +70,23 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        // This window has no navigable contents - it is a status readout that updates itself. We
-        // support just two actions: re-speak the current status (announce), and cancel the pending
-        // connection (Escape), which closes the window and disconnects via the close callback.
-        bool onAccessibilityAction(AccessibilityAction action) override
+        // ---- graph accessibility recipe ----
+        //
+        // The window is a status readout that updates itself: one item whose value is the status,
+        // LIVE, so each new step of the connection ("Connecting", "Requesting game data", an error)
+        // is announced as it arrives. Enter repeats it; Escape cancels the connection (closing the
+        // window disconnects through its close callback).
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
-            switch (action)
-            {
-                case AccessibilityAction::announce:
-                    if (!_windowNetworkStatusText.empty())
-                        Accessibility::ScreenReaderSpeak(_windowNetworkStatusText);
-                    return true;
-                case AccessibilityAction::cancel:
-                    Accessibility::ScreenReaderSpeak("Cancelled");
-                    close();
-                    return true;
-                default:
-                    return false;
-            }
+            using namespace Accessibility::Graph;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kConnectionStatus));
+            vt.announcements.emplace_back([this]() { return _windowNetworkStatusText; }, true, AnnouncementKinds::kValue);
+            vt.onActivate = [this]() {
+                if (!_windowNetworkStatusText.empty())
+                    Accessibility::ScreenReaderSpeak(_windowNetworkStatusText);
+            };
+            b.AddItem(ControlId::Structural("ns:status"), std::move(vt));
         }
 
         void onUpdate() override
@@ -128,19 +132,11 @@ namespace OpenRCT2::Ui::Windows
             _onClose = callback;
         }
 
+        // Connection progress is announced by the recipe's LIVE status part as it changes.
         void setWindowNetworkStatusText(const std::string& text)
         {
             _windowNetworkStatusText = text;
             invalidate();
-
-            // Announce connection progress automatically as it changes ("Connecting", "Requesting
-            // game data", error messages, ...). De-duplicated so the same status set repeatedly on
-            // consecutive frames is only spoken once.
-            if (!text.empty() && text != _lastAnnounced)
-            {
-                _lastAnnounced = text;
-                Accessibility::ScreenReaderSpeak(text);
-            }
         }
 
         void setPassword(char* password)
@@ -152,8 +148,23 @@ namespace OpenRCT2::Ui::Windows
         CloseCallback _onClose = nullptr;
         std::string _windowNetworkStatusText;
         std::string _password;
-        std::string _lastAnnounced;
     };
+
+    void RegisterNetworkStatusGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::networkStatus;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<NetworkStatusWindow&>(w).BuildAccessGraph(b); };
+        screen.helpText = [](WindowBase&) { return std::string(Vocab::Help::kNetworkStatus); };
+        // Escape cancels the connection: the navigator closes the window, whose close callback
+        // disconnects.
+        screen.onEscape = [](WindowBase&) {
+            Accessibility::ScreenReaderSpeak(Vocab::kCancelled);
+            return false;
+        };
+        RegisterGraphScreen(std::move(screen));
+    }
 
     WindowBase* NetworkStatusOpen(const std::string& text, CloseCallback onClose)
     {

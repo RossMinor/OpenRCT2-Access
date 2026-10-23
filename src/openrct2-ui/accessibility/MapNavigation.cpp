@@ -710,6 +710,10 @@ namespace OpenRCT2::Ui::Accessibility
                             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                         label = (lower.find("queue") != std::string::npos) ? name : name + " queue";
                     }
+                    // The ride the queue leads to: the game records it on every tile of a queue it has
+                    // joined up to a ride entrance (FootpathChainRideQueue), the line guests use.
+                    if (auto ride = GetRide(p->getRideIndex()); ride != nullptr)
+                        label += " for " + ride->getName();
                 }
                 else
                 {
