@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "GraphVocabHelp.h"
+
 #include <cstdint>
 #include <string>
 

@@ -12,6 +12,7 @@
 #include <openrct2-ui/accessibility/ListNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Objective.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -1013,6 +1014,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::scenarioSelect;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kScenarioSelect); };
         screen.screenName = []() { return std::string("Select scenario"); };
         screen.build = [](GraphBuilder& b, WindowBase& w) {
             static_cast<ScenarioSelectWindow&>(w).BuildAccessGraph(b);

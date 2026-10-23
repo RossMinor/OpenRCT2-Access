@@ -12,6 +12,7 @@
 #include <array>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -585,6 +586,11 @@ namespace OpenRCT2::Ui::Windows
         // Declare the current page's rows fresh from live state. buildGxItems() already composes each
         // row's full spoken line, so each row is a single announcement node; only the Overview page's
         // Locate / Rename rows are actionable.
+        std::string accessGraphHelp() override
+        {
+            return Accessibility::Graph::Vocab::Help::kGuest;
+        }
+
         void accessGraphBuild(Accessibility::Graph::GraphBuilder& b) override
         {
             using namespace Accessibility::Graph;

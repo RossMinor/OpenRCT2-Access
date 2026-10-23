@@ -81,8 +81,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 ### Information
 
 - Tab: Opens the Tools Menu.
-- F1: Mod/game help. Reports actions or commands that can be used anywhere in the game.
-- F1 in a menu or window: Reads the hint for the option you are on, the same tip a sighted player sees when they point the mouse at it. If that option has no hint, you hear the help for the window instead.
+- F1: Help for wherever you are - the map, the window or menu you are in, or what you are doing, such as placing a ride, building track or choosing what to delete. It says what that place is for and the keys that work there.
+- Shift + F1 in a menu or window: Reads the hint for the option you are on, the same tip a sighted player sees when they point the mouse at it. If that option has no hint, it says "No tooltip".
 - Backtick (`) in a menu or window: Tells you where you are - the window, the section you are in, and the option you are on with its setting and position.
 - Control + F1: Opens the mod settings.
 - Control + F2: Turns scenery reading on or off. While it is off, trees, plants, statues, fences and walls are not read as you move the cursor or the mouse. They are still found by Control + arrows with the scenery filter, the Delete menu, and Shift + Home or End. It turns back on each time you start the game.

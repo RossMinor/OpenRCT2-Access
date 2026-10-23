@@ -13,6 +13,7 @@
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/RidePlacement.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/accessibility/RideVisualDescriptions.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
@@ -1338,6 +1339,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::constructRide;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kNewRide); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<NewRideWindow&>(w).BuildAccessGraph(b); };
         screen.onTabKey = [](WindowBase& w, int32_t dir) {
             static_cast<NewRideWindow&>(w).AccessChangePage(dir);

@@ -1725,6 +1725,7 @@ static StringId window_cheats_page_titles[] = {
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::cheats;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kCheats); };
         screen.screenName = []() { return std::string("Cheats"); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<CheatsWindow&>(w).BuildAccessGraph(b); };
         screen.onTabKey = [](WindowBase& w, int32_t dir) {

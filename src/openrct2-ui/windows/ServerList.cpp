@@ -650,6 +650,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::serverList;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kServerList); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ServerListWindow&>(w).BuildAccessGraph(b); };
         // Opened from the title menu; re-announce its focused item before the navigator closes us.
         screen.onEscape = [](WindowBase&) {

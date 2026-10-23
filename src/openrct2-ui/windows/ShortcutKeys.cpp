@@ -13,6 +13,7 @@
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/input/ShortcutManager.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -671,6 +672,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::keyboardShortcutList;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kShortcutKeys); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ShortcutKeysWindow&>(w).BuildAccessGraph(b); };
         screen.onTabKey = [](WindowBase& w, int32_t dir) {
             static_cast<ShortcutKeysWindow&>(w).AccessChangePage(dir);

@@ -11,6 +11,7 @@
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/TrackDesignDescription.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/accessibility/graph/GraphScreens.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -1155,6 +1156,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::trackDesignList;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kTrackList); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<TrackListWindow&>(w).BuildAccessGraph(b); };
         // Escape goes back to the ride catalog this list was opened from (legacy parity). In the
         // track manager the window reopens the manager itself from onClose.

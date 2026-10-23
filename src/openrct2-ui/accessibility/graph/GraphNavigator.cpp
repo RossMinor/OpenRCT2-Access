@@ -384,6 +384,29 @@ namespace OpenRCT2::Ui::Accessibility
         return true;
     }
 
+    // F1: the window's own help, or the list's while one of its combo box lists is open, else the
+    // shared texts.
+    static void SpeakWindowHelp(const GraphScreen& screen, WindowBase& w)
+    {
+        auto* windowMgr = GetWindowManager();
+        const bool listOpen = windowMgr != nullptr && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
+        std::string text;
+        try
+        {
+            if (listOpen)
+                text = screen.dropdownHelpText ? screen.dropdownHelpText(w) : std::string(Vocab::Help::kDropdownList);
+            else if (screen.helpText)
+                text = screen.helpText(w);
+        }
+        catch (...)
+        {
+            LogRecipeFailure(screen.windowClass, "helpText threw");
+        }
+        if (text.empty())
+            text = Vocab::Help::kWindow;
+        ScreenReaderSpeak(text, true);
+    }
+
     // The window's name: the screen's own, else the window's caption where it holds plain text.
     static std::string WindowNameText(const GraphScreen& screen, const WindowBase& w)
     {
@@ -559,19 +582,28 @@ namespace OpenRCT2::Ui::Accessibility
                 {
                     // Zones (§4.3, §7.7): a screen built as several Tab-stops gets its Tab cycling
                     // here, wrapping, landing where each stop was left (else its selected member,
-                    // else its first control). One stop means no zones: fall through, so Tab still
-                    // opens the tools menu.
+                    // else its first control). With one stop there is nowhere to go: Tab stays in
+                    // the window (§7.7, and §8 - only one model may act on a key) and re-reads the
+                    // focused control, so the press still answers. It used to fall through to the map
+                    // cursor, which opened the toolbar behind the window.
                     auto r = kg.MoveStop(shift ? -1 : 1, true);
-                    if (!r.moved)
-                        return false;
                     AnnounceMove(kg, r);
                     return true;
                 }
             case SDLK_F1:
-                // The tooltip verb (§7.2).
-                if (shift || ctrl || alt)
+                if (ctrl || alt)
                     return false;
-                return SpeakTooltip(kg, w);
+                // Shift+F1 is the tooltip verb (§7.2; the binding is host policy). With no tooltip it
+                // says so, as the spec asks.
+                if (shift)
+                {
+                    if (!SpeakTooltip(kg, w))
+                        ScreenReaderSpeak(Vocab::Help::kNoTooltip, true);
+                    return true;
+                }
+                // F1 is help for the window: what it is for and its own keys.
+                SpeakWindowHelp(screen, w);
+                return true;
             case SDLK_BACKQUOTE:
                 // "Where am I" (§7.2). Only while a window has the keyboard - on the map the key is
                 // still the game's console.

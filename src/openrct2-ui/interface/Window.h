@@ -46,6 +46,11 @@ namespace OpenRCT2::Ui
         {
             return false;
         }
+        // F1 help for the window (see GraphScreen::helpText). Empty = the shared window help.
+        virtual std::string accessGraphHelp()
+        {
+            return {};
+        }
 
         void scrollToViewport();
         void initScrollWidgets();

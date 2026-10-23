@@ -1240,6 +1240,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::finances;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kFinances); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<FinancesWindow&>(w).BuildAccessGraph(b); };
         screen.onTabKey = [](WindowBase& w, int32_t dir) {
             static_cast<FinancesWindow&>(w).AccessChangePage(dir);

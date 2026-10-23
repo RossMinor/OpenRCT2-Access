@@ -391,6 +391,11 @@ namespace OpenRCT2::Ui::Windows
 
         // A single vertical list: banner text, the no-entry toggle, the sign/text colours (Left/Right
         // cycle in place), and demolish. Enter edits text, toggles no-entry, or demolishes.
+        std::string accessGraphHelp() override
+        {
+            return Accessibility::Graph::Vocab::Help::kBanner;
+        }
+
         void accessGraphBuild(Accessibility::Graph::GraphBuilder& b) override
         {
             using namespace Accessibility::Graph;

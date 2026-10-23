@@ -496,6 +496,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::titleMenu;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kTitleMenu); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<TitleMenuWindow&>(w).BuildAccessGraph(b); };
         screen.onEscape = [](WindowBase& w) { return static_cast<TitleMenuWindow&>(w).AccessEscape(); };
         RegisterGraphScreen(std::move(screen));

@@ -448,6 +448,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::serverStart;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kServerStart); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ServerStartWindow&>(w).BuildAccessGraph(b); };
         RegisterGraphScreen(std::move(screen));
     }

@@ -9,6 +9,8 @@
 
 #include "GraphScreens.h"
 
+#include "GraphVocab.h"
+
 #include "../EditorPlacement.h"
 
 #include "../MenuNavigation.h"
@@ -65,6 +67,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         GraphScreen screen;
         screen.windowClass = wc;
         screen.build = [](GraphBuilder& b, WindowBase& w) { BuildButtonPromptGraph(b, w); };
+        screen.helpText = [](WindowBase&) { return std::string(Vocab::Help::kPrompt); };
         RegisterGraphScreen(std::move(screen));
     }
 
@@ -125,6 +128,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
                 return true;
             };
             peep.onEscape = [](WindowBase& w) { return static_cast<Ui::Window&>(w).accessGraphEscape(); };
+            peep.helpText = [](WindowBase& w) { return static_cast<Ui::Window&>(w).accessGraphHelp(); };
             RegisterGraphScreen(std::move(peep));
         }
 
@@ -134,6 +138,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
             GraphScreen banner;
             banner.windowClass = WindowClass::banner;
             banner.build = [](GraphBuilder& b, WindowBase& w) { static_cast<Ui::Window&>(w).accessGraphBuild(b); };
+            banner.helpText = [](WindowBase& w) { return static_cast<Ui::Window&>(w).accessGraphHelp(); };
             RegisterGraphScreen(std::move(banner));
         }
     }

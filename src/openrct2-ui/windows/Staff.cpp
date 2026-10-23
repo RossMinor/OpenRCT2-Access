@@ -403,6 +403,11 @@ namespace OpenRCT2::Ui::Windows
         // Declare the current page's rows (or, while a combo box's dropdown is open, that list's
         // items) fresh from live state. buildSxItems() already composes each row's full spoken line,
         // so each row is a single announcement node.
+        std::string accessGraphHelp() override
+        {
+            return Accessibility::Graph::Vocab::Help::kStaff;
+        }
+
         void accessGraphBuild(Accessibility::Graph::GraphBuilder& b) override
         {
             using namespace Accessibility::Graph;

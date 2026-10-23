@@ -71,6 +71,7 @@
     <ClInclude Include="accessibility\graph\GraphScreens.h" />
     <ClInclude Include="accessibility\graph\GraphTypes.h" />
     <ClInclude Include="accessibility\graph\GraphVocab.h" />
+    <ClInclude Include="accessibility\graph\GraphVocabHelp.h" />
     <ClInclude Include="accessibility\graph\KeyGraph.h" />
     <ClInclude Include="audio\AudioContext.h" />
     <ClInclude Include="audio\AudioFormat.h" />

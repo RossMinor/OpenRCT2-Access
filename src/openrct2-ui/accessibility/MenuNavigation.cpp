@@ -15,6 +15,7 @@
 #include "ScreenReader.h"
 #include "graph/GraphNavigator.h"
 #include "graph/GraphScreens.h"
+#include "graph/GraphVocab.h"
 
 #include <SDL.h>
 #include <openrct2-ui/UiContext.h>
@@ -366,6 +367,19 @@ namespace OpenRCT2::Ui::Accessibility
         if (auto* graphFront = Graph::FrontNavigableWindow();
             graphFront != nullptr && Graph::GraphOwnsWindowClass(graphFront->classification))
             return false;
+
+        // F1 in the connection status window, which opens over the title screen where the map
+        // cursor's help (which covers the other older-style windows) does not run.
+        if (e.button == SDLK_F1 && !(e.modifiers & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT)))
+        {
+            auto* front = GetActiveAccessibleWindow();
+            if (front != nullptr && front->classification == WindowClass::networkStatus)
+            {
+                if (e.state == InputEventState::down)
+                    ScreenReaderSpeak(Graph::Vocab::Help::kNetworkStatus);
+                return true;
+            }
+        }
 
         const auto action = MapKeyToAction(e.button, e.modifiers);
         if (!action.has_value())

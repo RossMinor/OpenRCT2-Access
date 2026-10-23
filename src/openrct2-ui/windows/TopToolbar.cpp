@@ -1934,6 +1934,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::topToolbar;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kToolbar); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<TopToolbar&>(w).BuildAccessGraph(b); };
         screen.onEscape = [](WindowBase& w) { return static_cast<TopToolbar&>(w).AccessEscape(); };
         // The toolbar is always open, so it only holds the keyboard while the player has actually

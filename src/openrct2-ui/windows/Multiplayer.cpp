@@ -1328,6 +1328,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::multiplayer;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kMultiplayer); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<MultiplayerWindow&>(w).BuildAccessGraph(b); };
         screen.onTabKey = [](WindowBase& w, int32_t dir) {
             static_cast<MultiplayerWindow&>(w).AccessChangePage(dir);

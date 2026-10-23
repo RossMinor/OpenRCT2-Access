@@ -769,6 +769,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::landRights;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kLandRights); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<LandRightsWindow&>(w).BuildAccessGraph(b); };
         // Only where the window sets ownership rather than buying it; gated, so it is a fallback like
         // the Map window it opens from, and in a park the older keyboard support keeps the window.

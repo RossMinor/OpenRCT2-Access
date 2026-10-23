@@ -2773,6 +2773,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::options;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kOptions); };
         // The window speaks its own usage help in onOpen; no separate screen name on attach.
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<OptionsWindow&>(w).BuildAccessGraph(b); };
         screen.onTabKey = [](WindowBase& w, int32_t dir) {

@@ -2345,6 +2345,11 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::editorObjectSelection;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kObjectSelection); };
+        // Its only list is the filter, whose options are checkboxes: Enter keeps it open.
+        screen.dropdownHelpText = [](WindowBase&) {
+            return std::string(Accessibility::Graph::Vocab::Help::kObjectFilterList);
+        };
         screen.build = [](GraphBuilder& b, WindowBase& w) {
             static_cast<EditorObjectSelectionWindow&>(w).BuildAccessGraph(b);
         };

@@ -1380,6 +1380,7 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::map;
+        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kMap); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<MapWindow&>(w).BuildAccessGraph(b); };
         // Gated: the window holds the keyboard only where it has controls (the scenario editor,
         // sandbox mode), and only as a fallback, so a window opened from it - Land rights, the

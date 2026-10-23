@@ -9,6 +9,7 @@
 
 #include "MapNavigation.h"
 
+#include "AccessFollow.h"
 #include "AccessSounds.h"
 #include "Direction.h"
 #include "Elevation.h"
@@ -18,6 +19,7 @@
 #include "MenuNavigation.h"
 #include "QueueRoute.h"
 #include "graph/GraphScreens.h"
+#include "graph/GraphVocab.h"
 #include "RidePlacement.h"
 #include "SceneryPlacement.h"
 #include "ScreenReader.h"
@@ -5211,138 +5213,58 @@ namespace OpenRCT2::Ui::Accessibility
     // checked most-specific first so the tips always match whatever the player is currently doing.
     static void SpeakContextHelp()
     {
+        namespace Help = Graph::Vocab::Help;
         auto* windowMgr = GetWindowManager();
 
-        // Placing a pre-built ride design.
+        // Modal choices first: while one is open, every key answers it.
+        if (IsDeletePickerActive())
+            return ScreenReaderSpeak(Help::kDeletePicker);
+        if (_zoneListMode)
+            return ScreenReaderSpeak(Help::kZoneList);
+        if (_zoneOverlapConfirmArmed)
+            return ScreenReaderSpeak(Help::kZoneOverlap);
+        if (_areaConfirmPending != AreaCommand::none)
+            return ScreenReaderSpeak(Help::kAreaConfirm);
+        if (IsFollowingEntity())
+            return ScreenReaderSpeak(Help::kFollowing);
+
+        // Placing or building something: the keys change meaning.
         if (Windows::WindowTrackPlaceIsActive())
-        {
-            ScreenReaderSpeak(
-                "Placing a ride design. Arrow keys move the cursor. Enter places a preview you can arrow "
-                "around to check, then Enter again builds it. Backspace repositions the preview, R rotates, "
-                "Escape cancels.");
-            return;
-        }
-        // Ride or maze construction (both use the ride construction window).
+            return ScreenReaderSpeak(Help::kPlacingDesign);
         if (IsRideConstructionWindowOpen())
         {
-            ScreenReaderSpeak(
-                "Construction. Arrow keys move the map cursor. Control up and down choose a build option, "
-                "Control left and right change it, Control Enter builds at the cursor, Control B reads the "
-                "build state. Delete removes the piece under the cursor, Insert moves the build focus to "
-                "the track under the cursor. Escape exits.");
-            return;
+            // The maze has its own construction window under the same window class.
+            const auto* ride = GetRide(_currentRideIndex);
+            const bool maze = ride != nullptr && ride->getRideTypeDescriptor().specialType == RtdSpecialType::maze;
+            return ScreenReaderSpeak(maze ? Help::kMazeConstruction : Help::kRideConstruction);
         }
-        // Keyboard-driven flat-ride placement.
         if (IsAccessibleRidePlacementActive())
-        {
-            ScreenReaderSpeak(
-                "Placing a ride. Arrow keys move the cursor, Enter places it, R rotates, Escape cancels.");
-            return;
-        }
-        // Scenario editor placement (the park entrance, guest starts).
+            return ScreenReaderSpeak(Help::kPlacingRide);
         if (IsEditorPlacementActive())
-        {
-            ScreenReaderSpeak(EditorPlacementHelp());
-            return;
-        }
-        // Keyboard-driven scenery placement.
+            return ScreenReaderSpeak(EditorPlacementHelp());
         if (IsAccessibleSceneryPlacementActive())
-        {
-            ScreenReaderSpeak(
-                "Placing scenery. Arrow keys move the cursor, Enter places it at the cursor, Escape cancels.");
-            return;
-        }
-        // Terraform tool option windows (Land, Water, Land Rights, Clear Scenery).
+            return ScreenReaderSpeak(Help::kPlacingScenery);
+
+        // The land tool windows (Land, Water, Land Rights in a park, Clear Scenery) leave the map
+        // cursor the keys.
         if (windowMgr != nullptr
             && (windowMgr->FindByClass(WindowClass::land) != nullptr
                 || windowMgr->FindByClass(WindowClass::water) != nullptr
                 || windowMgr->FindByClass(WindowClass::landRights) != nullptr
                 || windowMgr->FindByClass(WindowClass::clearScenery) != nullptr))
-        {
-            ScreenReaderSpeak(
-                "Land tool. Arrow keys move the map cursor; Page Up and Page Down raise and lower land, "
-                "hold Control for water. Control up and down choose a tool option, Control left and right "
-                "change it, Escape closes.");
-            return;
-        }
-        // Footpath window.
-        if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::footpath) != nullptr)
-        {
-            ScreenReaderSpeak(
-                "Footpath window. Up and down choose an option: path type, queue type, railings, or build "
-                "mode. Left and right change it, Enter selects. Escape closes the window; then build paths "
-                "with the map cursor and Space.");
-            return;
-        }
-        // Bottom-toolbar status readout (opened with T).
+            return ScreenReaderSpeak(Help::kLandTool);
+
         if (_statusMode)
-        {
-            ScreenReaderSpeak(
-                "Status readout. Up and down cycle through the date, park rating, guests, cash, and recent "
-                "messages. Enter opens messages, Escape closes.");
-            return;
-        }
-        // Top-toolbar menu (opened with Tab).
-        if (_menuMode)
-        {
-            ScreenReaderSpeak(
-                "Toolbar menu. Up and down move through the toolbar buttons, Enter opens the selected one, "
-                "Escape returns to the map.");
-            return;
-        }
-        // Any other navigable window (rides, guests, park, finances, options, cheats, shortcut keys, etc.).
+            return ScreenReaderSpeak(Help::kStatusReadout);
+        // A window with the older keyboard support and no help of its own. Graph windows answer F1
+        // themselves before the key gets here.
         if (GetActiveAccessibleWindow() != nullptr)
-        {
-            ScreenReaderSpeak(
-                "Menu open. Up and down move through items, left and right change values or switch tabs, "
-                "Enter activates, Escape closes.");
-            return;
-        }
-        // Free-mouse mode.
+            return ScreenReaderSpeak(Help::kWindow);
         if (_mouseMode)
-        {
-            ScreenReaderSpeak("Mouse mode is on. Press Control Space to switch back to keyboard mode.");
-            return;
-        }
-        // The free map cursor on the scenario editor's landscape step.
+            return ScreenReaderSpeak(Help::kMouseMode);
         if (IsEditorLandscapeStep())
-        {
-            ScreenReaderSpeak(
-                "Scenario editor, landscape. Arrow keys move around the map. C reads the current tile and "
-                "coordinates. Space builds a footpath, D removes one, L cycles the path slope, End and Home "
-                "lower and raise the build height. Page Up and Page Down raise and lower land, hold Control "
-                "for water or Shift to zoom. X clears scenery, B changes the brush size, K places markers. "
-                "Delete removes one thing at the cursor. Shift with a number sets a waypoint, Control with "
-                "a number jumps to it. Control with an arrow jumps to the nearest object in that direction. "
-                "Control P checks whether the current tile connects to the park entrance. Shift P opens the "
-                "path menu and Shift X the scenery menu. O sets land rights. Shift M opens the Map window, "
-                "which builds the park entrance and sets guest starting positions. Tab opens the toolbar "
-                "menu, where the editor's steps are. Control F1 opens the accessibility settings. "
-                + EditorLandscapeChecklist());
-            return;
-        }
-        // Default: the free map cursor during play.
-        ScreenReaderSpeak(
-            "Map cursor. Arrow keys move around the park. C reads the current tile and coordinates. "
-            "T opens the status readout, M reads your cash. "
-            "Space builds: a footpath here, or whatever you are placing when you are placing something. "
-            "D removes a path, L cycles the path slope, End and Home lower and "
-            "raise the build height for bridges. "
-            "Page Up and Page Down raise and lower land, hold Control for water or Shift to zoom. "
-            "X clears scenery, O buys land, B changes the brush size, K places markers. "
-            "Enter opens whatever is under the cursor - a ride, stall, sign, gate, guest, staff member "
-            "or ride vehicle - and Control Enter starts building on a ride. "
-            "Shift with a number sets a waypoint, Control with a number jumps to it. "
-            "Shift with F, R, P, G, S, D, or M opens finances, rides, park, guests, staff, research, or "
-            "messages. Tab opens the toolbar menu. Shift F1 opens the land tool. "
-            "Control H rescues guests stranded on cut-off paths, teleporting them to the park entrance. "
-            "Control with an arrow jumps to the nearest object in that direction, and Control Shift up "
-            "and down choose what it looks for: rides and stalls, scenery, footpath objects, or hazards. "
-            "Delete removes one thing at the cursor, asking which if there are several; D and X clear "
-            "paths and scenery across a whole marked area. "
-            "Control E jumps between the entrance and exit of the ride you are on. Control P checks whether "
-            "the current tile connects to the park entrance. P pauses. Control equals and Control minus "
-            "speed the game up and down. Control F1 opens the accessibility settings.");
+            return ScreenReaderSpeak(std::string(Help::kMap_Editor) + " " + EditorLandscapeChecklist());
+        ScreenReaderSpeak(Help::kMap_Park);
     }
 
     // Spoken name for a point on the combined speed ladder (slow-motion factor + game speed).
@@ -5535,6 +5457,17 @@ namespace OpenRCT2::Ui::Accessibility
             return false;
         }
 
+        // Bare F1 speaks help for whatever the player is doing. Checked before the modal choices
+        // below (the Delete picker, the zone list, a marked-area confirmation) so it explains them
+        // rather than being swallowed by them or cancelling them. Any modified F1 (Shift+F1 is the
+        // game's land tool) falls through to the game's own shortcuts.
+        if (key == SDLK_F1 && !(e.modifiers & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT)))
+        {
+            SpeakContextHelp();
+            _lastHandledKey = key;
+            return true;
+        }
+
         // Only a repeat of the exact binding that armed it answers a marked-area confirmation; any
         // other keystroke abandons it. Done here, before any handler can consume the key and return,
         // so no route through this function can leave a prompt armed behind an unrelated key.
@@ -5629,15 +5562,6 @@ namespace OpenRCT2::Ui::Accessibility
         {
             _hideSceneryWhileBrowsing = !_hideSceneryWhileBrowsing;
             ScreenReaderSpeak(_hideSceneryWhileBrowsing ? "Scenery reading off" : "Scenery reading on");
-            _lastHandledKey = key;
-            return true;
-        }
-
-        // Bare F1 speaks context-sensitive help for whatever the player is currently doing. Any
-        // modified F1 (e.g. Shift+F1, now the land tool) falls through to the game's own shortcuts.
-        if (key == SDLK_F1 && !(e.modifiers & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT)))
-        {
-            SpeakContextHelp();
             _lastHandledKey = key;
             return true;
         }

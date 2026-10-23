@@ -79,6 +79,14 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         // means "change page", and where there are no pages it falls through to the game. The
         // toolbar wants it because Tab is also what got the player there.
         bool tabMovesBetweenItems = false;
+
+        // F1: what this window is for and its own keys (texts in GraphVocabHelp.h). May depend on
+        // the window's page or state. Unset or empty = the shared window help.
+        std::function<std::string(WindowBase&)> helpText;
+
+        // F1 while one of the window's combo box lists is open, where that list behaves unlike the
+        // shared one (object selection's filter list stays open on Enter). Unset = the shared list help.
+        std::function<std::string(WindowBase&)> dropdownHelpText;
     };
 
     // Register a screen recipe. Call once per window class (typically from that window's source

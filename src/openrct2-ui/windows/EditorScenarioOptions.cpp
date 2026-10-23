@@ -2500,6 +2500,12 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
+        // F1: the page's own help, or the Editor steps tab's.
+        std::string AxHelp() const
+        {
+            return Vocab::Help::ScenarioOptions(page, gLegacyScene == LegacyScene::scenarioEditor, _axStepsTab);
+        }
+
         // Escape closes an open list first. In the editor the window cannot be closed (the game
         // reopens it), so Escape says how to move on; in a park it closes as usual.
         bool AxEscape()
@@ -3143,6 +3149,7 @@ namespace OpenRCT2::Ui::Windows
         };
         screen.onEscape = [](WindowBase& w) { return static_cast<EditorScenarioOptionsWindow&>(w).AxEscape(); };
         screen.screenName = []() { return std::string(Vocab::kScenarioOptions); };
+        screen.helpText = [](WindowBase& w) { return static_cast<EditorScenarioOptionsWindow&>(w).AxHelp(); };
         // A form: Left/Right belong to the spinners. Pages are Tab/Shift+Tab.
         screen.sideArrowsChangePage = false;
         RegisterGraphScreen(std::move(screen));

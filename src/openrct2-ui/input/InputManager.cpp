@@ -25,6 +25,7 @@
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/Zones.h>
 #include <openrct2-ui/accessibility/graph/GraphNavigator.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <SDL_gamecontroller.h>
 #include <cmath>
 #include <openrct2-ui/UiContext.h>
@@ -409,11 +410,21 @@ void InputManager::process(const InputEvent& e)
         {
             auto* windowMgr = GetWindowManager();
 
+            // F1 in the prompts below (which take every key) says how to use the one that is open.
+            // Spoken on the press; the release is swallowed with the rest.
+            const bool plainF1 = e.button == SDLK_F1 && (e.modifiers & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT)) == 0;
+            const auto helpFor = [&e](const char* text) {
+                if (e.state == InputEventState::down)
+                    Accessibility::ScreenReaderSpeak(text);
+            };
+
             // TODO: replace with event
             auto w = windowMgr->FindByClass(WindowClass::textinput);
             if (w != nullptr)
             {
-                if (e.state == InputEventState::release)
+                if (plainF1)
+                    helpFor(Accessibility::Graph::Vocab::Help::kTextPrompt);
+                else if (e.state == InputEventState::release)
                 {
                     Windows::WindowTextInputKey(w, e.button);
                 }
@@ -424,7 +435,9 @@ void InputManager::process(const InputEvent& e)
             w = windowMgr->FindByClass(WindowClass::loadsaveOverwritePrompt);
             if (w != nullptr)
             {
-                if (e.state == InputEventState::release)
+                if (plainF1)
+                    helpFor(Accessibility::Graph::Vocab::Help::kOverwritePrompt);
+                else if (e.state == InputEventState::release)
                 {
                     Windows::WindowLoadSaveOverwritePromptInputKey(w, e.button);
                 }
@@ -435,7 +448,9 @@ void InputManager::process(const InputEvent& e)
             w = windowMgr->FindByClass(WindowClass::loadsave);
             if (w != nullptr)
             {
-                if (e.state == InputEventState::release)
+                if (plainF1)
+                    helpFor(Accessibility::Graph::Vocab::Help::kLoadSave);
+                else if (e.state == InputEventState::release)
                 {
                     Windows::WindowLoadSaveInputKey(w, e.button);
                 }
@@ -481,6 +496,9 @@ void InputManager::process(const InputEvent& e)
                     return;
                 case SDLK_ESCAPE:
                     Accessibility::ChangelogPromptCancel();
+                    return;
+                case SDLK_F1:
+                    Accessibility::ScreenReaderSpeak(Accessibility::Graph::Vocab::Help::kChangelogPrompt);
                     return;
                 default:
                     return; // modal: ignore everything else until the player chooses
