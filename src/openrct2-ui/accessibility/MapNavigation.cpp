@@ -5201,8 +5201,9 @@ namespace OpenRCT2::Ui::Accessibility
             return ScreenReaderSpeak(Help::kWindow);
         if (_mouseMode)
             return ScreenReaderSpeak(Help::kMouseMode);
+        // What the step still needs comes first, so it is heard before the keys.
         if (IsEditorLandscapeStep())
-            return ScreenReaderSpeak(std::string(Help::kMap_Editor) + " " + EditorLandscapeChecklist());
+            return ScreenReaderSpeak(EditorLandscapeChecklist() + " " + Help::kMap_Editor);
         ScreenReaderSpeak(Help::kMap_Park);
     }
 
