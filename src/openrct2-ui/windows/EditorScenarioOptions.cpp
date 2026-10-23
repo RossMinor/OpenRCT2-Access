@@ -14,6 +14,14 @@
 #include "Windows.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <optional>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2/Context.h>
 #include <openrct2/GameState.h>
 #include <openrct2/OpenRCT2.h>
@@ -21,14 +29,18 @@
 #include <openrct2/actions/GameActionRunner.h>
 #include <openrct2/actions/general/ScenarioSetSettingAction.h>
 #include <openrct2/actions/park/ParkSetNameAction.h>
+#include <openrct2/config/Config.h>
 #include <openrct2/core/String.hpp>
+#include <openrct2/core/UnitConversion.h>
 #include <openrct2/drawing/ColourMap.h>
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Font.h>
 #include <openrct2/drawing/Rectangle.h>
 #include <openrct2/drawing/RenderTarget.h>
 #include <openrct2/drawing/Text.h>
+#include <openrct2/localisation/Currency.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/management/Finance.h>
 #include <openrct2/ride/Ride.h>
 #include <openrct2/ride/RideManager.hpp>
@@ -39,6 +51,8 @@ using namespace OpenRCT2::Drawing;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     static constexpr ScreenSize kSizeObjective = { 450, 122 };
     static constexpr ScreenSize kSizeScenarioDetails = { 450, 169 };
     static constexpr ScreenSize kSizeFinancial = { 380, 233 };
@@ -2193,6 +2207,18 @@ namespace OpenRCT2::Ui::Windows
             invalidateWidget(WIDX_TAB_2);
 
             const auto oldSize = _rideableRides.size();
+            RefreshRideableRides();
+
+            if (oldSize != _rideableRides.size())
+            {
+                invalidate();
+            }
+        }
+
+        // The rides listed on the page (not shops or facilities), sorted by name. Also called by
+        // the accessibility recipe, so the list is current on the first build after a page change.
+        void RefreshRideableRides()
+        {
             _rideableRides.clear();
 
             const auto& gameState = getGameState();
@@ -2208,11 +2234,6 @@ namespace OpenRCT2::Ui::Windows
             std::sort(_rideableRides.begin(), _rideableRides.end(), [](const RideId& a, const RideId& b) {
                 return String::compare(GetRideString(a), GetRideString(b), false) < 0;
             });
-
-            if (oldSize != _rideableRides.size())
-            {
-                invalidate();
-            }
         }
 
         /**
@@ -2336,7 +2357,796 @@ namespace OpenRCT2::Ui::Windows
         }
 
 #pragma endregion
+
+#pragma region Accessibility
+    public:
+        // ---- graph accessibility recipe ----
+        //
+        // Each page as a form, its controls in the order they stand on screen, named with the game's
+        // own captions. Spinners: Left/Right press the game's own arrows, Shift+Left/Right move ten
+        // of the game's steps at once, and Enter types a value. Combo boxes open their list with
+        // Enter. In the editor the game reopens this window every tick and gives it no close button,
+        // so an Editor steps tab follows the last page (see BuildEditorStepsTab).
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            // Re-derive the dropdown state from reality every build - it can be dismissed behind
+            // our back, and a stale flag would strand navigation inside a list that is gone.
+            auto* windowMgr = GetWindowManager();
+            if (_axDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _axDropdownOpen = false;
+
+            onPrepareDraw(); // pressed, disabled and hidden states, and the objective value's caption
+
+            if (_axStepsTab)
+            {
+                if (HasEditorStepsTab())
+                {
+                    BuildEditorStepsTab(b);
+                    return;
+                }
+                _axStepsTab = false; // the step buttons went away (left the editor): back to the page
+            }
+
+            if (_axDropdownOpen)
+            {
+                b.PushContext(axComboLabel(_axDropdownChevron), Vocab::kRoleDropdown);
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
+                {
+                    if (gDropdown.items[i].isSeparator())
+                        continue;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(gDropdown.items[i].text));
+                    if (gDropdown.items[i].isChecked())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kSelected, AnnouncementKinds::kSelected));
+                    vt.onActivate = [this, i]() { axCommitDropdown(i); };
+                    // Keep the engine's drawn highlight on the keyboard's row; it clears that field from
+                    // the mouse every tick, so it has to be re-asserted.
+                    vt.onFocus = [i]() { Accessibility::SetKeyboardDropdownIndex(i); };
+                    b.AddItem(ControlId::Structural("so:dd:" + std::to_string(i)), std::move(vt));
+                }
+                b.PopContext();
+                return;
+            }
+
+            b.PushContext(Vocab::kScenarioOptionsPages[page]);
+            switch (page)
+            {
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_OBJECTIVE:
+                    axCombo(b, WIDX_OBJECTIVE_DROPDOWN);
+                    axSpinner(b, WIDX_OBJECTIVE_ARG_1);
+                    axSpinner(b, WIDX_OBJECTIVE_ARG_2);
+                    axCheckbox(b, WIDX_HARD_PARK_RATING);
+                    break;
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_SCENARIO_DETAILS:
+                    axEdit(b, WIDX_PARK_NAME);
+                    axEdit(b, WIDX_SCENARIO_NAME);
+                    axCombo(b, WIDX_CATEGORY_DROPDOWN);
+                    axEdit(b, WIDX_DETAILS);
+                    break;
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_FINANCIAL:
+                    axCheckbox(b, WIDX_NO_MONEY);
+                    b.PushContext(axText(widgets[WIDX_GROUP_LOAN].text));
+                    axSpinner(b, WIDX_INITIAL_LOAN);
+                    axSpinner(b, WIDX_MAXIMUM_LOAN);
+                    axSpinner(b, WIDX_INTEREST_RATE);
+                    axCheckbox(b, WIDX_RCT1_INTEREST);
+                    b.PopContext();
+                    b.PushContext(axText(widgets[WIDX_GROUP_BUSINESS_MODEL].text));
+                    axSpinner(b, WIDX_INITIAL_CASH);
+                    axCombo(b, WIDX_PAY_FOR_PARK_OR_RIDES_DROPDOWN);
+                    axSpinner(b, WIDX_ENTRY_PRICE);
+                    axCheckbox(b, WIDX_FORBID_MARKETING);
+                    b.PopContext();
+                    break;
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_GUESTS:
+                    axSpinner(b, WIDX_CASH_PER_GUEST);
+                    axSpinner(b, WIDX_GUEST_INITIAL_HAPPINESS);
+                    axSpinner(b, WIDX_GUEST_INITIAL_HUNGER);
+                    axSpinner(b, WIDX_GUEST_INITIAL_THIRST);
+                    axCombo(b, WIDX_GUESTS_INTENSITY_PREFERENCE_DROPDOWN);
+                    axCheckbox(b, WIDX_HARD_GUEST_GENERATION);
+                    break;
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_PARK:
+                    axSpinner(b, WIDX_LAND_COST);
+                    axSpinner(b, WIDX_CONSTRUCTION_RIGHTS_COST);
+                    axCheckbox(b, WIDX_FORBID_TREE_REMOVAL);
+                    axCheckbox(b, WIDX_FORBID_LANDSCAPE_CHANGES);
+                    axCheckbox(b, WIDX_FORBID_HIGH_CONSTRUCTION);
+                    break;
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_RIDES:
+                    axRideList(b);
+                    break;
+            }
+            b.PopContext();
+        }
+
+        // Tab/Shift+Tab: the pages this step offers (the game disables the rest), then the Editor
+        // steps tab where there is one, wrapping round.
+        void AxChangePage(int32_t delta)
+        {
+            const int32_t count = WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_COUNT;
+            const int32_t dir = delta > 0 ? 1 : -1;
+
+            // Leaving the Editor steps tab: Tab carries on to the first page offered, Shift+Tab back
+            // to the last - the steps tab sits after the last page, like one more tab on the end.
+            if (_axStepsTab)
+            {
+                _axStepsTab = false;
+                int32_t landing = dir > 0 ? 0 : count - 1;
+                for (int32_t step = 0; step < count && isWidgetDisabled(WIDX_TAB_1 + landing); step++)
+                    landing = (landing + dir + count) % count;
+                setPage(landing);
+                return;
+            }
+
+            int32_t next = page;
+            for (int32_t step = 0; step < count; step++)
+            {
+                const int32_t unwrapped = next + dir;
+                next = (unwrapped + count) % count;
+                // Stepping off either end of the pages lands on the Editor steps tab, where there is
+                // one (in the editor, not when opened from the Cheats menu).
+                if ((unwrapped < 0 || unwrapped >= count) && HasEditorStepsTab())
+                {
+                    _axStepsTab = true;
+                    return;
+                }
+                if (isWidgetDisabled(WIDX_TAB_1 + next))
+                    continue;
+                setPage(next);
+                return;
+            }
+        }
+
+        // Escape closes an open list first. In the editor the window cannot be closed (the game
+        // reopens it), so Escape says how to move on; in a park it closes as usual.
+        bool AxEscape()
+        {
+            if (_axDropdownOpen)
+            {
+                const WidgetIndex chevron = _axDropdownChevron;
+                axCloseDropdown();
+                axSuggestFocus(axOwner(chevron));
+                return true;
+            }
+            if (gLegacyScene == LegacyScene::scenarioEditor)
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::kScenarioOptionsEscape);
+                return true;
+            }
+            return false;
+        }
+
+    private:
+        bool _axDropdownOpen = false;
+        WidgetIndex _axDropdownChevron = 0;
+        bool _axStepsTab = false;
+
+        // How a spinner's value is shown, typed and stepped.
+        enum class AxUnit : uint8_t
+        {
+            money,
+            count,
+            length,
+            rating,
+            percent,      // stored 0-255, shown as a percentage
+            plainPercent, // stored and shown as a percentage
+            year,
+        };
+
+        struct AxSpin
+        {
+            int64_t value;
+            int64_t min;
+            int64_t max;
+            int64_t step;
+            AxUnit unit;
+            std::function<void(int64_t)> set;
+        };
+
+        // Node keys carry the page: widget indices are reused from page to page.
+        std::string axKey(WidgetIndex w) const
+        {
+            return "so:" + std::to_string(page) + ":" + std::to_string(w);
+        }
+
+        // A game caption as speech: format codes and a trailing colon dropped.
+        static std::string axText(StringId id)
+        {
+            if (id == kStringIdNone || id == kStringIdEmpty)
+                return {};
+            std::string out = axStrip(FormatStringID(id));
+            while (!out.empty() && (out.back() == ':' || out.back() == ' '))
+                out.pop_back();
+            return out;
+        }
+
+        std::optional<Accessibility::Graph::GraphRect> axRect(WidgetIndex w) const
+        {
+            if (w >= widgets.size() || !widgets[w].isVisible())
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                    wd.height() + 1 };
+        }
+
+        std::string axUnavailable(WidgetIndex w)
+        {
+            return isWidgetDisabled(w) ? Vocab::kUnavailable : "";
+        }
+
+        void axSuggestFocus(WidgetIndex w)
+        {
+            Accessibility::Graph::GraphStateForClass(WindowClass::editorScenarioOptions).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(axKey(w));
+        }
+
+        // ---- checkboxes ----
+
+        // Enter does what a click does: the game handles some checkboxes on the press and others on
+        // the release. Its settings change through game actions, read a tick later, so the state is LIVE.
+        void axCheckbox(Accessibility::Graph::GraphBuilder& b, WidgetIndex w)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[w].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(axText(widgets[w].text)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(
+                [this, w]() { return std::string(Vocab::Checked(isWidgetPressed(w))); }, true, AnnouncementKinds::kValue);
+            vt.announcements.emplace_back([this, w]() { return axUnavailable(w); }, true);
+            vt.onActivate = [this, w]() {
+                if (isWidgetDisabled(w))
+                {
+                    Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                    return;
+                }
+                onMouseDown(w);
+                onMouseUp(w);
+            };
+            vt.focusRect = [this, w]() { return axRect(w); };
+            b.AddItem(Accessibility::Graph::ControlId::Structural(axKey(w)), std::move(vt));
+        }
+
+        // ---- text fields ----
+
+        // Enter presses the field's Change button, which opens the game's own text prompt.
+        void axEdit(Accessibility::Graph::GraphBuilder& b, WidgetIndex w)
+        {
+            using namespace Accessibility::Graph;
+            StringId label = kStringIdNone;
+            switch (w)
+            {
+                case WIDX_PARK_NAME:
+                    label = STR_PARK_NAME;
+                    break;
+                case WIDX_SCENARIO_NAME:
+                    label = STR_SCENARIO_NAME;
+                    break;
+                default:
+                    label = STR_WINDOW_PARK_DETAILS;
+                    break;
+            }
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(axText(label)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleEdit, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(
+                [w]() {
+                    const auto& gameState = getGameState();
+                    std::string text;
+                    if (w == WIDX_PARK_NAME)
+                        text = gameState.park.name;
+                    else if (w == WIDX_SCENARIO_NAME)
+                        text = gameState.scenarioOptions.name;
+                    else
+                        text = gameState.scenarioOptions.details;
+                    return text.empty() ? std::string(Vocab::kEmpty) : text;
+                },
+                true, AnnouncementKinds::kValue);
+            vt.onActivate = [this, w]() { onMouseUp(w); };
+            vt.focusRect = [this, w]() { return axRect(w); };
+            b.AddItem(Accessibility::Graph::ControlId::Structural(axKey(w)), std::move(vt));
+        }
+
+        // ---- combo boxes ----
+
+        // The value widget sits just before its chevron.
+        static WidgetIndex axOwner(WidgetIndex chevron)
+        {
+            return static_cast<WidgetIndex>(chevron - 1);
+        }
+
+        std::string axComboLabel(WidgetIndex chevron) const
+        {
+            switch (chevron)
+            {
+                case WIDX_OBJECTIVE_DROPDOWN:
+                    return axText(STR_OBJECTIVE_DROPDOWN_LABEL);
+                case WIDX_CATEGORY_DROPDOWN:
+                    return axText(STR_WINDOW_SCENARIO_GROUP);
+                case WIDX_PAY_FOR_PARK_OR_RIDES_DROPDOWN:
+                    return axText(STR_EARNINGS_LABEL);
+                default:
+                    return axText(STR_GUESTS_PREFER_INTENSITY_LABEL);
+            }
+        }
+
+        // The value the game draws in the combo box.
+        std::string axComboValue(WidgetIndex chevron) const
+        {
+            const auto& gameState = getGameState();
+            const auto& park = gameState.park;
+            switch (chevron)
+            {
+                case WIDX_OBJECTIVE_DROPDOWN:
+                    return axText(ObjectiveDropdownOptionNames[EnumValue(gameState.scenarioOptions.objective.Type)]);
+                case WIDX_CATEGORY_DROPDOWN:
+                    return axText(Scenario::kScenarioCategoryStringIds[EnumValue(gameState.scenarioOptions.category)]);
+                case WIDX_PAY_FOR_PARK_OR_RIDES_DROPDOWN:
+                    if (park.flags.has(ParkFlag::unlockAllPrices))
+                        return axText(STR_PAID_ENTRY_PAID_RIDES);
+                    if (park.flags.has(ParkFlag::freeEntry))
+                        return axText(STR_FREE_PARK_ENTER);
+                    return axText(STR_PAY_PARK_ENTER);
+                default:
+                {
+                    const auto preferLess = park.flags.has(ParkFlag::guestPreferLessIntenseRides);
+                    const auto preferMore = park.flags.has(ParkFlag::guestPreferMoreIntenseRides);
+                    if (preferLess && preferMore)
+                        return axText(STR_GUESTS_PREFER_INTENSITY_NONE);
+                    if (preferLess)
+                        return axText(STR_GUESTS_PREFER_INTENSITY_LESS_INTENSE_RIDES);
+                    if (preferMore)
+                        return axText(STR_GUESTS_PREFER_INTENSITY_MORE_INTENSE_RIDES);
+                    return axText(STR_GUESTS_PREFER_INTENSITY_BALANCED);
+                }
+            }
+        }
+
+        void axCombo(Accessibility::Graph::GraphBuilder& b, WidgetIndex chevron)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[chevron].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(axComboLabel(chevron)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleDropdown, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back([this, chevron]() { return axComboValue(chevron); }, true, AnnouncementKinds::kValue);
+            vt.announcements.emplace_back([this, chevron]() { return axUnavailable(chevron); }, true);
+            vt.onActivate = [this, chevron]() {
+                if (isWidgetDisabled(chevron))
+                {
+                    Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                    return;
+                }
+                if (Accessibility::OpenWidgetDropdownFromKeyboard(*this, chevron))
+                {
+                    _axDropdownOpen = true;
+                    _axDropdownChevron = chevron;
+                }
+            };
+            vt.focusRect = [this, chevron]() { return axRect(axOwner(chevron)); };
+            b.AddItem(Accessibility::Graph::ControlId::Structural(axKey(axOwner(chevron))), std::move(vt));
+        }
+
+        void axCloseDropdown()
+        {
+            Accessibility::CloseWidgetDropdownFromKeyboard();
+            _axDropdownOpen = false;
+        }
+
+        // As a click on a list item: the window hears the choice, then the list closes.
+        void axCommitDropdown(int32_t idx)
+        {
+            const WidgetIndex chevron = _axDropdownChevron;
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            if (valid)
+                onDropdown(chevron, idx);
+            axCloseDropdown();
+            axSuggestFocus(axOwner(chevron));
+        }
+
+        // ---- spinners ----
+
+        static void axSetting(GameActions::ScenarioSetSetting setting, int64_t value)
+        {
+            auto action = GameActions::ScenarioSetSettingAction(setting, static_cast<uint32_t>(value));
+            GameActions::Execute(&action, getGameState());
+        }
+
+        // What a spinner holds and the game's own step and limits for it - the same numbers its arrow
+        // buttons use (see the MouseDown handlers above). Set goes through the same game action, or,
+        // for the objective, the same direct write.
+        std::optional<AxSpin> axSpin(WidgetIndex w)
+        {
+            using GameActions::ScenarioSetSetting;
+            auto& gameState = getGameState();
+            auto& park = gameState.park;
+            auto& options = gameState.scenarioOptions;
+            auto& objective = options.objective;
+            const auto setObjective = [this](auto& field) {
+                return [this, &field](int64_t v) {
+                    field = static_cast<std::remove_reference_t<decltype(field)>>(v);
+                    invalidate();
+                };
+            };
+            const auto setting = [](ScenarioSetSetting s) { return [s](int64_t v) { axSetting(s, v); }; };
+
+            switch (page)
+            {
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_OBJECTIVE:
+                    if (w == WIDX_OBJECTIVE_ARG_2)
+                        return AxSpin{ objective.Year, kObjectiveYearMin, kObjectiveYearMax, kObjectiveYearAdjustment,
+                                       AxUnit::year, setObjective(objective.Year) };
+                    if (w != WIDX_OBJECTIVE_ARG_1)
+                        return std::nullopt;
+                    switch (objective.Type)
+                    {
+                        case Scenario::ObjectiveType::parkValueBy:
+                        case Scenario::ObjectiveType::monthlyRideIncome:
+                        case Scenario::ObjectiveType::repayLoanAndParkValue:
+                            return AxSpin{ objective.Currency, kObjectiveCurrencyLoanAndValueMin,
+                                           kObjectiveCurrencyLoanAndValueMax, kObjectiveCurrencyLoanAndValueAdjustment,
+                                           AxUnit::money, setObjective(objective.Currency) };
+                        case Scenario::ObjectiveType::monthlyFoodIncome:
+                            return AxSpin{ objective.Currency,         kObjectiveCurrencyFoodMin,
+                                           kObjectiveCurrencyFoodMax,  kObjectiveCurrencyFoodAdjustment,
+                                           AxUnit::money,              setObjective(objective.Currency) };
+                        case Scenario::ObjectiveType::tenRollercoastersLength:
+                            return AxSpin{ objective.MinimumLength, kObjectiveLengthMin,          kObjectiveLengthMax,
+                                           kObjectiveLengthAdjustment, AxUnit::length, setObjective(objective.MinimumLength) };
+                        case Scenario::ObjectiveType::finishFiveRollercoasters:
+                            return AxSpin{ objective.MinimumExcitement,      kObjectiveExcitementMin,
+                                           kObjectiveExcitementMax,          kObjectiveExcitementAdjustment,
+                                           AxUnit::rating,                   setObjective(objective.MinimumExcitement) };
+                        default:
+                            return AxSpin{ objective.NumGuests, kObjectiveGuestsMin,     kObjectiveGuestsMax,
+                                           kObjectiveGuestsAdjustment, AxUnit::count, setObjective(objective.NumGuests) };
+                    }
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_FINANCIAL:
+                    switch (w)
+                    {
+                        case WIDX_INITIAL_LOAN:
+                            return AxSpin{ park.bankLoan, 0, 5000000.00_GBP, 1000.00_GBP, AxUnit::money,
+                                           setting(ScenarioSetSetting::initialLoan) };
+                        case WIDX_MAXIMUM_LOAN:
+                            return AxSpin{ park.maxBankLoan, 0, 5000000.00_GBP, 1000.00_GBP, AxUnit::money,
+                                           setting(ScenarioSetSetting::maximumLoanSize) };
+                        case WIDX_INTEREST_RATE:
+                            return AxSpin{ park.bankLoanInterestRate, 0, kMaxBankLoanInterestRate, 1, AxUnit::plainPercent,
+                                           setting(ScenarioSetSetting::annualInterestRate) };
+                        case WIDX_INITIAL_CASH:
+                            return AxSpin{ options.initialCash, 0, 1000000.00_GBP, 500.00_GBP, AxUnit::money,
+                                           setting(ScenarioSetSetting::initialCash) };
+                        case WIDX_ENTRY_PRICE:
+                            return AxSpin{ park.entranceFee, 0, kMaxEntranceFee, 1.00_GBP, AxUnit::money,
+                                           setting(ScenarioSetSetting::parkChargeEntryFee) };
+                    }
+                    return std::nullopt;
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_GUESTS:
+                    switch (w)
+                    {
+                        case WIDX_CASH_PER_GUEST:
+                            return AxSpin{ options.guestInitialCash, 0, 1000.00_GBP, 1.00_GBP, AxUnit::money,
+                                           setting(ScenarioSetSetting::averageCashPerGuest) };
+                        case WIDX_GUEST_INITIAL_HAPPINESS:
+                            return AxSpin{ options.guestInitialHappiness, 40, 250, 4, AxUnit::percent,
+                                           setting(ScenarioSetSetting::guestInitialHappiness) };
+                        // Hunger and thirst are stored the other way up: the game shows 255 minus the stored
+                        // value, and its up arrow lowers what is stored. Held here as shown.
+                        case WIDX_GUEST_INITIAL_HUNGER:
+                            return AxSpin{ 255 - options.guestInitialHunger, 5, 215, 4, AxUnit::percent,
+                                           [](int64_t v) { axSetting(ScenarioSetSetting::guestInitialHunger, 255 - v); } };
+                        case WIDX_GUEST_INITIAL_THIRST:
+                            return AxSpin{ 255 - options.guestInitialThirst, 5, 215, 4, AxUnit::percent,
+                                           [](int64_t v) { axSetting(ScenarioSetSetting::guestInitialThirst, 255 - v); } };
+                    }
+                    return std::nullopt;
+                case WINDOW_EDITOR_SCENARIO_OPTIONS_PAGE_PARK:
+                    switch (w)
+                    {
+                        case WIDX_LAND_COST:
+                            return AxSpin{ options.landPrice, 5.00_GBP, 200.00_GBP, 1.00_GBP, AxUnit::money,
+                                           setting(ScenarioSetSetting::costToBuyLand) };
+                        case WIDX_CONSTRUCTION_RIGHTS_COST:
+                            return AxSpin{ options.constructionRightsPrice, 5.00_GBP, 200.00_GBP, 1.00_GBP, AxUnit::money,
+                                           setting(ScenarioSetSetting::costToBuyConstructionRights) };
+                    }
+                    return std::nullopt;
+            }
+            return std::nullopt;
+        }
+
+        static bool axImperial()
+        {
+            return Config::Get().general.measurementFormat == MeasurementFormat::imperial;
+        }
+
+        // A value as the game draws it.
+        static std::string axFormat(AxUnit unit, int64_t v)
+        {
+            std::string text;
+            switch (unit)
+            {
+                case AxUnit::money:
+                    text = FormatStringID(STR_CURRENCY_FORMAT_LABEL, static_cast<money64>(v));
+                    break;
+                case AxUnit::count:
+                    text = FormatStringID(STR_WINDOW_COLOUR_2_COMMA32, static_cast<int32_t>(v));
+                    break;
+                case AxUnit::length:
+                    text = FormatStringID(STR_WINDOW_COLOUR_2_LENGTH, static_cast<uint16_t>(v));
+                    break;
+                case AxUnit::rating:
+                    text = FormatStringID(STR_WINDOW_COLOUR_2_COMMA2DP32, static_cast<int32_t>(v));
+                    break;
+                case AxUnit::percent:
+                    text = FormatStringID(STR_PERCENT_FORMAT_LABEL, static_cast<uint16_t>((v * 100) / 255));
+                    break;
+                case AxUnit::plainPercent:
+                    text = FormatStringID(STR_PERCENT_FORMAT_LABEL, static_cast<int16_t>(v));
+                    break;
+                case AxUnit::year:
+                    text = FormatStringID(STR_WINDOW_OBJECTIVE_VALUE_DATE, static_cast<uint16_t>(v * MONTH_COUNT - 1));
+                    break;
+            }
+            return axStrip(text);
+        }
+
+        static std::string axStrip(const std::string& text)
+        {
+            std::string out;
+            for (size_t i = 0; i < text.size(); i++)
+            {
+                if (text[i] == '{')
+                {
+                    const auto end = text.find('}', i);
+                    if (end == std::string::npos)
+                        break;
+                    i = end;
+                    continue;
+                }
+                out.push_back(text[i]);
+            }
+            return out;
+        }
+
+        // The value as the player would type it, to start the prompt with.
+        static std::string axEditable(AxUnit unit, int64_t v)
+        {
+            switch (unit)
+            {
+                case AxUnit::money:
+                {
+                    char buffer[kMoneyStringMaxlength + 1]{};
+                    MoneyToString(static_cast<money64>(v), buffer, sizeof(buffer), false);
+                    return buffer;
+                }
+                case AxUnit::length:
+                    return std::to_string(axImperial() ? MetresToFeet(static_cast<int32_t>(v)) : v);
+                case AxUnit::rating:
+                {
+                    char buffer[16];
+                    std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(v) / 100.0);
+                    return buffer;
+                }
+                case AxUnit::percent:
+                    return std::to_string((v * 100) / 255);
+                case AxUnit::year:
+                case AxUnit::count:
+                case AxUnit::plainPercent:
+                    return std::to_string(v);
+            }
+            return {};
+        }
+
+        // Typed text to a stored value, in the same units the game shows. Null if it is not a number.
+        static std::optional<int64_t> axParse(AxUnit unit, std::string_view text)
+        {
+            if (unit == AxUnit::money)
+            {
+                const std::string s(text);
+                const auto money = StringToMoney(s.c_str());
+                if (money == kMoney64Undefined)
+                    return std::nullopt;
+                return money;
+            }
+            std::string number;
+            for (const char c : text)
+            {
+                if (c >= '0' && c <= '9')
+                    number.push_back(c);
+                else if ((c == '.' || c == ',') && unit == AxUnit::rating)
+                    number.push_back('.');
+            }
+            if (number.empty() || number == ".")
+                return std::nullopt;
+            const double value = std::stod(number);
+            switch (unit)
+            {
+                case AxUnit::length:
+                {
+                    const auto shown = static_cast<int32_t>(std::lround(value));
+                    return axImperial() ? FeetToMetres(shown) : shown;
+                }
+                case AxUnit::rating:
+                    return static_cast<int64_t>(std::lround(value * 100.0));
+                case AxUnit::percent:
+                    // The smallest stored value the game shows as this percentage.
+                    return static_cast<int64_t>(std::ceil(value * 255.0 / 100.0));
+                default:
+                    return static_cast<int64_t>(std::lround(value));
+            }
+        }
+
+        void axSpinner(Accessibility::Graph::GraphBuilder& b, WidgetIndex w)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[w].isVisible())
+                return;
+            NodeVtable vt;
+            // The caption sits in the label widget just before the spinner.
+            vt.announcements.emplace_back([this, w]() { return axText(widgets[w - 1].text); });
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSpinner, AnnouncementKinds::kRole));
+            // LIVE: most of these change through a game action, readable only a tick later.
+            vt.announcements.emplace_back(
+                [this, w]() {
+                    const auto spin = axSpin(w);
+                    return spin.has_value() ? axFormat(spin->unit, spin->value) : std::string();
+                },
+                true, AnnouncementKinds::kValue);
+            vt.announcements.emplace_back([this, w]() { return axUnavailable(w); }, true);
+            vt.onAdjust = [this, w](int32_t sign, bool large) { axAdjust(w, sign, large); };
+            vt.onActivate = [this, w]() { axOpenTyping(w); };
+            vt.focusRect = [this, w]() { return axRect(w); };
+            b.AddItem(Accessibility::Graph::ControlId::Structural(axKey(w)), std::move(vt));
+        }
+
+        // One step is the game's own arrow (with its error at a limit). Ten steps are set in one go:
+        // the game reads the current value to work out the next, and a game action only lands a tick
+        // later, so ten presses in a row would all start from the same value.
+        void axAdjust(WidgetIndex w, int32_t sign, bool large)
+        {
+            if (isWidgetDisabled(w))
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                return;
+            }
+            const auto arrow = static_cast<WidgetIndex>(sign > 0 ? w + 1 : w + 2); // up : down
+            const auto spin = axSpin(w);
+            if (!large || !spin.has_value())
+            {
+                onMouseDown(arrow);
+                return;
+            }
+            const bool atLimit = sign > 0 ? spin->value >= spin->max : spin->value <= spin->min;
+            if (atLimit)
+            {
+                onMouseDown(arrow); // the game's own "can't go further"
+                return;
+            }
+            spin->set(std::clamp<int64_t>(spin->value + sign * 10 * spin->step, spin->min, spin->max));
+        }
+
+        void axOpenTyping(WidgetIndex w)
+        {
+            if (isWidgetDisabled(w))
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                return;
+            }
+            const auto spin = axSpin(w);
+            if (!spin.has_value())
+                return;
+            const int32_t pageAtOpen = page;
+            WindowTextInputOpen(
+                axText(widgets[w - 1].text),
+                Vocab::TypeValueRange(axFormat(spin->unit, spin->min), axFormat(spin->unit, spin->max)),
+                axEditable(spin->unit, spin->value), 16,
+                [w, pageAtOpen](std::string_view text) {
+                    auto* windowMgr = GetWindowManager();
+                    auto* self = windowMgr == nullptr
+                        ? nullptr
+                        : static_cast<EditorScenarioOptionsWindow*>(windowMgr->FindByClass(WindowClass::editorScenarioOptions));
+                    if (self != nullptr && self->page == pageAtOpen)
+                        self->axApplyTyped(w, text);
+                },
+                []() { Accessibility::ScreenReaderSpeak(Vocab::kCancelled); });
+        }
+
+        // A typed value, rounded to the game's step and kept within its limits; outside them, the
+        // range is said instead and nothing changes.
+        void axApplyTyped(WidgetIndex w, std::string_view text)
+        {
+            auto spin = axSpin(w);
+            if (!spin.has_value())
+                return;
+            auto parsed = axParse(spin->unit, text);
+            if (!parsed.has_value())
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::kNotANumber);
+                return;
+            }
+            int64_t v = *parsed;
+            bool inRange;
+            if (spin->unit == AxUnit::percent)
+            {
+                // Compared as shown: several stored values share each percentage.
+                const auto shown = [](int64_t x) { return (x * 100) / 255; };
+                inRange = shown(v) >= shown(spin->min) && shown(v) <= shown(spin->max);
+            }
+            else
+            {
+                v = spin->min + std::llround(static_cast<double>(v - spin->min) / spin->step) * spin->step;
+                inRange = v >= spin->min && v <= spin->max;
+            }
+            if (!inRange)
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::ValueOutOfRange(
+                    axText(widgets[w - 1].text), axFormat(spin->unit, spin->min), axFormat(spin->unit, spin->max)));
+                return;
+            }
+            spin->set(std::clamp(v, spin->min, spin->max));
+        }
+
+        // ---- preserved rides ----
+
+        // Each ride as a checkbox; Enter toggles it with the game's own click on that row.
+        void axRideList(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            RefreshRideableRides();
+            b.PushContext(axText(STR_WINDOW_PRESERVATION_ORDER), Vocab::kRoleList);
+            if (_rideableRides.empty())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kNoRides));
+                b.AddItem(ControlId::Structural("so:rides:none"), std::move(vt));
+            }
+            for (size_t i = 0; i < _rideableRides.size(); i++)
+            {
+                const RideId id = _rideableRides[i];
+                const auto row = static_cast<int32_t>(i);
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(GetRideString(id)));
+                vt.announcements.emplace_back(
+                    [id]() {
+                        const auto* ride = GetRide(id);
+                        return std::string(Vocab::Checked(ride != nullptr && ride->flags.has(RideFlag::indestructible)));
+                    },
+                    true, AnnouncementKinds::kValue);
+                vt.onActivate = [this, row]() { onScrollMouseDown(0, { 0, row * 12 + 1 }); };
+                vt.onFocus = [this, row]() {
+                    selectedListItem = row;
+                    invalidate();
+                };
+                b.AddItem(ControlId::Structural("so:ride:" + std::to_string(id.ToUnderlying())), std::move(vt));
+            }
+            b.PopContext();
+        }
+#pragma endregion
     };
+
+    void RegisterEditorScenarioOptionsGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::editorScenarioOptions;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<EditorScenarioOptionsWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<EditorScenarioOptionsWindow&>(w).AxChangePage(dir);
+            return true;
+        };
+        screen.onEscape = [](WindowBase& w) { return static_cast<EditorScenarioOptionsWindow&>(w).AxEscape(); };
+        screen.screenName = []() { return std::string(Vocab::kScenarioOptions); };
+        // A form: Left/Right belong to the spinners. Pages are Tab/Shift+Tab.
+        screen.sideArrowsChangePage = false;
+        RegisterGraphScreen(std::move(screen));
+    }
 
     WindowBase* EditorScenarioOptionsOpen()
     {

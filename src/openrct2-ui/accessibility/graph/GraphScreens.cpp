@@ -104,6 +104,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterEditorObjectSelectionGraphScreen();
         Windows::RegisterEditorInventionsListGraphScreen();
         Windows::RegisterMapGraphScreen();
+        Windows::RegisterEditorScenarioOptionsGraphScreen();
         Windows::RegisterLandRightsGraphScreen();
         Windows::RegisterEditorParkEntranceGraphScreen();
 

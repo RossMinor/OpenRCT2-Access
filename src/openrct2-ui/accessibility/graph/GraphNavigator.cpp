@@ -506,9 +506,10 @@ namespace OpenRCT2::Ui::Accessibility
             case SDLK_RIGHT:
             {
                 const int32_t sign = key == SDLK_RIGHT ? 1 : -1;
-                // Evaluation order (§7.2): adjust -> move -> tree semantics -> page switch.
+                // Evaluation order (§7.2): adjust -> move -> tree semantics -> page switch. Shift
+                // asks for a large adjust; a control without a large step treats it as a normal one.
                 const uint32_t spokenBefore = ScreenReaderSpokenCount();
-                if (kg.TryAdjust(sign, false))
+                if (kg.TryAdjust(sign, shift))
                 {
                     SpeakStateFeedback(kg, spokenBefore);
                     return true;

@@ -150,4 +150,24 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     {
         return item + " moved to " + list;
     }
+
+    // Scenario options (the editor's options, objective and details steps; the Cheats menu in a park).
+    inline constexpr const char* kScenarioOptions = "Scenario options";
+    inline constexpr const char* kScenarioOptionsPages[] = {
+        "Objective", "Scenario details", "Financial", "Guests", "Land restrictions", "Preserved rides",
+    };
+    inline constexpr const char* kScenarioOptionsEscape = "Tab over to the buttons to continue."; // Ross's wording
+    inline constexpr const char* kNoRides = "No rides";
+    inline constexpr const char* kNotANumber = "Not a number";
+    inline constexpr const char* kCancelled = "Cancelled";
+
+    inline std::string TypeValueRange(const std::string& from, const std::string& to)
+    {
+        return "Type a value from " + from + " to " + to;
+    }
+
+    inline std::string ValueOutOfRange(const std::string& label, const std::string& from, const std::string& to)
+    {
+        return label + " runs from " + from + " to " + to;
+    }
 } // namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
