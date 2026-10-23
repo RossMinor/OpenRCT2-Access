@@ -7,7 +7,9 @@
  * OpenRCT2 is licensed under the GNU General Public License version 3.
  *****************************************************************************/
 
+#include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/input/MouseInput.h>
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/interface/Widget.h>
@@ -113,31 +115,19 @@ namespace OpenRCT2::Ui::Windows
 
         void onUpdate() override
         {
+            // The map cursor does this tool's job from the keyboard (its own keys and brush), and
+            // none of this window's settings reach them - so in keyboard mode the mouse tool closes
+            // and says which keys to use. In mouse mode (Control Space) it works as usual.
+            if (Accessibility::IsKeyboardNavActive())
+            {
+                Accessibility::ScreenReaderSpeak(Accessibility::Graph::Vocab::kWaterToolHint);
+                close();
+                return;
+            }
             // Close window if another tool is open
             if (!isToolActive(WindowClass::water, WIDX_BACKGROUND))
             {
                 close();
-            }
-        }
-
-        // Keyboard access: the water tool's only option is the brush size. Left/Right adjust it,
-        // any other navigation key re-reads it. Routed via HandleToolWindowAccessKey (Ctrl+arrows).
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveLeft:
-                    axAdjustBrush(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    axAdjustBrush(1);
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    axAnnounceBrush();
-                    return true;
             }
         }
 
@@ -444,17 +434,6 @@ namespace OpenRCT2::Ui::Windows
             ft.Add<uint16_t>(kLandToolMaximumSize);
             WindowTextInputOpen(
                 this, WIDX_PREVIEW, STR_SELECTION_SIZE, STR_ENTER_SELECTION_SIZE, ft, kStringIdNone, kStringIdNone, 3);
-        }
-
-        void axAnnounceBrush()
-        {
-            Accessibility::ScreenReaderSpeak("Water brush size " + std::to_string(gLandToolSize));
-        }
-
-        void axAdjustBrush(int32_t dir)
-        {
-            onMouseDown(dir < 0 ? WIDX_DECREMENT : WIDX_INCREMENT);
-            axAnnounceBrush();
         }
     };
 

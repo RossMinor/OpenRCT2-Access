@@ -163,6 +163,21 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kNotANumber = "Not a number";
     inline constexpr const char* kCancelled = "Cancelled";
 
+    // The game's mouse tools for land, water, clearing scenery and buying land: from the keyboard the
+    // map cursor does their jobs, so opening one says which keys to use.
+    inline constexpr const char* kLandToolHint
+        = "Use Page Up and Page Down to raise and lower the land you are on. Use B to change the brush size, and K "
+          "to work on a marked area.";
+    inline constexpr const char* kWaterToolHint
+        = "Use Control Page Up and Control Page Down to raise and lower the water you are on. Use B to change the "
+          "brush size, and K to work on a marked area.";
+    inline constexpr const char* kClearSceneryToolHint
+        = "Use X to clear the scenery on the tile you are on. Use B to change the brush size, and K to work on a "
+          "marked area.";
+    inline constexpr const char* kLandRightsToolHint
+        = "Use O to buy the land you are on, and Shift O to buy its construction rights. Use B to change the brush "
+          "size, and K to work on a marked area.";
+
     // Connection status window.
     inline constexpr const char* kConnectionStatus = "Connection status";
 

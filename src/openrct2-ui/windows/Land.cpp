@@ -8,7 +8,9 @@
  *****************************************************************************/
 
 #include <openrct2-ui/UiContext.h>
+#include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2-ui/input/MouseInput.h>
 #include <openrct2-ui/interface/Dropdown.h>
@@ -88,130 +90,6 @@ namespace OpenRCT2::Ui::Windows
 
         ObjectEntryIndex _selectedFloorTexture = 0;
         ObjectEntryIndex _selectedWallTexture = 0;
-
-        // --- Keyboard accessibility ---
-        enum
-        {
-            kAxBrush,
-            kAxMountain,
-            kAxPaint,
-            kAxSurface,
-            kAxEdge,
-            kAxFieldCount,
-        };
-        int32_t _accessField = kAxBrush;
-
-        static std::string axStyleName(StringId nameId)
-        {
-            return nameId != kStringIdNone ? OpenRCT2::FormatStringID(nameId) : std::string("none");
-        }
-
-        std::string axSurfaceName(ObjectEntryIndex surface) const
-        {
-            auto& objManager = GetContext()->GetObjectManager();
-            const auto* obj = objManager.GetLoadedObject<TerrainSurfaceObject>(surface);
-            return obj != nullptr ? axStyleName(obj->NameStringId) : std::string("none");
-        }
-
-        std::string axEdgeName(ObjectEntryIndex edge) const
-        {
-            auto& objManager = GetContext()->GetObjectManager();
-            const auto* obj = objManager.GetLoadedObject<TerrainEdgeObject>(edge);
-            return obj != nullptr ? axStyleName(obj->NameStringId) : std::string("none");
-        }
-
-        std::string axFieldLabel(int32_t field) const
-        {
-            switch (field)
-            {
-                case kAxBrush:
-                    return "Brush size " + std::to_string(gLandToolSize);
-                case kAxMountain:
-                    return std::string("Mountain tool") + (_landToolMountainMode ? ", on" : ", off");
-                case kAxPaint:
-                    return std::string("Paint mode") + (_landToolPaintMode ? ", on" : ", off");
-                case kAxSurface:
-                    return "Surface texture, " + axSurfaceName(_selectedFloorTexture);
-                case kAxEdge:
-                    return "Edge texture, " + axEdgeName(_selectedWallTexture);
-            }
-            return {};
-        }
-
-        void axCycleSurface(int32_t dir)
-        {
-            int32_t count = 0;
-            while (LandTool::GetSurfaceStyleFromDropdownIndex(count) != kObjectEntryIndexNull)
-                count++;
-            if (count == 0)
-            {
-                Accessibility::ScreenReaderSpeak("No surface textures");
-                return;
-            }
-            int32_t cur = 0;
-            for (int32_t i = 0; i < count; i++)
-                if (LandTool::GetSurfaceStyleFromDropdownIndex(i) == _selectedFloorTexture)
-                {
-                    cur = i;
-                    break;
-                }
-            cur = (cur + dir + count) % count;
-            const auto type = LandTool::GetSurfaceStyleFromDropdownIndex(cur);
-            gLandToolTerrainSurface = type;
-            _selectedFloorTexture = type;
-            invalidate();
-            Accessibility::ScreenReaderSpeakItem("Surface texture, " + axSurfaceName(type), cur, count);
-        }
-
-        void axCycleEdge(int32_t dir)
-        {
-            int32_t count = 0;
-            while (LandTool::GetEdgeStyleFromDropdownIndex(count) != kObjectEntryIndexNull)
-                count++;
-            if (count == 0)
-            {
-                Accessibility::ScreenReaderSpeak("No edge textures");
-                return;
-            }
-            int32_t cur = 0;
-            for (int32_t i = 0; i < count; i++)
-                if (LandTool::GetEdgeStyleFromDropdownIndex(i) == _selectedWallTexture)
-                {
-                    cur = i;
-                    break;
-                }
-            cur = (cur + dir + count) % count;
-            const auto type = LandTool::GetEdgeStyleFromDropdownIndex(cur);
-            gLandToolTerrainEdge = type;
-            _selectedWallTexture = type;
-            invalidate();
-            Accessibility::ScreenReaderSpeakItem("Edge texture, " + axEdgeName(type), cur, count);
-        }
-
-        void axAdjust(int32_t dir)
-        {
-            switch (_accessField)
-            {
-                case kAxBrush:
-                    onMouseDown(dir < 0 ? WIDX_DECREMENT : WIDX_INCREMENT);
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(kAxBrush));
-                    break;
-                case kAxMountain:
-                    onMouseUp(WIDX_MOUNTAINMODE);
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(kAxMountain));
-                    break;
-                case kAxPaint:
-                    onMouseUp(WIDX_PAINTMODE);
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(kAxPaint));
-                    break;
-                case kAxSurface:
-                    axCycleSurface(dir);
-                    break;
-                case kAxEdge:
-                    axCycleEdge(dir);
-                    break;
-            }
-        }
 
         void InputSize()
         {
@@ -367,44 +245,17 @@ namespace OpenRCT2::Ui::Windows
 
         void onUpdate() override
         {
+            // The map cursor does this tool's job from the keyboard (its own keys and brush), and
+            // none of this window's settings reach them - so in keyboard mode the mouse tool closes
+            // and says which keys to use. In mouse mode (Control Space) it works as usual.
+            if (Accessibility::IsKeyboardNavActive())
+            {
+                Accessibility::ScreenReaderSpeak(Accessibility::Graph::Vocab::kLandToolHint);
+                close();
+                return;
+            }
             if (!isToolActive(WindowClass::land, WIDX_BACKGROUND))
                 close();
-        }
-
-        // Keyboard access: Ctrl+Up/Down move between the brush size, mountain tool, paint mode, and
-        // the surface/edge texture selectors; Ctrl+Left/Right adjust the focused option; Ctrl+Enter
-        // toggles the mountain/paint buttons; Ctrl+B reads the focused option.
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveDown:
-                {
-                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
-                    _accessField = (_accessField + delta + kAxFieldCount) % kAxFieldCount;
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
-                    return true;
-                }
-                case AccessibilityAction::moveLeft:
-                    axAdjust(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    axAdjust(1);
-                    return true;
-                case AccessibilityAction::activate:
-                    if (_accessField == kAxMountain || _accessField == kAxPaint)
-                        axAdjust(1); // toggle
-                    else
-                        Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
-                    return true;
-            }
         }
 
         void onPrepareDraw() override

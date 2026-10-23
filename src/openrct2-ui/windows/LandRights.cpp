@@ -265,6 +265,15 @@ namespace OpenRCT2::Ui::Windows
         {
             currentFrame++;
 
+            // The map cursor does this tool's job from the keyboard (its own keys and brush), and
+            // none of this window's settings reach them - so in keyboard mode the mouse tool closes
+            // and says which keys to use. In mouse mode (Control Space) it works as usual.
+            if (Accessibility::IsKeyboardNavActive() && !(isInEditorMode() || getGameState().cheats.sandboxMode))
+            {
+                Accessibility::ScreenReaderSpeak(Accessibility::Graph::Vocab::kLandRightsToolHint);
+                close();
+                return;
+            }
             // Close window if another tool is open
             if (!isToolActive(WindowClass::landRights))
             {
@@ -284,41 +293,6 @@ namespace OpenRCT2::Ui::Windows
             }
             else if (IsOwnershipMode() && inRightsMode)
                 SwitchToMode(LandRightsMode::setLandUnowned);
-        }
-
-        // Keyboard access: Ctrl+Up/Down move between the brush size and the mode selector;
-        // Ctrl+Left/Right adjust the brush or cycle the ownership/rights mode.
-        bool onAccessibilityAction(AccessibilityAction action) override
-        {
-            switch (action)
-            {
-                case AccessibilityAction::moveUp:
-                case AccessibilityAction::moveDown:
-                {
-                    const int32_t delta = (action == AccessibilityAction::moveDown) ? 1 : -1;
-                    _accessField = (_accessField + delta + kAxFieldCount) % kAxFieldCount;
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
-                    return true;
-                }
-                case AccessibilityAction::moveLeft:
-                    if (_accessField == kAxBrush)
-                        axAdjustBrush(-1);
-                    else
-                        axCycleMode(-1);
-                    return true;
-                case AccessibilityAction::moveRight:
-                    if (_accessField == kAxBrush)
-                        axAdjustBrush(1);
-                    else
-                        axCycleMode(1);
-                    return true;
-                case AccessibilityAction::cancel:
-                    close();
-                    return true;
-                default:
-                    Accessibility::ScreenReaderSpeak(axFieldLabel(_accessField));
-                    return true;
-            }
         }
 
         void PrepareDrawInGame()
@@ -635,77 +609,6 @@ namespace OpenRCT2::Ui::Windows
                 this, WIDX_PREVIEW, STR_SELECTION_SIZE, STR_ENTER_SELECTION_SIZE, ft, kStringIdNone, kStringIdNone, 3);
         }
 
-        // --- Keyboard accessibility ---
-        enum
-        {
-            kAxBrush,
-            kAxMode,
-            kAxFieldCount,
-        };
-        int32_t _accessField = kAxBrush;
-
-        static std::string axModeName(LandRightsMode mode)
-        {
-            switch (mode)
-            {
-                case LandRightsMode::buyLand:
-                    return "buy land";
-                case LandRightsMode::buyConstructionRights:
-                    return "buy construction rights";
-                case LandRightsMode::setLandOwned:
-                    return "set land owned";
-                case LandRightsMode::setLandForSale:
-                    return "set land for sale";
-                case LandRightsMode::setConstructionRightsOwned:
-                    return "set construction rights owned";
-                case LandRightsMode::setConstructionRightsForSale:
-                    return "set construction rights for sale";
-                case LandRightsMode::setLandUnowned:
-                    return "set land not owned";
-            }
-            return {};
-        }
-
-        std::vector<LandRightsMode> axModeList() const
-        {
-            if (IsOwnershipMode())
-                return { LandRightsMode::setLandOwned, LandRightsMode::setLandForSale,
-                         LandRightsMode::setConstructionRightsOwned, LandRightsMode::setConstructionRightsForSale,
-                         LandRightsMode::setLandUnowned };
-            return { LandRightsMode::buyLand, LandRightsMode::buyConstructionRights };
-        }
-
-        std::string axFieldLabel(int32_t field) const
-        {
-            if (field == kAxBrush)
-                return "Brush size " + std::to_string(gLandToolSize);
-            return "Mode, " + axModeName(_landRightsMode);
-        }
-
-        void axAdjustBrush(int32_t dir)
-        {
-            onMouseDown(dir < 0 ? WIDX_DECREMENT : WIDX_INCREMENT);
-            Accessibility::ScreenReaderSpeak(axFieldLabel(kAxBrush));
-        }
-
-        void axCycleMode(int32_t dir)
-        {
-            const auto modes = axModeList();
-            if (modes.empty())
-                return;
-            int32_t cur = 0;
-            for (size_t i = 0; i < modes.size(); i++)
-                if (modes[i] == _landRightsMode)
-                {
-                    cur = static_cast<int32_t>(i);
-                    break;
-                }
-            const int32_t n = static_cast<int32_t>(modes.size());
-            cur = (cur + dir + n) % n;
-            SwitchToMode(modes[cur]);
-            Accessibility::ScreenReaderSpeak("Mode, " + axModeName(modes[cur]));
-        }
-
     public:
         // ---- graph accessibility recipe (scenario editor and sandbox mode only) ----
         //
@@ -714,7 +617,8 @@ namespace OpenRCT2::Ui::Windows
         // window's own land rights action, the one its mouse tool runs over a dragged area, then
         // closes the window. The list's heading says which tiles that is, so choosing is the
         // confirmation. The window's tool size is left out: the map cursor's brush (B) is the area.
-        // In a park this screen stands aside and the window keeps its older keyboard support above.
+        // In a park this screen stands aside: from the keyboard the window closes and points to O and
+        // Shift O (see onUpdate).
         void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
             using namespace Accessibility::Graph;
@@ -772,7 +676,7 @@ namespace OpenRCT2::Ui::Windows
         screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kLandRights); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<LandRightsWindow&>(w).BuildAccessGraph(b); };
         // Only where the window sets ownership rather than buying it; gated, so it is a fallback like
-        // the Map window it opens from, and in a park the older keyboard support keeps the window.
+        // the Map window it opens from.
         screen.isActive = []() { return isInEditorMode() || getGameState().cheats.sandboxMode; };
         screen.screenName = []() { return FormatStringID(kWindowTitle); };
         RegisterGraphScreen(std::move(screen));

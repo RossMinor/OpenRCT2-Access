@@ -262,8 +262,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
           "construction rights. Delete removes one thing here. Control P checks whether a path reaches the park "
           "entrance, Control H rescues stranded guests. Enter opens what is here, Control Enter builds on a "
           "ride. T reads the park's status, M your cash. P pauses, Control equals and Control minus change the "
-          "game speed. Shift with C, F, R, I, G, S, D or M opens the game's windows, Shift F1 the land tool. Tab "
-          "opens the toolbar. Control F1 opens the mod settings, Control F2 turns scenery reading on or off, "
+          "game speed. Shift with C, F, R, I, G, S, D or M opens the game's windows. Tab opens the toolbar. Control F1 opens the mod settings, Control F2 turns scenery reading on or off, "
           "Control Space switches to the mouse.";
 
     inline constexpr const char* kMap_Editor
@@ -324,11 +323,6 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
         = "Building a maze. Arrow keys move the map cursor. Control up and down choose an action: build a "
           "section, place the entrance, or place the exit. Control Enter does it at the cursor. Escape stops "
           "building.";
-
-    inline constexpr const char* kLandTool
-        = "Land tool. Arrow keys move the map cursor. Page Up and Page Down raise and lower land, with Control "
-          "for water. Control up and down choose a tool option, Control left and right change it. Escape "
-          "closes.";
 
     inline constexpr const char* kFollowing
         = "Following someone with the camera, which moves with them. Escape stops following.";

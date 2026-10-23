@@ -5083,61 +5083,6 @@ namespace OpenRCT2::Ui::Accessibility
         return true;
     }
 
-    // Terraform/land tool option windows (Land, Water, Land Rights, Clear Scenery). Like ride
-    // construction, Ctrl+arrows navigate/adjust the window's options, Ctrl+Enter activates, Ctrl+B
-    // reads the current option, and Escape closes; plain arrows fall through so the map cursor keeps
-    // positioning the tool. Returns true if the key was consumed.
-    static bool HandleToolWindowAccessKey(uint32_t key, uint32_t modifiers)
-    {
-        auto* windowMgr = GetWindowManager();
-        if (windowMgr == nullptr)
-            return false;
-        WindowBase* w = windowMgr->FindByClass(WindowClass::land);
-        if (w == nullptr)
-            w = windowMgr->FindByClass(WindowClass::water);
-        if (w == nullptr)
-            w = windowMgr->FindByClass(WindowClass::landRights);
-        if (w == nullptr)
-            w = windowMgr->FindByClass(WindowClass::clearScenery);
-        if (w == nullptr)
-            return false;
-
-        std::optional<AccessibilityAction> action;
-        if (modifiers & KMOD_CTRL)
-        {
-            switch (key)
-            {
-                case SDLK_UP:
-                    action = AccessibilityAction::moveUp;
-                    break;
-                case SDLK_DOWN:
-                    action = AccessibilityAction::moveDown;
-                    break;
-                case SDLK_LEFT:
-                    action = AccessibilityAction::moveLeft;
-                    break;
-                case SDLK_RIGHT:
-                    action = AccessibilityAction::moveRight;
-                    break;
-                case SDLK_RETURN:
-                case SDLK_KP_ENTER:
-                    action = AccessibilityAction::activate;
-                    break;
-                case SDLK_b:
-                    action = AccessibilityAction::announce;
-                    break;
-            }
-        }
-        if (key == SDLK_ESCAPE)
-            action = AccessibilityAction::cancel;
-
-        if (!action.has_value())
-            return false;
-
-        w->onAccessibilityAction(*action);
-        return true;
-    }
-
     // What the landscape step still lacks before the game will go forward, in the game's own words.
     // Mirrors Editor::CheckPark (scenes/editor/EditorController.cpp) test for test, with two
     // differences: it lists every failure rather than stopping at the first, and it never runs that
@@ -5218,7 +5163,6 @@ namespace OpenRCT2::Ui::Accessibility
     static void SpeakContextHelp()
     {
         namespace Help = Graph::Vocab::Help;
-        auto* windowMgr = GetWindowManager();
 
         // Modal choices first: while one is open, every key answers it.
         if (IsDeletePickerActive())
@@ -5248,15 +5192,6 @@ namespace OpenRCT2::Ui::Accessibility
             return ScreenReaderSpeak(EditorPlacementHelp());
         if (IsAccessibleSceneryPlacementActive())
             return ScreenReaderSpeak(Help::kPlacingScenery);
-
-        // The land tool windows (Land, Water, Land Rights in a park, Clear Scenery) leave the map
-        // cursor the keys.
-        if (windowMgr != nullptr
-            && (windowMgr->FindByClass(WindowClass::land) != nullptr
-                || windowMgr->FindByClass(WindowClass::water) != nullptr
-                || windowMgr->FindByClass(WindowClass::landRights) != nullptr
-                || windowMgr->FindByClass(WindowClass::clearScenery) != nullptr))
-            return ScreenReaderSpeak(Help::kLandTool);
 
         if (_statusMode)
             return ScreenReaderSpeak(Help::kStatusReadout);
@@ -5673,13 +5608,6 @@ namespace OpenRCT2::Ui::Accessibility
         // when the construction window is open; plain arrows fall through so the map cursor keeps
         // working. Checked before mouse/menu mode so the build menu works regardless of either.
         if (HandleRideConstructionAccessKey(key, e.modifiers))
-        {
-            _lastHandledKey = key;
-            return true;
-        }
-
-        // Terraform/land tool option windows: same Ctrl+arrow scheme, plain arrows stay with the cursor.
-        if (HandleToolWindowAccessKey(key, e.modifiers))
         {
             _lastHandledKey = key;
             return true;
