@@ -108,6 +108,7 @@
 #include <openrct2/world/Map.h>
 #include <openrct2/world/MapLimits.h>
 #include <openrct2/world/MapSelection.h>
+#include <openrct2/world/Park.h>
 #include <openrct2/world/TileElementsView.h>
 #include <openrct2/world/tile_element/BannerElement.h>
 #include <openrct2/world/tile_element/EntranceElement.h>
@@ -5131,6 +5132,81 @@ namespace OpenRCT2::Ui::Accessibility
         return true;
     }
 
+    // What the landscape step still lacks before the game will go forward, in the game's own words.
+    // Mirrors Editor::CheckPark (scenes/editor/EditorController.cpp) test for test, with two
+    // differences: it lists every failure rather than stopping at the first, and it never runs that
+    // function's second, land-changing search (flag 1 << 5, which turns owned land along the entrance
+    // path into construction rights). The park size is counted with CalculateParkSize rather than
+    // UpdateSize, which would also store it.
+    static std::string EditorLandscapeChecklist()
+    {
+        auto& gameState = getGameState();
+        std::vector<StringId> missing;
+        auto need = [&missing](StringId message) {
+            if (std::find(missing.begin(), missing.end(), message) == missing.end())
+                missing.push_back(message);
+        };
+
+        if (Park::CalculateParkSize(gameState.park) == 0)
+            need(STR_PARK_MUST_OWN_SOME_LAND);
+
+        if (gameState.park.entrances.empty())
+            need(STR_NO_PARK_ENTRANCES);
+        for (const auto& parkEntrance : gameState.park.entrances)
+        {
+            switch (FootpathIsConnectedToMapEdge(parkEntrance, DirectionReverse(parkEntrance.direction), 0))
+            {
+                case FOOTPATH_SEARCH_NOT_FOUND:
+                    need(STR_PARK_ENTRANCE_WRONG_DIRECTION_OR_NO_PATH);
+                    break;
+                case FOOTPATH_SEARCH_INCOMPLETE:
+                case FOOTPATH_SEARCH_TOO_COMPLEX:
+                    need(STR_PARK_ENTRANCE_PATH_INCOMPLETE_OR_COMPLEX);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (gameState.peepSpawns.empty())
+            need(STR_PEEP_SPAWNS_NOT_SET);
+
+        if (missing.empty())
+            return "Ready to go forward.";
+        std::string text = "Still needed:";
+        for (const auto message : missing)
+        {
+            std::string sentence = OpenRCT2::FormatStringID(message);
+            if (!sentence.empty() && sentence.back() != '.')
+                sentence += '.';
+            text += " " + sentence;
+        }
+        return text;
+    }
+
+    // Said once each time the editor arrives on its landscape step, so the player knows what the
+    // step asks of them before the Map window it opens with announces itself. Runs before the graph
+    // screens' tick, so this line is queued ahead of the window's name. Going forward from object
+    // selection or back from the inventions list opens the Map window; loading a saved landscape
+    // does not, so the line only mentions closing it when it is there.
+    void TickEditorLandscapeArrival()
+    {
+        static bool wasOnLandscapeStep = false;
+        const bool onLandscapeStep = IsEditorLandscapeStep();
+        if (onLandscapeStep && !wasOnLandscapeStep)
+        {
+            std::string line = "Landscape editor. Before going forward, the park needs land it owns, a park entrance, "
+                               "a path from the entrance to the edge of the map, and starting positions for guests. ";
+            auto* windowMgr = GetWindowManager();
+            if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::map) != nullptr)
+                line += "Close the Map window with Escape, then press F1 for the keys and what is still needed.";
+            else
+                line += "Press F1 for the keys and what is still needed.";
+            ScreenReaderSpeak(line, false);
+        }
+        wasOnLandscapeStep = onLandscapeStep;
+    }
+
     // Speaks a short summary of the controls available right now, triggered by F1. Contexts are
     // checked most-specific first so the tips always match whatever the player is currently doing.
     static void SpeakContextHelp()
@@ -5239,8 +5315,10 @@ namespace OpenRCT2::Ui::Accessibility
                 "Delete removes one thing at the cursor. Shift with a number sets a waypoint, Control with "
                 "a number jumps to it. Control with an arrow jumps to the nearest object in that direction. "
                 "Control P checks whether the current tile connects to the park entrance. Shift P opens the "
-                "path menu and Shift X the scenery menu. Tab opens the toolbar menu, where the editor's "
-                "steps are. Control F1 opens the accessibility settings.");
+                "path menu and Shift X the scenery menu. O sets land rights. Shift M opens the Map window, "
+                "which builds the park entrance and sets guest starting positions. Tab opens the toolbar "
+                "menu, where the editor's steps are. Control F1 opens the accessibility settings. "
+                + EditorLandscapeChecklist());
             return;
         }
         // Default: the free map cursor during play.

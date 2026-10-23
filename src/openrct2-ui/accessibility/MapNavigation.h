@@ -119,6 +119,10 @@ namespace OpenRCT2::Ui::Accessibility
     // sighted users can see where focus is, and clears it when focus moves off the map.
     void TickFocusHighlight();
 
+    // Polled each frame. On arriving at the scenario editor's landscape step, says once what the
+    // step needs before the game will go forward.
+    void TickEditorLandscapeArrival();
+
     // Polled each frame. Announces the cost/refund of player-initiated transactions (building,
     // demolishing, buying/selling land, marketing) once they occur. Guest spending and recurring
     // costs are not announced.

@@ -241,6 +241,10 @@ void InputManager::process()
     // Keep the on-screen focus highlight on the map cursor's tile (visual indicator for sighted users).
     Accessibility::TickFocusHighlight();
 
+    // Say what the scenario editor's landscape step needs, once on arriving there. Before the graph
+    // screens' tick so it is queued ahead of the Map window that opens with the step.
+    Accessibility::TickEditorLandscapeArrival();
+
     // Graph-navigated windows: screen manager attach/detach, the frame differ, and the live watch.
     Accessibility::TickGraphScreens();
 
