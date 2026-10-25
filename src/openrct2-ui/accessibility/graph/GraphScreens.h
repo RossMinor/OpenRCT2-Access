@@ -27,9 +27,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
     // re-derived from live window state each poll (poll-and-diff, never event subscription), which
     // is what makes the stack robust to the game recreating its windows at will.
     //
-    // Migration note (spec 10.5): a window class with a registered screen is OWNED by the graph -
-    // the legacy accessibility layer stands down for it wholesale via GraphOwnsWindowClass, never
-    // per-feature.
+    // A window class with a registered screen is OWNED by the graph (GraphOwnsWindowClass).
     struct GraphScreen
     {
         WindowClass windowClass{};
@@ -96,10 +94,9 @@ namespace OpenRCT2::Ui::Accessibility::Graph
     // One-time registration of all migrated screens (lazy; safe to call every tick).
     void EnsureGraphScreensRegistered();
 
-    // THE ownership gate (spec 10.5): does the graph own this window class? Consulted by every
-    // legacy accessibility path so exactly one model acts on each window. This is REGISTRATION
-    // only - it stays true for a gated screen that is not currently active, because "the legacy
-    // layer must not touch this window" is true either way.
+    // Does the graph own this window class? Windows that speak for themselves (e.g. the toolbar
+    // and title menu confirming a button) ask this so a graph window is not announced twice. This
+    // is REGISTRATION only - it stays true for a gated screen that is not currently active.
     bool GraphOwnsWindowClass(WindowClass wc);
 
     // Registration AND the isActive gate: whether this class may hold the keyboard right now.
@@ -118,8 +115,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
     // fresh).
     void DropGraphStatesForClosedWindows();
 
-    // The front-most keyboard-navigable window (graph-owned or legacy-navigable), respecting the
-    // real z-order - or null (also null while a placement tool owns the keyboard). The graph owns
-    // the frame iff this window's class is graph-owned.
+    // The front-most window whose graph screen holds the keyboard, respecting the real z-order -
+    // or null (also null while a placement tool owns the keyboard).
     WindowBase* FrontNavigableWindow();
 } // namespace OpenRCT2::Ui::Accessibility::Graph

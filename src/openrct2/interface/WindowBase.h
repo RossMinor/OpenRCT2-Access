@@ -38,8 +38,7 @@ namespace OpenRCT2
 {
     constexpr uint8_t kDefaultWindowFlashCountdown = 3;
 
-    // Logical navigation actions issued by the accessibility/keyboard layer. A window
-    // overrides onAccessibilityAction() to interpret these for its own contents.
+    // Logical navigation actions sent to the windows that override onAccessibilityAction().
     enum class AccessibilityAction : uint8_t
     {
         moveUp,
@@ -243,28 +242,13 @@ namespace OpenRCT2
         {
         }
 
-        // Accessibility: keyboard navigation of this window's contents for screen-reader
-        // users. Returns true if the action was handled. Default does nothing so windows
-        // without a custom implementation fall back to generic widget navigation.
+        // Accessibility: keyboard navigation of this window's contents for screen-reader users,
+        // for the few windows not on the graph navigator - ride and maze construction (sent by the
+        // map cursor) and the file browser (sent by InputManager). Returns true if the action was
+        // handled.
         virtual bool onAccessibilityAction(AccessibilityAction)
         {
             return false;
-        }
-
-        // First-letter navigation: jump focus to the next item whose label starts with the given
-        // letter key (an SDLK_a..SDLK_z keycode). Windows with item lists opt in. Return true if
-        // the key was consumed.
-        virtual bool onAccessibilityTypeahead(uint32_t /*letterKey*/)
-        {
-            return false;
-        }
-
-        // The screen-space rectangle of the element the keyboard accessibility focus is currently on
-        // (a widget, list row, or tab), used to draw a visible focus indicator. Returns nullopt when
-        // there is nothing to highlight. Windows that support keyboard navigation override this.
-        virtual std::optional<ScreenRect> getAccessibilityFocusRect()
-        {
-            return std::nullopt;
         }
 
         constexpr int16_t right()

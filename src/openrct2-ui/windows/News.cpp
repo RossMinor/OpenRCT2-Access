@@ -751,8 +751,7 @@ namespace OpenRCT2::Ui::Windows
     }
 
     // Register the recent-messages window with the graph accessibility navigator (called once at
-    // startup via EnsureGraphScreensRegistered). From here on the graph owns this window class; the
-    // legacy accessibility dispatcher stands down for it.
+    // startup via EnsureGraphScreensRegistered). From here on the graph owns this window class.
     void RegisterNewsGraphScreen()
     {
         using namespace Accessibility::Graph;

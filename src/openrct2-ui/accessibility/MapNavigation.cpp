@@ -5195,10 +5195,6 @@ namespace OpenRCT2::Ui::Accessibility
 
         if (_statusMode)
             return ScreenReaderSpeak(Help::kStatusReadout);
-        // A window with the older keyboard support and no help of its own. Graph windows answer F1
-        // themselves before the key gets here.
-        if (GetActiveAccessibleWindow() != nullptr)
-            return ScreenReaderSpeak(Help::kWindow);
         if (_mouseMode)
             return ScreenReaderSpeak(Help::kMouseMode);
         // What the step still needs comes first, so it is heard before the keys.
@@ -5415,7 +5411,7 @@ namespace OpenRCT2::Ui::Accessibility
             _areaConfirmPending = AreaCommand::none;
 
         // While rebinding a keyboard shortcut, let every key fall through to the shortcut manager so
-        // it captures the new binding (Escape-to-cancel is handled earlier in HandleMenuNavigationKey).
+        // it captures the new binding (Escape-to-cancel is handled earlier in HandleGraphNavigationKey).
         if (GetShortcutManager().isPendingShortcutChange())
             return false;
 

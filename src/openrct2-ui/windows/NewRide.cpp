@@ -1333,7 +1333,7 @@ namespace OpenRCT2::Ui::Windows
 
     // Register the "construct new ride" catalog window with the graph accessibility navigator (called
     // once at startup via EnsureGraphScreensRegistered). From here on the graph owns this window
-    // class; the legacy accessibility dispatcher stands down for it.
+    // class.
     void RegisterNewRideGraphScreen()
     {
         using namespace Accessibility::Graph;

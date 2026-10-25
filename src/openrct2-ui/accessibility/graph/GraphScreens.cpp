@@ -210,7 +210,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
             return nullptr;
 
         // While placing a pre-built ride, the keyboard map cursor positions it, so no window
-        // should capture the keys (same guard as the legacy dispatcher).
+        // should capture the keys.
         if (windowMgr->FindByClass(WindowClass::trackDesignPlace) != nullptr)
             return nullptr;
         // Likewise while the scenario editor's park entrance is being placed: the Map window it was
@@ -243,9 +243,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
                     gatedFallback = w;
                 return;
             }
-            if (GraphScreenHoldsKeyboard(w->classification)
-                || (!GraphOwnsWindowClass(w->classification)
-                    && IsLegacyNavigableAccessibleClass(w->classification)))
+            if (GraphScreenHoldsKeyboard(w->classification))
                 result = w;
         });
         return result != nullptr ? result : gatedFallback;

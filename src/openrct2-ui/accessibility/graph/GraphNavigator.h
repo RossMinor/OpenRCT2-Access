@@ -22,9 +22,9 @@ namespace OpenRCT2::Ui::Accessibility
     // calls around focus mutations are forbidden. Speech provenance: keypress-driven landings
     // interrupt; differ/attach landings queue (A7).
 
-    // Key chokepoint. Called from InputManager BEFORE the legacy accessibility dispatcher; when
-    // the front-most navigable window is graph-owned, the graph handles (or deliberately
-    // swallows) the key and the legacy layer never sees it - one keypress, one model.
+    // Key chokepoint. Called from InputManager before the map cursor; when a graph window holds
+    // the keyboard, the graph handles (or deliberately swallows) the key and the map never sees
+    // it - one keypress, one model.
     bool HandleGraphNavigationKey(const InputEvent& e);
 
     // Per-frame tick: the screen manager (poll-and-diff attach), the frame differ, and the live

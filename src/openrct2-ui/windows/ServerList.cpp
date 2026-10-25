@@ -643,8 +643,7 @@ namespace OpenRCT2::Ui::Windows
     }
 
     // Register the server-list window with the graph accessibility navigator (called once at startup
-    // via EnsureGraphScreensRegistered). From here on the graph owns this window class; the legacy
-    // accessibility dispatcher stands down for it.
+    // via EnsureGraphScreensRegistered). From here on the graph owns this window class.
     void RegisterServerListGraphScreen()
     {
         using namespace Accessibility::Graph;
@@ -652,14 +651,6 @@ namespace OpenRCT2::Ui::Windows
         screen.windowClass = WindowClass::serverList;
         screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kServerList); };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<ServerListWindow&>(w).BuildAccessGraph(b); };
-        // Opened from the title menu; re-announce its focused item before the navigator closes us.
-        screen.onEscape = [](WindowBase&) {
-            auto* windowMgr = GetWindowManager();
-            if (windowMgr != nullptr)
-                if (auto* tm = windowMgr->FindByClass(WindowClass::titleMenu); tm != nullptr)
-                    tm->onAccessibilityAction(AccessibilityAction::announce);
-            return false; // let the navigator close this window
-        };
         RegisterGraphScreen(std::move(screen));
     }
 

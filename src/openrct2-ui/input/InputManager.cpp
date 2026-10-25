@@ -510,11 +510,8 @@ void InputManager::process(const InputEvent& e)
             Accessibility::StopFollowingEntity();
             return;
         }
-        // The graph navigator (migrated windows) gets first refusal; the legacy menu dispatcher
-        // stands down for graph-owned windows via the ownership gate inside it.
+        // The graph navigator (every window) gets first refusal, then the map cursor.
         if (Accessibility::HandleGraphNavigationKey(e))
-            return;
-        if (Accessibility::HandleMenuNavigationKey(e))
             return;
         if (Accessibility::HandleMapNavigationKey(e))
             return;

@@ -1541,8 +1541,7 @@ namespace OpenRCT2::Ui::Windows
     }
 
     // Register the park information window with the graph accessibility navigator (called once at
-    // startup via EnsureGraphScreensRegistered). From here on the graph owns this window class; the
-    // legacy accessibility dispatcher stands down for it.
+    // startup via EnsureGraphScreensRegistered). From here on the graph owns this window class.
     void RegisterParkGraphScreen()
     {
         using namespace Accessibility::Graph;

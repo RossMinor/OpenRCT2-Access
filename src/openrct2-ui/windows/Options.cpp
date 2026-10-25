@@ -2766,8 +2766,7 @@ namespace OpenRCT2::Ui::Windows
     }
 
     // Register the options window with the graph accessibility navigator (called once at startup
-    // via EnsureGraphScreensRegistered). From here on the graph owns this window class; the
-    // legacy accessibility dispatcher stands down for it.
+    // via EnsureGraphScreensRegistered). From here on the graph owns this window class.
     void RegisterOptionsGraphScreen()
     {
         using namespace Accessibility::Graph;

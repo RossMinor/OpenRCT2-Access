@@ -1310,25 +1310,6 @@ namespace OpenRCT2::Ui::Windows
                 Accessibility::ScreenReaderSpeak("Game saved, " + name);
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            const auto& lw = widgets[WIDX_SCROLL];
-            const int32_t viewTop = windowPos.y + lw.top;
-            const int32_t viewBottom = windowPos.y + lw.bottom;
-            const int32_t left = windowPos.x + lw.left;
-            const int32_t right = windowPos.x + lw.right;
-
-            if (_accessIndex < 0 || _accessIndex >= static_cast<int32_t>(_listItems.size()))
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-
-            const int32_t rowTop = viewTop + _accessIndex * kScrollableRowHeight - scrolls[0].contentOffsetY;
-            int32_t top = std::max(rowTop, viewTop);
-            int32_t bottom = std::min(rowTop + kScrollableRowHeight, viewBottom);
-            if (bottom <= top)
-                return ScreenRect{ { left, viewTop }, { right, viewBottom } };
-            return ScreenRect{ { left, top }, { right, bottom } };
-        }
-
         bool onAccessibilityAction(AccessibilityAction action_) override
         {
             const bool isSave = (action == LoadSaveAction::save);
@@ -1390,14 +1371,8 @@ namespace OpenRCT2::Ui::Windows
                 case AccessibilityAction::cancel:
                 {
                     InvokeCallback(ModalResult::cancel, "");
-                    auto* windowMgr = GetWindowManager();
                     close();
                     Accessibility::ReannounceToolbarItemIfMenuMode();
-                    if (windowMgr != nullptr)
-                    {
-                        if (auto* titleMenu = windowMgr->FindByClass(WindowClass::titleMenu); titleMenu != nullptr)
-                            titleMenu->onAccessibilityAction(AccessibilityAction::announce);
-                    }
                     return true;
                 }
 

@@ -2125,56 +2125,6 @@ namespace OpenRCT2::Ui::Windows
             }
         }
 
-        std::optional<ScreenRect> getAccessibilityFocusRect() override
-        {
-            const auto fields = axBuildFields();
-            const int32_t focusIdx = axFocusIndex(fields);
-            if (focusIdx < 0)
-                return std::nullopt;
-
-            // The curve/slope/bank fields highlight their currently selected option button.
-            const auto pickSelector = [&](const std::vector<AxOption>& opts, uint8_t value) -> WidgetIndex {
-                const int32_t ci = axCurrentOption(opts, value);
-                if (ci >= 0 && ci < static_cast<int32_t>(opts.size()))
-                    return opts[ci].widget;
-                return opts.empty() ? WIDX_CONSTRUCT : opts[0].widget;
-            };
-
-            WidgetIndex w = WIDX_CONSTRUCT;
-            switch (fields[focusIdx])
-            {
-                case AxField::direction:
-                    w = WIDX_ROTATE;
-                    break;
-                case AxField::curve:
-                    w = pickSelector(axCurveOptions(), static_cast<uint8_t>(_currentlySelectedTrack.curve));
-                    break;
-                case AxField::special:
-                    w = WIDX_SPECIAL_TRACK_DROPDOWN;
-                    break;
-                case AxField::slope:
-                    w = pickSelector(axSlopeOptions(), static_cast<uint8_t>(_currentTrackPitchEnd));
-                    break;
-                case AxField::bank:
-                    w = pickSelector(axBankOptions(), static_cast<uint8_t>(_currentTrackRollEnd));
-                    break;
-                case AxField::chain:
-                    w = WIDX_CHAIN_LIFT;
-                    break;
-                case AxField::construct:
-                    w = WIDX_CONSTRUCT;
-                    break;
-                case AxField::station:
-                    w = WIDX_ENTRANCE;
-                    break;
-            }
-            if (w >= widgets.size() || widgets[w].type == WidgetType::empty)
-                return std::nullopt;
-            const auto& wd = widgets[w];
-            return ScreenRect{ windowPos + ScreenCoordsXY{ wd.left, wd.top },
-                               windowPos + ScreenCoordsXY{ wd.right, wd.bottom } };
-        }
-
         bool onAccessibilityAction(AccessibilityAction action) override
         {
             // Any build action clears a pending exit confirmation.

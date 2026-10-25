@@ -703,8 +703,7 @@ namespace OpenRCT2::Ui::Accessibility
         // While a shortcut rebind is pending (the Change Shortcut window is open, e.g. from the
         // graph-owned shortcut-keys window), the next key press is captured by the shortcut manager
         // as the new binding. Let every key fall through to it, except Escape, which cancels the
-        // rebind (Escape is otherwise a valid binding). Mirrors the legacy menu dispatcher's guard,
-        // which now runs after this one.
+        // rebind (Escape is otherwise a valid binding).
         if (auto& sm = GetShortcutManager(); sm.isPendingShortcutChange())
         {
             if (e.button == SDLK_ESCAPE)
@@ -759,14 +758,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (!graphFront)
         {
             if (_attachedClass != WindowClass::null)
-            {
                 AttachTo(WindowClass::null);
-                // A graph window closed revealing a legacy window: poke its announce so the
-                // player hears where focus went (the legacy dispatcher only announces on its own
-                // keypresses).
-                if (front != nullptr)
-                    front->onAccessibilityAction(AccessibilityAction::announce);
-            }
             return;
         }
 
