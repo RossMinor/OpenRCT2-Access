@@ -398,23 +398,27 @@ namespace OpenRCT2::Ui::Accessibility
         AnnounceLanding(kg, from, node);
     }
 
-    // The window's name: the screen's own, else the window's caption where it holds plain text.
+    // The window's name: the screen's own, else the window's caption as it is drawn - plain text, or a
+    // string id formatted without arguments (the caption draw passes none).
     static std::string WindowNameText(const GraphScreen& screen, const WindowBase& w)
     {
         if (screen.screenName)
             return GuardedText(screen.screenName);
         for (const auto& widget : w.widgets)
         {
-            if (widget.type == WidgetType::caption && widget.flags.has(WidgetFlag::textIsString) && widget.string != nullptr)
-                return widget.string;
+            if (widget.type != WidgetType::caption)
+                continue;
+            if (widget.flags.has(WidgetFlag::textIsString))
+                return widget.string != nullptr ? std::string(widget.string) : std::string();
+            if (widget.text != kStringIdNone)
+                return FormatStringID(widget.text);
         }
         return {};
     }
 
-    // F1: where you are - the window, then the focused control with its whole context chain, state
-    // and position, what a first landing on it would say (§7.2 "where am I") - then the window's own
-    // help, or the list's while one of its combo box lists is open, else the shared texts.
-    static void SpeakWindowHelp(KeyGraph& kg, const GraphScreen& screen, WindowBase& w)
+    // F1: the window's title, then its own help, or the list's while one of its combo box lists is
+    // open, else the shared texts. The help texts leave the window's name out, as the title says it.
+    static void SpeakWindowHelp(const GraphScreen& screen, WindowBase& w)
     {
         auto* windowMgr = GetWindowManager();
         const bool listOpen = windowMgr != nullptr && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
@@ -432,13 +436,8 @@ namespace OpenRCT2::Ui::Accessibility
         }
         if (text.empty())
             text = Vocab::Help::kWindow;
-        SpeechBuilder sb;
-        sb.add(WindowNameText(screen, w));
-        if (kg.Rerender())
-            if (auto* node = kg.CurrentNode(); node != nullptr)
-                sb.add(GraphAnnouncer::ComposeFull(node));
-        const std::string where = sb.str();
-        ScreenReaderSpeak(where.empty() ? text : where + ". " + text, true);
+        const std::string title = WindowNameText(screen, w);
+        ScreenReaderSpeak(title.empty() ? text : title + ". " + text, true);
     }
 
     static void AnnounceTree(KeyGraph& kg, const KeyGraph::TreeResult& tr)
@@ -598,11 +597,11 @@ namespace OpenRCT2::Ui::Accessibility
                     return true;
                 }
             case SDLK_F1:
-                // F1 is where you are, then help for the window. Shift+F1 is the game's land tool and
-                // backtick its console, here as on the map: tooltips are read on landing instead.
+                // F1 is the window's title, then its help. Shift+F1 is the game's land tool and backtick
+                // its console, here as on the map: tooltips are read on landing instead.
                 if (shift || ctrl || alt)
                     return false;
-                SpeakWindowHelp(kg, screen, w);
+                SpeakWindowHelp(screen, w);
                 return true;
             case SDLK_BACKSPACE:
             {
