@@ -314,6 +314,7 @@ namespace OpenRCT2::Ui::Windows
     void RegisterEditorInventionsListGraphScreen();
     void RegisterMapGraphScreen();
     void RegisterEditorScenarioOptionsGraphScreen();
+    void RegisterMapGenGraphScreen();
     void RegisterNetworkStatusGraphScreen();
     void RegisterLandRightsGraphScreen();
     void RegisterEditorParkEntranceGraphScreen();

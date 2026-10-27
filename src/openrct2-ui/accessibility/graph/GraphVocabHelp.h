@@ -196,8 +196,37 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
     inline constexpr const char* kMap
         = "Map. Map size X and map size Y: left and right change them, Enter types a size. Keep map square "
           "links the two. Set land rights explains how to set land from the map. Set guest starting positions "
-          "and Build park entrance start placing them on the map. Map generator opens the generator, which is "
-          "not accessible yet. Escape closes the window, and Shift M opens it again.";
+          "and Build park entrance start placing them on the map. Map generator opens the generator. Escape "
+          "closes the window, and Shift M opens it again.";
+
+    // Map generator: what the page holds, then the shared keys.
+    inline std::string MapGen(int32_t page)
+    {
+        std::string text = "Map generator. ";
+        switch (page)
+        {
+            case 0:
+                text += "Generator: the map's size, and where its land comes from: flatland, simplex noise for "
+                        "random hills, or a height map image chosen with Browse. ";
+                break;
+            case 1:
+                text += "Terrain: the lowest and highest land, the land and edge styles or random ones, and smooth "
+                        "tile edges. ";
+                break;
+            case 2:
+                text += "Water: the water level, and beaches around the water. ";
+                break;
+            default:
+                text += "Forests: whether to place trees, how much of the land they cover, and the heights they "
+                        "grow between. ";
+                break;
+        }
+        text += "On a number, left and right change it one step, Shift with left and right ten steps, and Enter "
+                "types a value. Enter on a list opens it, and Enter on a checkbox checks or unchecks it. Generate "
+                "makes a new map from these settings and replaces the whole map. Tab and Shift Tab move between "
+                "the pages. Escape closes.";
+        return text;
+    }
 
     inline constexpr const char* kLandRights
         = "Land rights. Up and down choose a setting. Enter applies it to the tiles named at the top of the "

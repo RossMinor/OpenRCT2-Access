@@ -130,6 +130,8 @@ namespace OpenRCT2::Ui::Accessibility
     // Cursor state, in absolute map tile coordinates.
     static bool _initialised = false;
     static TileCoordsXY _cursor{};
+    // The map size the cursor was last kept within (see KeepCursorOnMap).
+    static TileCoordsXY _cursorMapSize{};
 
     // Spoken coordinates are ABSOLUTE: a tile always reports the same X/Y no matter how the camera
     // is rotated. The orientation is fixed to the default view (where screen-right is higher X and
@@ -1050,6 +1052,7 @@ namespace OpenRCT2::Ui::Accessibility
         _lastElevationLevels.clear();
 
         const auto mapSize = getGameState().mapSize;
+        _cursorMapSize = mapSize;
 
         // Start on the first owned tile (inside the park) if there is one, else the centre.
         _cursor = TileCoordsXY{ mapSize.x / 2, mapSize.y / 2 };
@@ -1068,6 +1071,36 @@ namespace OpenRCT2::Ui::Accessibility
             if (found)
                 break;
         }
+    }
+
+    // The map can change size under the cursor (the Map window's size spinners, in the editor and
+    // sandbox mode). When it has, whatever now lies past the edge comes back onto the map: the
+    // cursor moves to the nearest tile still on it, and a waypoint or marker beyond the edge is
+    // dropped, so no jump can land off the map. Checked on every key and every frame.
+    static void KeepCursorOnMap()
+    {
+        if (!_initialised)
+            return;
+        const auto mapSize = getGameState().mapSize;
+        if (mapSize == _cursorMapSize)
+            return;
+        _cursorMapSize = mapSize;
+
+        const auto onMap = [&mapSize](const TileCoordsXY& tile) {
+            return tile.x >= 1 && tile.y >= 1 && tile.x <= mapSize.x - 2 && tile.y <= mapSize.y - 2;
+        };
+        if (!onMap(_cursor))
+        {
+            _cursor.x = std::clamp(_cursor.x, 1, std::max(1, mapSize.x - 2));
+            _cursor.y = std::clamp(_cursor.y, 1, std::max(1, mapSize.y - 2));
+            _lastTileDescription.clear(); // the next readout says the whole tile
+            _lastElevationLevels.clear();
+        }
+        for (int32_t slot = 0; slot < kWaypointCount; slot++)
+            if (_waypointSet[slot] && !onMap(_waypoints[slot]))
+                _waypointSet[slot] = false;
+        if ((_markerCount >= 1 && !onMap(_markerA)) || (_markerCount >= 2 && !onMap(_markerB)))
+            _markerCount = 0;
     }
 
     // Centres the view on the keyboard cursor. The mouse is independent and never moved by us.
@@ -1582,6 +1615,7 @@ namespace OpenRCT2::Ui::Accessibility
         static bool weSetSelection = false;
         static RideId lastHighlightRide = RideId::GetNull();
 
+        KeepCursorOnMap();
         const bool wantTile = IsMapCursorActive() && _initialised && !gInputFlags.has(InputFlag::toolActive);
         if (wantTile)
         {
@@ -5148,8 +5182,12 @@ namespace OpenRCT2::Ui::Accessibility
         {
             std::string line = "Landscape editor. Before going forward, the park needs land it owns, a park entrance, "
                                "a path from the entrance to the edge of the map, and starting positions for guests. ";
+            // Going forward from object selection opens the Map generator on top of the Map window.
             auto* windowMgr = GetWindowManager();
-            if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::map) != nullptr)
+            if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::mapgen) != nullptr)
+                line += "The Map generator is open: generate a landscape, or press Escape to close it. Then close "
+                        "the Map window with Escape, and press F1 for the keys and what is still needed.";
+            else if (windowMgr != nullptr && windowMgr->FindByClass(WindowClass::map) != nullptr)
                 line += "Close the Map window with Escape, then press F1 for the keys and what is still needed.";
             else
                 line += "Press F1 for the keys and what is still needed.";
@@ -5301,6 +5339,11 @@ namespace OpenRCT2::Ui::Accessibility
         std::fill(std::begin(_waypointSet), std::end(_waypointSet), false); // and any waypoints
     }
 
+    void ResetMapCursorForNewMap()
+    {
+        ResetMapCursorSession();
+    }
+
     // Keys with no meaning on the editor's landscape step - there is no running park: no money, no
     // time, no guests, no rides, and the game hides the windows these would open. Each answers with
     // why rather than doing nothing or something odd. Returns the refusal, or null to let it through.
@@ -5379,6 +5422,7 @@ namespace OpenRCT2::Ui::Accessibility
             _menuMode = false;
             return false;
         }
+        KeepCursorOnMap();
 
         const uint32_t key = e.button;
 

@@ -8,12 +8,25 @@
  *****************************************************************************/
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <optional>
+#include <openrct2-ui/accessibility/Elevation.h>
+#include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/MenuNavigation.h>
+#include <openrct2-ui/accessibility/ScreenReader.h>
+#include <openrct2-ui/accessibility/graph/GraphBuilder.h>
+#include <openrct2-ui/accessibility/graph/GraphScreens.h>
+#include <openrct2-ui/accessibility/graph/GraphVocab.h>
 #include <openrct2-ui/interface/Dropdown.h>
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Context.h>
+#include <openrct2/GameState.h>
 #include <openrct2/SpriteIds.h>
 #include <openrct2/config/Config.h>
 #include <openrct2/core/FileSystem.hpp>
@@ -22,19 +35,27 @@
 #include <openrct2/drawing/Drawing.h>
 #include <openrct2/drawing/Text.h>
 #include <openrct2/localisation/Formatter.h>
+#include <openrct2/localisation/Formatting.h>
 #include <openrct2/object/ObjectManager.h>
 #include <openrct2/object/TerrainEdgeObject.h>
 #include <openrct2/object/TerrainSurfaceObject.h>
 #include <openrct2/ui/WindowManager.h>
 #include <openrct2/windows/Intent.h>
+#include <openrct2/world/Map.h>
+#include <openrct2/world/Park.h>
+#include <openrct2/world/TileElementsView.h>
 #include <openrct2/world/map_generator/MapGen.h>
 #include <openrct2/world/map_generator/PngTerrainGenerator.h>
+#include <openrct2/world/tile_element/SmallSceneryElement.h>
+#include <openrct2/world/tile_element/SurfaceElement.h>
 
 using namespace OpenRCT2::Drawing;
 using namespace OpenRCT2::World;
 
 namespace OpenRCT2::Ui::Windows
 {
+    namespace Vocab = Accessibility::Graph::Vocab;
+
     enum
     {
         WINDOW_MAPGEN_PAGE_BASE,
@@ -1436,6 +1457,7 @@ namespace OpenRCT2::Ui::Windows
                 if (!MapGenerator::LoadHeightmapImage(path))
                 {
                     // TODO: Display error popup
+                    Accessibility::ScreenReaderSpeak(Vocab::kMapGenImageFailed);
                     return;
                 }
 
@@ -1451,7 +1473,705 @@ namespace OpenRCT2::Ui::Windows
         {
             WindowSetResize(*this, kWindowSize, kWindowSize);
         }
+
+#pragma region Accessibility
+        // ---- graph accessibility recipe ----
+        //
+        // Each page as a form, its controls in the order they stand on screen, named with the game's
+        // own captions, and Generate last on every page. Spinners: Left/Right press the game's own
+        // arrows, Shift+Left/Right press them ten times (the settings live in this window, so each
+        // press has landed before the next), and Enter types a value. Lists open with Enter. Heights
+        // are read as the window shows them, then as the map cursor's elevation.
+        void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            // Re-derive the list state from reality every build - it can be dismissed behind our
+            // back, and a stale flag would strand navigation inside a list that is gone.
+            auto* windowMgr = GetWindowManager();
+            if (_axDropdownOpen && (windowMgr == nullptr || windowMgr->FindByClass(WindowClass::dropdown) == nullptr))
+                _axDropdownOpen = false;
+
+            onPrepareDraw(); // pressed, disabled and hidden states, and the source's caption
+
+            if (_axDropdownOpen)
+            {
+                b.PushContext(axComboLabel(_axDropdownOwner), Vocab::kRoleDropdown);
+                for (int32_t i = 0; i < gDropdown.numItems; i++)
+                {
+                    const auto& item = gDropdown.items[i];
+                    if (item.isSeparator())
+                        continue;
+                    // The source list carries words; the land and edge style lists are pictures, named
+                    // by their tooltips, with the current style as the list's default item.
+                    const bool image = item.type == Dropdown::ItemType::image;
+                    NodeVtable vt;
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(image ? axText(item.tooltip) : axStrip(item.text)));
+                    if (image ? i == gDropdown.defaultIndex : item.isChecked())
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kSelected, AnnouncementKinds::kSelected));
+                    vt.onActivate = [this, i]() { axCommitDropdown(i); };
+                    // Keep the engine's drawn highlight on the keyboard's row; it clears that field from
+                    // the mouse every tick, so it has to be re-asserted.
+                    vt.onFocus = [i]() { Accessibility::SetKeyboardDropdownIndex(i); };
+                    b.AddItem(ControlId::Structural("mg:dd:" + std::to_string(i)), std::move(vt));
+                }
+                b.PopContext();
+                return;
+            }
+
+            b.PushContext(Vocab::kMapGenPages[page]);
+            switch (page)
+            {
+                case WINDOW_MAPGEN_PAGE_BASE:
+                    axSpinner(b, WIDX_MAP_SIZE_X);
+                    axSpinner(b, WIDX_MAP_SIZE_Y);
+                    axCheckbox(b, WIDX_MAP_SIZE_LINK, Vocab::kMapKeepSquare);
+                    axCombo(b, WIDX_HEIGHTMAP_SOURCE_DROPDOWN, WIDX_HEIGHTMAP_SOURCE);
+                    if (widgets[WIDX_SIMPLEX_GROUP].isVisible())
+                    {
+                        b.PushContext(axText(STR_MAPGEN_SIMPLEX_NOISE));
+                        axSpinner(b, WIDX_SIMPLEX_BASE_FREQ);
+                        axSpinner(b, WIDX_SIMPLEX_OCTAVES);
+                        b.PopContext();
+                    }
+                    if (widgets[WIDX_HEIGHTMAP_GROUP].isVisible())
+                    {
+                        b.PushContext(axText(STR_MAPGEN_SELECT_HEIGHTMAP));
+                        axBrowse(b);
+                        axCheckbox(b, WIDX_HEIGHTMAP_NORMALIZE);
+                        axCheckbox(b, WIDX_HEIGHTMAP_SMOOTH_HEIGHTMAP);
+                        axSpinner(b, WIDX_HEIGHTMAP_STRENGTH);
+                        b.PopContext();
+                    }
+                    break;
+                case WINDOW_MAPGEN_PAGE_TERRAIN:
+                    axSpinner(b, WIDX_HEIGHTMAP_LOW);
+                    axSpinner(b, WIDX_HEIGHTMAP_HIGH);
+                    axCombo(b, WIDX_FLOOR_TEXTURE, WIDX_FLOOR_TEXTURE);
+                    axCombo(b, WIDX_WALL_TEXTURE, WIDX_WALL_TEXTURE);
+                    axCheckbox(b, WIDX_RANDOM_TERRAIN);
+                    axCheckbox(b, WIDX_HEIGHTMAP_SMOOTH_TILE_EDGES);
+                    break;
+                case WINDOW_MAPGEN_PAGE_WATER:
+                    axSpinner(b, WIDX_WATER_LEVEL);
+                    axCheckbox(b, WIDX_ADD_BEACHES);
+                    break;
+                case WINDOW_MAPGEN_PAGE_FORESTS:
+                    axCheckbox(b, WIDX_FORESTS_PLACE_TREES);
+                    axSpinner(b, WIDX_TREE_LAND_RATIO);
+                    axSpinner(b, WIDX_TREE_ALTITUDE_MIN);
+                    axSpinner(b, WIDX_TREE_ALTITUDE_MAX);
+                    break;
+            }
+            axGenerate(b);
+            b.PopContext();
+        }
+
+        // Tab/Shift+Tab: the next or previous page, through the game's own tabs, wrapping round.
+        void AxChangePage(int32_t delta)
+        {
+            if (_axDropdownOpen)
+                axCloseDropdown();
+            const int32_t next = (page + (delta > 0 ? 1 : -1) + WINDOW_MAPGEN_PAGE_COUNT) % WINDOW_MAPGEN_PAGE_COUNT;
+            onMouseUp(static_cast<WidgetIndex>(WIDX_TAB_1 + next));
+        }
+
+        std::string AxHelp() const
+        {
+            return Vocab::Help::MapGen(page);
+        }
+
+        // Escape closes an open list first; otherwise the navigator closes the window.
+        bool AxEscape()
+        {
+            if (!_axDropdownOpen)
+                return false;
+            axCloseDropdown();
+            axSuggestFocus(_axDropdownOwner);
+            return true;
+        }
+
+    private:
+        bool _axDropdownOpen = false;
+        WidgetIndex _axDropdownOpener = 0; // the widget whose press opened the list, and hears the choice
+        WidgetIndex _axDropdownOwner = 0;  // the control focus returns to
+
+        // How a spinner's value is shown and typed. Heights are stored as base heights.
+        enum class AxKind : uint8_t
+        {
+            count,
+            frequency, // stored in hundredths, shown with two decimals
+            height,
+            percent,
+        };
+
+        struct AxSpec
+        {
+            AxKind kind;
+            int32_t min; // the limits the game's own text prompt keeps to
+            int32_t max;
+            int32_t current;
+        };
+
+        // Node keys carry the page: widget indices are reused from page to page.
+        std::string axKey(WidgetIndex w) const
+        {
+            return "mg:" + std::to_string(page) + ":" + std::to_string(w);
+        }
+
+        static std::string axStrip(const std::string& text)
+        {
+            std::string out;
+            for (size_t i = 0; i < text.size(); i++)
+            {
+                if (text[i] == '{')
+                {
+                    const auto end = text.find('}', i);
+                    if (end == std::string::npos)
+                        break;
+                    i = end;
+                    continue;
+                }
+                out.push_back(text[i]);
+            }
+            return out;
+        }
+
+        // A game caption as speech: format codes and a trailing colon dropped.
+        static std::string axText(StringId id)
+        {
+            if (id == kStringIdNone || id == kStringIdEmpty)
+                return {};
+            std::string out = axStrip(FormatStringID(id));
+            while (!out.empty() && (out.back() == ':' || out.back() == ' '))
+                out.pop_back();
+            return out;
+        }
+
+        std::optional<Accessibility::Graph::GraphRect> axRect(WidgetIndex w) const
+        {
+            if (w >= widgets.size() || !widgets[w].isVisible())
+                return std::nullopt;
+            const auto& wd = widgets[w];
+            return Accessibility::Graph::GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1,
+                                                    wd.height() + 1 };
+        }
+
+        // Read fresh each time: a press changes the window's settings at once, before the next build.
+        std::string axUnavailable(WidgetIndex w)
+        {
+            onPrepareDraw();
+            return isWidgetDisabled(w) ? Vocab::kUnavailable : "";
+        }
+
+        void axSuggestFocus(WidgetIndex w)
+        {
+            Accessibility::Graph::GraphStateForClass(WindowClass::mapgen).nextSuggestedMove
+                = Accessibility::Graph::ControlId::Structural(axKey(w));
+        }
+
+        // ---- checkboxes ----
+
+        // Enter does what a click does: the game handles some of these on the press and others on
+        // the release.
+        void axCheckbox(Accessibility::Graph::GraphBuilder& b, WidgetIndex w, const char* label = nullptr)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[w].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(label != nullptr ? std::string(label) : axText(widgets[w].text)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(
+                [this, w]() {
+                    onPrepareDraw();
+                    return std::string(Vocab::Checked(isWidgetPressed(w)));
+                },
+                true, AnnouncementKinds::kValue);
+            vt.announcements.emplace_back([this, w]() { return axUnavailable(w); }, true);
+            vt.onActivate = [this, w]() {
+                if (isWidgetDisabled(w))
+                {
+                    Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                    return;
+                }
+                onMouseDown(w);
+                onMouseUp(w);
+            };
+            vt.focusRect = [this, w]() { return axRect(w); };
+            b.AddItem(Accessibility::Graph::ControlId::Structural(axKey(w)), std::move(vt));
+        }
+
+        // ---- combo boxes ----
+
+        std::string axComboLabel(WidgetIndex owner) const
+        {
+            if (page == WINDOW_MAPGEN_PAGE_BASE)
+                return axText(STR_HEIGHTMAP_SOURCE);
+            return owner == WIDX_FLOOR_TEXTURE ? Vocab::kMapGenLandStyle : Vocab::kMapGenEdgeStyle;
+        }
+
+        // The value the game shows: the source's caption, or the style's picture, by its name.
+        std::string axComboValue(WidgetIndex owner)
+        {
+            if (page == WINDOW_MAPGEN_PAGE_BASE)
+            {
+                onPrepareDraw();
+                return axText(widgets[WIDX_HEIGHTMAP_SOURCE].text);
+            }
+            auto& objManager = GetContext()->GetObjectManager();
+            StringId name = kStringIdNone;
+            if (owner == WIDX_FLOOR_TEXTURE)
+            {
+                if (const auto* obj = objManager.GetLoadedObject<TerrainSurfaceObject>(
+                        static_cast<ObjectEntryIndex>(_settings.landTexture));
+                    obj != nullptr)
+                    name = obj->NameStringId;
+            }
+            else if (const auto* obj = objManager.GetLoadedObject<TerrainEdgeObject>(
+                         static_cast<ObjectEntryIndex>(_settings.edgeTexture));
+                     obj != nullptr)
+                name = obj->NameStringId;
+            const std::string text = axText(name);
+            return text.empty() ? std::string(Vocab::kNothingChosen) : text;
+        }
+
+        // opener is the widget whose press shows the list (the chevron, or the style picture itself);
+        // owner is the control it belongs to.
+        void axCombo(Accessibility::Graph::GraphBuilder& b, WidgetIndex opener, WidgetIndex owner)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[opener].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(axComboLabel(owner)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleDropdown, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back([this, owner]() { return axComboValue(owner); }, true, AnnouncementKinds::kValue);
+            vt.announcements.emplace_back([this, opener]() { return axUnavailable(opener); }, true);
+            vt.onActivate = [this, opener, owner]() {
+                if (isWidgetDisabled(opener))
+                {
+                    Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                    return;
+                }
+                if (Accessibility::OpenWidgetDropdownFromKeyboard(*this, opener))
+                {
+                    _axDropdownOpen = true;
+                    _axDropdownOpener = opener;
+                    _axDropdownOwner = owner;
+                }
+            };
+            vt.focusRect = [this, owner]() { return axRect(owner); };
+            b.AddItem(Accessibility::Graph::ControlId::Structural(axKey(owner)), std::move(vt));
+        }
+
+        void axCloseDropdown()
+        {
+            Accessibility::CloseWidgetDropdownFromKeyboard();
+            _axDropdownOpen = false;
+        }
+
+        // As a click on a list item: the window hears the choice, then the list closes.
+        void axCommitDropdown(int32_t idx)
+        {
+            const bool valid = idx >= 0 && idx < gDropdown.numItems && !gDropdown.items[idx].isSeparator()
+                && !gDropdown.items[idx].isDisabled();
+            if (valid)
+                onDropdown(_axDropdownOpener, idx);
+            axCloseDropdown();
+            axSuggestFocus(_axDropdownOwner);
+        }
+
+        // ---- spinners ----
+
+        // What a spinner holds, and the limits the game's own prompt for it keeps to.
+        std::optional<AxSpec> axSpec(WidgetIndex w) const
+        {
+            switch (page)
+            {
+                case WINDOW_MAPGEN_PAGE_BASE:
+                    switch (w)
+                    {
+                        case WIDX_MAP_SIZE_X:
+                            return AxSpec{ AxKind::count, kMinimumMapSizePractical, kMaximumMapSizePractical,
+                                           _settings.mapSize.x - 2 };
+                        case WIDX_MAP_SIZE_Y:
+                            return AxSpec{ AxKind::count, kMinimumMapSizePractical, kMaximumMapSizePractical,
+                                           _settings.mapSize.y - 2 };
+                        case WIDX_SIMPLEX_BASE_FREQ:
+                            return AxSpec{ AxKind::frequency, 0, 1000, _settings.simplex_base_freq };
+                        case WIDX_SIMPLEX_OCTAVES:
+                            return AxSpec{ AxKind::count, 1, 10, _settings.simplex_octaves };
+                        case WIDX_HEIGHTMAP_STRENGTH:
+                            return AxSpec{ AxKind::count, 1, 20, static_cast<int32_t>(_settings.smooth_strength) };
+                    }
+                    break;
+                case WINDOW_MAPGEN_PAGE_TERRAIN:
+                    if (w == WIDX_HEIGHTMAP_LOW)
+                        return AxSpec{ AxKind::height, kMinimumLandHeight, kMaximumLandHeight, _settings.heightmapLow };
+                    if (w == WIDX_HEIGHTMAP_HIGH)
+                        return AxSpec{ AxKind::height, kMinimumLandHeight, kMaximumLandHeight, _settings.heightmapHigh };
+                    break;
+                case WINDOW_MAPGEN_PAGE_WATER:
+                    if (w == WIDX_WATER_LEVEL)
+                        return AxSpec{ AxKind::height, kMinimumWaterHeight, kMaximumWaterHeight, _settings.waterLevel };
+                    break;
+                case WINDOW_MAPGEN_PAGE_FORESTS:
+                    switch (w)
+                    {
+                        case WIDX_TREE_LAND_RATIO:
+                            return AxSpec{ AxKind::percent, 1, 50, _settings.treeToLandRatio };
+                        case WIDX_TREE_ALTITUDE_MIN:
+                            return AxSpec{ AxKind::height, kMinimumLandHeight, kMaximumLandHeight, _settings.minTreeAltitude };
+                        case WIDX_TREE_ALTITUDE_MAX:
+                            return AxSpec{ AxKind::height, kMinimumLandHeight, kMaximumLandHeight, _settings.maxTreeAltitude };
+                    }
+                    break;
+            }
+            return std::nullopt;
+        }
+
+        // Spinner captions are drawn beside them, not held by a widget.
+        std::string axSpinLabel(WidgetIndex w) const
+        {
+            switch (page)
+            {
+                case WINDOW_MAPGEN_PAGE_BASE:
+                    if (w == WIDX_MAP_SIZE_X)
+                        return Vocab::kMapSizeX;
+                    if (w == WIDX_MAP_SIZE_Y)
+                        return Vocab::kMapSizeY;
+                    if (w == WIDX_SIMPLEX_BASE_FREQ)
+                        return axText(STR_MAPGEN_SIMPLEX_NOISE_BASE_FREQUENCY);
+                    if (w == WIDX_SIMPLEX_OCTAVES)
+                        return axText(STR_MAPGEN_SIMPLEX_NOISE_OCTAVES);
+                    return axText(STR_MAPGEN_SMOOTH_STRENGTH);
+                case WINDOW_MAPGEN_PAGE_TERRAIN:
+                    return axText(w == WIDX_HEIGHTMAP_LOW ? STR_MAPGEN_MIN_LAND_HEIGHT : STR_MAPGEN_MAX_LAND_HEIGHT);
+                case WINDOW_MAPGEN_PAGE_WATER:
+                    return axText(STR_WATER_LEVEL_LABEL);
+                default:
+                    if (w == WIDX_TREE_LAND_RATIO)
+                        return axText(STR_MAPGEN_TREE_TO_LAND_RATIO);
+                    return axText(w == WIDX_TREE_ALTITUDE_MIN ? STR_MAPGEN_TREE_MIN_ALTITUDE : STR_MAPGEN_TREE_MAX_ALTITUDE);
+            }
+        }
+
+        static bool axImperial()
+        {
+            return Config::Get().general.measurementFormat == MeasurementFormat::imperial;
+        }
+
+        // A height as the window draws it: metres or feet.
+        static std::string axLength(int32_t baseZ)
+        {
+            return axStrip(
+                FormatStringID(STR_RIDE_LENGTH_ENTRY, static_cast<int32_t>(BaseZToMetres(static_cast<int16_t>(baseZ)))));
+        }
+
+        // A value as the game draws it; heights also as the map cursor's elevation.
+        static std::string axShown(AxKind kind, int32_t v, bool withElevation)
+        {
+            switch (kind)
+            {
+                case AxKind::count:
+                    return std::to_string(v);
+                case AxKind::frequency:
+                {
+                    char buffer[16];
+                    std::snprintf(buffer, sizeof(buffer), "%d.%02d", v / 100, v % 100);
+                    return buffer;
+                }
+                case AxKind::percent:
+                    return axStrip(FormatStringID(STR_MAPGEN_TREE_TO_LAND_RATIO_PCT, static_cast<uint16_t>(v)));
+                case AxKind::height:
+                    if (!withElevation)
+                        return axLength(v);
+                    return axLength(v) + ", " + Vocab::ElevationPart(Accessibility::ElevationText(v));
+            }
+            return {};
+        }
+
+        std::string axSpinValue(WidgetIndex w) const
+        {
+            const auto spec = axSpec(w);
+            return spec.has_value() ? axShown(spec->kind, spec->current, true) : std::string();
+        }
+
+        // The value as the player would type it, to start the prompt with.
+        static std::string axEditable(AxKind kind, int32_t v)
+        {
+            switch (kind)
+            {
+                case AxKind::frequency:
+                    return axShown(kind, v, false);
+                case AxKind::height:
+                {
+                    const int32_t metres = BaseZToMetres(static_cast<int16_t>(v));
+                    return std::to_string(axImperial() ? MetresToFeet(metres) : metres);
+                }
+                default:
+                    return std::to_string(v);
+            }
+        }
+
+        // Typed text as a number: units and percent signs are ignored, a comma counts as a decimal
+        // point, and heights may be negative.
+        static std::optional<double> axParseNumber(std::string_view text)
+        {
+            std::string number;
+            for (const char c : text)
+            {
+                if ((c >= '0' && c <= '9') || c == '-')
+                    number.push_back(c);
+                else if (c == '.' || c == ',')
+                    number.push_back('.');
+            }
+            if (number.empty())
+                return std::nullopt;
+            char* end = nullptr;
+            const double value = std::strtod(number.c_str(), &end);
+            if (end == number.c_str() || *end != '\0')
+                return std::nullopt;
+            return value;
+        }
+
+        // A typed number to the stored value. A height goes through the window's own conversion
+        // (MetresToBaseZ: (metres / 1.5 + 7) * 2), to the nearest whole land step, the step its
+        // arrows move by.
+        static int32_t axStored(AxKind kind, double typed)
+        {
+            switch (kind)
+            {
+                case AxKind::frequency:
+                    return static_cast<int32_t>(std::lround(typed * 100.0));
+                case AxKind::height:
+                {
+                    const double metres = axImperial() ? FeetToMetres(static_cast<int32_t>(std::lround(typed))) : typed;
+                    const double baseZ = (metres / 1.5 + 7.0) * 2.0;
+                    return static_cast<int32_t>(std::lround(baseZ / 2.0)) * 2;
+                }
+                default:
+                    return static_cast<int32_t>(std::lround(typed));
+            }
+        }
+
+        void axSpinner(Accessibility::Graph::GraphBuilder& b, WidgetIndex w)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[w].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(axSpinLabel(w)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSpinner, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back([this, w]() { return axSpinValue(w); }, true, AnnouncementKinds::kValue);
+            vt.announcements.emplace_back([this, w]() { return axUnavailable(w); }, true);
+            vt.onAdjust = [this, w](int32_t sign, bool large) { axAdjust(w, sign, large); };
+            vt.onActivate = [this, w]() { axOpenTyping(w); };
+            vt.focusRect = [this, w]() { return axRect(w); };
+            b.AddItem(Accessibility::Graph::ControlId::Structural(axKey(w)), std::move(vt));
+        }
+
+        // The game's own arrow, once or ten times. Each press lands at once (the settings are this
+        // window's), so ten in a row step ten times. The new value is read by the navigator; at a
+        // limit nothing changes, so the value that stands is said instead of silence.
+        void axAdjust(WidgetIndex w, int32_t sign, bool large)
+        {
+            if (isWidgetDisabled(w))
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                return;
+            }
+            const auto arrow = static_cast<WidgetIndex>(sign > 0 ? w + 1 : w + 2); // up : down
+            const std::string before = axSpinValue(w);
+            for (int32_t i = 0; i < (large ? 10 : 1); i++)
+                onMouseDown(arrow);
+            if (axSpinValue(w) == before)
+                Accessibility::ScreenReaderSpeak(before);
+        }
+
+        void axOpenTyping(WidgetIndex w)
+        {
+            if (isWidgetDisabled(w))
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::kUnavailable);
+                return;
+            }
+            const auto spec = axSpec(w);
+            if (!spec.has_value())
+                return;
+            const int32_t pageAtOpen = page;
+            WindowTextInputOpen(
+                axSpinLabel(w),
+                Vocab::TypeValueRange(axShown(spec->kind, spec->min, false), axShown(spec->kind, spec->max, false)),
+                axEditable(spec->kind, spec->current), 16,
+                [w, pageAtOpen](std::string_view text) {
+                    auto* windowMgr = GetWindowManager();
+                    auto* self = windowMgr == nullptr ? nullptr
+                                                      : static_cast<MapGenWindow*>(windowMgr->FindByClass(WindowClass::mapgen));
+                    if (self != nullptr && self->page == pageAtOpen)
+                        self->axApplyTyped(w, text);
+                },
+                []() { Accessibility::ScreenReaderSpeak(Vocab::kCancelled); });
+        }
+
+        // A typed value, kept within the limits; outside them, the range is said instead and nothing
+        // changes. Inside them it goes to the window's own text handler, which applies it as typing
+        // into the game's prompt does (keeping minimum and maximum heights in order, square maps
+        // square).
+        void axApplyTyped(WidgetIndex w, std::string_view text)
+        {
+            const auto spec = axSpec(w);
+            if (!spec.has_value())
+                return;
+            const auto typed = axParseNumber(text);
+            if (!typed.has_value())
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::kNotANumber);
+                return;
+            }
+            const int32_t v = axStored(spec->kind, *typed);
+            if (v < spec->min || v > spec->max)
+            {
+                Accessibility::ScreenReaderSpeak(Vocab::ValueOutOfRange(
+                    axSpinLabel(w), axShown(spec->kind, spec->min, false), axShown(spec->kind, spec->max, false)));
+                return;
+            }
+            switch (page)
+            {
+                case WINDOW_MAPGEN_PAGE_BASE:
+                    if (w == WIDX_MAP_SIZE_X)
+                        _resizeDirection = ResizeDirection::x;
+                    else if (w == WIDX_MAP_SIZE_Y)
+                        _resizeDirection = ResizeDirection::y;
+                    BaseTextInput(w, v);
+                    break;
+                case WINDOW_MAPGEN_PAGE_TERRAIN:
+                    TerrainTextInput(w, v);
+                    break;
+                case WINDOW_MAPGEN_PAGE_WATER:
+                    WaterTextInput(w, v);
+                    break;
+                case WINDOW_MAPGEN_PAGE_FORESTS:
+                    ForestsTextInput(w, v, v); // the ratio reads the first, the altitudes the second
+                    break;
+            }
+        }
+
+        // ---- buttons ----
+
+        // Browse opens the file browser for a height map image, with its first file selected, as
+        // opening it from the title menu does.
+        void axBrowse(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            if (!widgets[WIDX_HEIGHTMAP_BROWSE].isVisible())
+                return;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(axText(STR_BROWSE)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(
+                [this]() {
+                    const char* file = _heightmapLoaded ? _heightmapFilename.c_str() : LanguageGetString(STR_MAPGEN_NONE_SELECTED);
+                    return axStrip(FormatStringID(STR_MAPGEN_CURRENT_HEIGHTMAP_FILE, file));
+                },
+                true, AnnouncementKinds::kValue);
+            vt.onActivate = [this]() {
+                onMouseUp(WIDX_HEIGHTMAP_BROWSE);
+                if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                    if (auto* browser = windowMgr->FindByClass(WindowClass::loadsave); browser != nullptr)
+                        browser->onAccessibilityAction(AccessibilityAction::moveDown);
+            };
+            vt.focusRect = [this]() { return axRect(WIDX_HEIGHTMAP_BROWSE); };
+            b.AddItem(ControlId::Structural(axKey(WIDX_HEIGHTMAP_BROWSE)), std::move(vt));
+        }
+
+        // Generate runs the game's own Generate, which replaces the whole map at once, then says
+        // what it made. While the map already has a park entrance or guest starts, the button says
+        // that it replaces everything.
+        void axGenerate(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(axText(STR_MAPGEN_ACTION_GENERATE)));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(
+                []() {
+                    const auto& gameState = getGameState();
+                    const bool built = !gameState.park.entrances.empty() || !gameState.peepSpawns.empty();
+                    return std::string(built ? Vocab::kMapGenReplacesMap : "");
+                },
+                true);
+            vt.announcements.emplace_back([this]() { return axUnavailable(WIDX_MAP_GENERATE); }, true);
+            vt.onActivate = [this]() {
+                if (isWidgetDisabled(WIDX_MAP_GENERATE))
+                {
+                    // Disabled only while the source is an image and none is loaded.
+                    Accessibility::ScreenReaderSpeak(Vocab::kMapGenNeedImage);
+                    return;
+                }
+                onMouseUp(WIDX_MAP_GENERATE);
+                Accessibility::ResetMapCursorForNewMap();
+                Accessibility::ScreenReaderSpeak(axSummary());
+            };
+            vt.focusRect = [this]() { return axRect(WIDX_MAP_GENERATE); };
+            b.AddItem(ControlId::Structural("mg:" + std::to_string(page) + ":generate"), std::move(vt));
+        }
+
+        // What a sighted player sees of the new map at a glance: its size, the lowest and highest
+        // land (as the map cursor's elevation), how much is under water and how many trees it has.
+        static std::string axSummary()
+        {
+            const auto& gameState = getGameState();
+            int32_t lowest = std::numeric_limits<int32_t>::max();
+            int32_t highest = std::numeric_limits<int32_t>::min();
+            int64_t tiles = 0;
+            int64_t water = 0;
+            int64_t trees = 0;
+            for (int32_t y = 1; y < gameState.mapSize.y - 1; y++)
+            {
+                for (int32_t x = 1; x < gameState.mapSize.x - 1; x++)
+                {
+                    const TileCoordsXY tile{ x, y };
+                    const auto* surface = MapGetSurfaceElementAt(tile);
+                    if (surface == nullptr)
+                        continue;
+                    tiles++;
+                    lowest = std::min<int32_t>(lowest, surface->baseHeight);
+                    highest = std::max<int32_t>(highest, surface->baseHeight);
+                    if (surface->getWaterHeight() > 0)
+                        water++;
+                    for (const auto* el : TileElementsView<SmallSceneryElement>(tile.ToCoordsXY()))
+                        if (!el->isGhost())
+                            trees++;
+                }
+            }
+            if (tiles == 0)
+                return axText(STR_MAPGEN_ACTION_GENERATE);
+            return Vocab::MapGenerated(
+                gameState.mapSize.x - 2, gameState.mapSize.y - 2, Accessibility::ElevationText(lowest),
+                Accessibility::ElevationText(highest), water, (water * 100) / tiles, trees);
+        }
+#pragma endregion
     };
+
+    void RegisterMapGenGraphScreen()
+    {
+        using namespace Accessibility::Graph;
+        GraphScreen screen;
+        screen.windowClass = WindowClass::mapgen;
+        screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<MapGenWindow&>(w).BuildAccessGraph(b); };
+        screen.onTabKey = [](WindowBase& w, int32_t dir) {
+            static_cast<MapGenWindow&>(w).AxChangePage(dir);
+            return true;
+        };
+        screen.onEscape = [](WindowBase& w) { return static_cast<MapGenWindow&>(w).AxEscape(); };
+        screen.screenName = []() { return std::string(Vocab::kMapGenerator); };
+        screen.helpText = [](WindowBase& w) { return static_cast<MapGenWindow&>(w).AxHelp(); };
+        // A form: Left/Right belong to the spinners. Pages are Tab/Shift+Tab.
+        screen.sideArrowsChangePage = false;
+        RegisterGraphScreen(std::move(screen));
+    }
 
     WindowBase* MapgenOpen()
     {

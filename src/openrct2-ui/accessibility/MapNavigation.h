@@ -123,6 +123,10 @@ namespace OpenRCT2::Ui::Accessibility
     // step needs before the game will go forward.
     void TickEditorLandscapeArrival();
 
+    // The Map generator has replaced the whole map: the cursor, markers and waypoints all pointed
+    // into the old one (whose size may differ), so the cursor starts afresh on the next key.
+    void ResetMapCursorForNewMap();
+
     // Polled each frame. Announces the cost/refund of player-initiated transactions (building,
     // demolishing, buying/selling land, marketing) once they occur. Guest spending and recurring
     // costs are not announced.

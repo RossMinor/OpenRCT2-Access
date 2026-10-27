@@ -92,6 +92,42 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kMapLandRightsHint
         = "Use O to set the land rights of the tile you are on. Use K to set rights within a specified area.";
 
+    // Map generator (scenario editor). Its four pages, and the two style buttons, which are pictures.
+    inline constexpr const char* kMapGenPages[] = { "Generator", "Terrain", "Water", "Forests" };
+    inline constexpr const char* kMapGenLandStyle = "Land style";
+    inline constexpr const char* kMapGenEdgeStyle = "Edge style";
+    inline constexpr const char* kMapGenNeedImage = "Choose an image file with Browse first";
+    inline constexpr const char* kMapGenImageFailed = "That image could not be used as a height map";
+    // Said on Generate while the map already has a park entrance or guest starting positions.
+    inline constexpr const char* kMapGenReplacesMap = "replaces the whole map and everything on it";
+
+    // A height as the map cursor speaks it, after the window's own metres or feet.
+    inline std::string ElevationPart(const std::string& elevation)
+    {
+        return "elevation " + elevation;
+    }
+
+    // What Generate made: the map's size, the range of its land, how much is under water, its trees.
+    inline std::string MapGenerated(
+        int32_t sizeX, int32_t sizeY, const std::string& lowest, const std::string& highest, int64_t waterTiles,
+        int64_t waterPercent, int64_t trees)
+    {
+        std::string text = "Map generated, " + std::to_string(sizeX) + " by " + std::to_string(sizeY) + ". ";
+        text += lowest == highest ? "Land at elevation " + lowest + ". "
+                                  : "Land from elevation " + lowest + " to " + highest + ". ";
+        if (waterTiles == 0)
+            text += "No water. ";
+        else if (waterPercent == 0)
+            text += "Less than 1 percent under water. ";
+        else
+            text += std::to_string(waterPercent) + " percent under water. ";
+        if (trees == 0)
+            text += "No trees.";
+        else
+            text += std::to_string(trees) + (trees == 1 ? " tree." : " trees.");
+        return text;
+    }
+
     // Land rights (scenario editor and sandbox mode): the five ownership settings, applied from the
     // keyboard to the map cursor's brush or marked area.
     inline std::string LandRightsAppliesTo(const std::string& area)
