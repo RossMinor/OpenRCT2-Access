@@ -212,12 +212,73 @@ namespace OpenRCT2::Ui::Accessibility
 
     // ---- speech (the ONLY announce paths - A4) ----
 
+    // The game's own tooltip for the widget under a control's focus box: what the mouse would show,
+    // through the window's own onTooltip, so dynamic tooltips come out formatted as on screen. Not
+    // while a dropdown is open - its rows sit over the window's widgets.
+    static std::string WidgetTooltipText(const GraphNode* node, WindowBase& w)
+    {
+        auto* windowMgr = GetWindowManager();
+        if (node == nullptr || !node->vtable.focusRect || windowMgr == nullptr
+            || windowMgr->FindByClass(WindowClass::dropdown) != nullptr)
+            return {};
+        try
+        {
+            const auto rect = node->vtable.focusRect();
+            if (!rect.has_value())
+                return {};
+            const ScreenCoordsXY centre{ rect->x + rect->width / 2, rect->y + rect->height / 2 };
+            const WidgetIndex widx = windowMgr->FindWidgetFromPoint(w, centre);
+            if (widx == kWidgetIndexNull || widx >= w.widgets.size())
+                return {};
+            const auto& widget = w.widgets[widx];
+            if (widget.flags.has(WidgetFlag::tooltipIsString))
+                return widget.sztooltip != nullptr ? std::string(widget.sztooltip) : std::string();
+            auto result = w.onTooltip(widx, widget.tooltip);
+            if (result.str == kStringIdNone)
+                return {};
+            return FormatStringIDLegacy(result.str, result.args.Data());
+        }
+        catch (...)
+        {
+            LogRecipeFailure(w.classification, "tooltip threw");
+            return {};
+        }
+    }
+
+    // Letters and digits only, lower-cased: for asking whether one text already says another.
+    static std::string Squashed(const std::string& text)
+    {
+        std::string out;
+        for (unsigned char c : text)
+            if (std::isalnum(c))
+                out += static_cast<char>(std::tolower(c));
+        return out;
+    }
+
+    // A landing reads the control's tooltip after it, so nothing waits behind a key (Ross's choice;
+    // §7.2 would keep it behind a tooltip verb). Only on arriving at a control - not when a press at
+    // an edge re-reads the one already focused - and not when the line already says it, as many of
+    // the game's tooltips just repeat the button's name.
+    static std::string WithTooltip(std::string line, const GraphNode* from, const GraphNode* to)
+    {
+        if (to == nullptr || (from != nullptr && from->id == to->id))
+            return line;
+        auto* w = FrontNavigableWindow();
+        if (w == nullptr || w->classification != _attachedClass)
+            return line;
+        const std::string tip = WidgetTooltipText(to, *w);
+        const std::string squashedTip = Squashed(tip);
+        if (squashedTip.empty() || Squashed(line).find(squashedTip) != std::string::npos)
+            return line;
+        return line.empty() ? tip : line + ". " + tip;
+    }
+
     // A keypress-driven landing: speak (interrupting) and pre-seed the differ so it stays silent.
     static void AnnounceLanding(KeyGraph& kg, const GraphNode* from, const GraphNode* to, const std::string& label = {})
     {
         if (to == nullptr)
             return;
-        auto line = GraphAnnouncer::Compose(from, to, label);
+        auto line = WithTooltip(GraphAnnouncer::Compose(from, to, label), from, to);
         if (!line.empty())
             ScreenReaderSpeak(line, true);
         _lastSpoken = to->id;
@@ -337,76 +398,6 @@ namespace OpenRCT2::Ui::Accessibility
         AnnounceLanding(kg, from, node);
     }
 
-    // The game's own tooltip for the widget under a control's focus box: what the mouse would show,
-    // through the window's own onTooltip, so dynamic tooltips come out formatted as on screen. Not
-    // while a dropdown is open - its rows sit over the window's widgets.
-    static std::string WidgetTooltipText(const GraphNode* node, WindowBase& w)
-    {
-        auto* windowMgr = GetWindowManager();
-        if (node == nullptr || !node->vtable.focusRect || windowMgr == nullptr
-            || windowMgr->FindByClass(WindowClass::dropdown) != nullptr)
-            return {};
-        try
-        {
-            const auto rect = node->vtable.focusRect();
-            if (!rect.has_value())
-                return {};
-            const ScreenCoordsXY centre{ rect->x + rect->width / 2, rect->y + rect->height / 2 };
-            const WidgetIndex widx = windowMgr->FindWidgetFromPoint(w, centre);
-            if (widx == kWidgetIndexNull || widx >= w.widgets.size())
-                return {};
-            const auto& widget = w.widgets[widx];
-            if (widget.flags.has(WidgetFlag::tooltipIsString))
-                return widget.sztooltip != nullptr ? std::string(widget.sztooltip) : std::string();
-            auto result = w.onTooltip(widx, widget.tooltip);
-            if (result.str == kStringIdNone)
-                return {};
-            return FormatStringIDLegacy(result.str, result.args.Data());
-        }
-        catch (...)
-        {
-            LogRecipeFailure(w.classification, "tooltip threw");
-            return {};
-        }
-    }
-
-    // F1 (§7.2): a control's own onTooltip owns the whole behaviour; otherwise the game's tooltip
-    // for its widget. False when there is neither - then F1 falls through to the map cursor's
-    // context help, which explains the open window's keys (where the spec would say "no tooltip").
-    static bool SpeakTooltip(KeyGraph& kg, WindowBase& w)
-    {
-        if (kg.Tooltip())
-            return true;
-        const std::string text = WidgetTooltipText(kg.CurrentNode(), w);
-        if (text.empty())
-            return false;
-        ScreenReaderSpeak(text, true);
-        return true;
-    }
-
-    // F1: the window's own help, or the list's while one of its combo box lists is open, else the
-    // shared texts.
-    static void SpeakWindowHelp(const GraphScreen& screen, WindowBase& w)
-    {
-        auto* windowMgr = GetWindowManager();
-        const bool listOpen = windowMgr != nullptr && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
-        std::string text;
-        try
-        {
-            if (listOpen)
-                text = screen.dropdownHelpText ? screen.dropdownHelpText(w) : std::string(Vocab::Help::kDropdownList);
-            else if (screen.helpText)
-                text = screen.helpText(w);
-        }
-        catch (...)
-        {
-            LogRecipeFailure(screen.windowClass, "helpText threw");
-        }
-        if (text.empty())
-            text = Vocab::Help::kWindow;
-        ScreenReaderSpeak(text, true);
-    }
-
     // The window's name: the screen's own, else the window's caption where it holds plain text.
     static std::string WindowNameText(const GraphScreen& screen, const WindowBase& w)
     {
@@ -420,18 +411,34 @@ namespace OpenRCT2::Ui::Accessibility
         return {};
     }
 
-    // Backtick (§7.2 "where am I"): the window, then the focused control with its whole context
-    // chain, state and position - what a first landing on it would say.
-    static void SpeakWhereAmI(KeyGraph& kg, const GraphScreen& screen, WindowBase& w)
+    // F1: where you are - the window, then the focused control with its whole context chain, state
+    // and position, what a first landing on it would say (§7.2 "where am I") - then the window's own
+    // help, or the list's while one of its combo box lists is open, else the shared texts.
+    static void SpeakWindowHelp(KeyGraph& kg, const GraphScreen& screen, WindowBase& w)
     {
-        if (!kg.Rerender())
-            return;
+        auto* windowMgr = GetWindowManager();
+        const bool listOpen = windowMgr != nullptr && windowMgr->FindByClass(WindowClass::dropdown) != nullptr;
+        std::string text;
+        try
+        {
+            if (listOpen)
+                text = screen.dropdownHelpText ? screen.dropdownHelpText(w) : std::string(Vocab::Help::kWindow);
+            else if (screen.helpText)
+                text = screen.helpText(w);
+        }
+        catch (...)
+        {
+            LogRecipeFailure(screen.windowClass, "helpText threw");
+        }
+        if (text.empty())
+            text = Vocab::Help::kWindow;
         SpeechBuilder sb;
         sb.add(WindowNameText(screen, w));
-        if (auto* node = kg.CurrentNode(); node != nullptr)
-            sb.add(GraphAnnouncer::ComposeFull(node));
-        if (!sb.empty())
-            ScreenReaderSpeak(sb.str(), true);
+        if (kg.Rerender())
+            if (auto* node = kg.CurrentNode(); node != nullptr)
+                sb.add(GraphAnnouncer::ComposeFull(node));
+        const std::string where = sb.str();
+        ScreenReaderSpeak(where.empty() ? text : where + ". " + text, true);
     }
 
     static void AnnounceTree(KeyGraph& kg, const KeyGraph::TreeResult& tr)
@@ -591,25 +598,11 @@ namespace OpenRCT2::Ui::Accessibility
                     return true;
                 }
             case SDLK_F1:
-                if (ctrl || alt)
-                    return false;
-                // Shift+F1 is the tooltip verb (§7.2; the binding is host policy). With no tooltip it
-                // says so, as the spec asks.
-                if (shift)
-                {
-                    if (!SpeakTooltip(kg, w))
-                        ScreenReaderSpeak(Vocab::Help::kNoTooltip, true);
-                    return true;
-                }
-                // F1 is help for the window: what it is for and its own keys.
-                SpeakWindowHelp(screen, w);
-                return true;
-            case SDLK_BACKQUOTE:
-                // "Where am I" (§7.2). Only while a window has the keyboard - on the map the key is
-                // still the game's console.
+                // F1 is where you are, then help for the window. Shift+F1 is the game's land tool and
+                // backtick its console, here as on the map: tooltips are read on landing instead.
                 if (shift || ctrl || alt)
                     return false;
-                SpeakWhereAmI(kg, screen, w);
+                SpeakWindowHelp(kg, screen, w);
                 return true;
             case SDLK_BACKSPACE:
             {
@@ -776,7 +769,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (!_lastSpokenValid || !(_lastSpoken == node->id))
         {
             auto* from = _lastSpokenValid ? kg.Current()->NodeAt(_lastSpoken) : nullptr;
-            auto line = GraphAnnouncer::Compose(from, node);
+            auto line = WithTooltip(GraphAnnouncer::Compose(from, node), from, node);
             if (!line.empty())
                 ScreenReaderSpeak(line, false); // differ path queues (A7)
             _lastSpoken = node->id;

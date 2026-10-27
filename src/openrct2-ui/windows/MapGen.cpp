@@ -2076,12 +2076,7 @@ namespace OpenRCT2::Ui::Windows
                     return axStrip(FormatStringID(STR_MAPGEN_CURRENT_HEIGHTMAP_FILE, file));
                 },
                 true, AnnouncementKinds::kValue);
-            vt.onActivate = [this]() {
-                onMouseUp(WIDX_HEIGHTMAP_BROWSE);
-                if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
-                    if (auto* browser = windowMgr->FindByClass(WindowClass::loadsave); browser != nullptr)
-                        browser->onAccessibilityAction(AccessibilityAction::moveDown);
-            };
+            vt.onActivate = [this]() { onMouseUp(WIDX_HEIGHTMAP_BROWSE); };
             vt.focusRect = [this]() { return axRect(WIDX_HEIGHTMAP_BROWSE); };
             b.AddItem(ControlId::Structural(axKey(WIDX_HEIGHTMAP_BROWSE)), std::move(vt));
         }

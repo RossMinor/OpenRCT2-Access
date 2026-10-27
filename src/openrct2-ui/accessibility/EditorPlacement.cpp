@@ -12,6 +12,7 @@
 #include "Direction.h"
 #include "MapNavigation.h"
 #include "ScreenReader.h"
+#include "graph/GraphVocab.h"
 
 #include <array>
 #include <utility>
@@ -293,11 +294,8 @@ namespace OpenRCT2::Ui::Accessibility
 
     std::string EditorPlacementHelp()
     {
-        if (_kind == Kind::guestStart)
-            return "Placing guest starting positions. Arrow keys move, R turns the way guests walk, Enter places a "
-                   "start on a path outside the park, or removes the start already there, Escape finishes.";
-        return "Placing the park entrance. Arrow keys move it, R rotates it, Enter shows where it would go, Enter "
-               "again builds it, Backspace picks it back up, Escape cancels.";
+        namespace Help = Graph::Vocab::Help;
+        return _kind == Kind::guestStart ? Help::kPlacingGuestStarts : Help::kPlacingParkEntrance;
     }
 
     std::optional<std::string> EditorPlacementPreviewLabel(const TileCoordsXY& tile)
