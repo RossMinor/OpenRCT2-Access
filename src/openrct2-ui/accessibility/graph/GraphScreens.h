@@ -85,6 +85,13 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         // F1 while one of the window's combo box lists is open, where that list behaves unlike the
         // shared one (object selection's filter list stays open on Enter). Unset = the shared list help.
         std::function<std::string(WindowBase&)> dropdownHelpText;
+
+        // F1 closes the window instead of giving its help: the help window itself.
+        bool f1Closes = false;
+
+        // Keys the screen has no use for are swallowed instead of reaching the map behind it. The help
+        // window sits over the map, often mid-placement, where a stray Space would build.
+        bool holdsEveryKey = false;
     };
 
     // Register a screen recipe. Call once per window class (typically from that window's source

@@ -5123,7 +5123,7 @@ namespace OpenRCT2::Ui::Accessibility
     // function's second, land-changing search (flag 1 << 5, which turns owned land along the entrance
     // path into construction rights). The park size is counted with CalculateParkSize rather than
     // UpdateSize, which would also store it.
-    static std::string EditorLandscapeChecklist()
+    static std::vector<std::string> EditorLandscapeChecklist()
     {
         auto& gameState = getGameState();
         std::vector<StringId> missing;
@@ -5157,16 +5157,16 @@ namespace OpenRCT2::Ui::Accessibility
             need(STR_PEEP_SPAWNS_NOT_SET);
 
         if (missing.empty())
-            return "Ready to go forward.";
-        std::string text = "Still needed:";
+            return { "Ready to go forward." };
+        std::vector<std::string> rows;
         for (const auto message : missing)
         {
             std::string sentence = OpenRCT2::FormatStringID(message);
             if (!sentence.empty() && sentence.back() != '.')
                 sentence += '.';
-            text += " " + sentence;
+            rows.push_back("Still needed: " + sentence);
         }
-        return text;
+        return rows;
     }
 
     // Said once each time the editor arrives on its landscape step, so the player knows what the
@@ -5202,43 +5202,58 @@ namespace OpenRCT2::Ui::Accessibility
     {
         namespace Help = Graph::Vocab::Help;
 
+        // A help with more than five commands opens the help window; a shorter one is spoken.
+        const auto speakHelp = [](const std::string& text) {
+            if (!Windows::AccessibilityHelpOpenIfLong({}, text))
+                ScreenReaderSpeak(text);
+        };
+
         // Modal choices first: while one is open, every key answers it.
         if (IsDeletePickerActive())
-            return ScreenReaderSpeak(Help::kDeletePicker);
+            return speakHelp(Help::kDeletePicker);
         if (_zoneListMode)
-            return ScreenReaderSpeak(Help::kZoneList);
+            return speakHelp(Help::kZoneList);
         if (_zoneOverlapConfirmArmed)
-            return ScreenReaderSpeak(Help::kZoneOverlap);
+            return speakHelp(Help::kZoneOverlap);
         if (_areaConfirmPending != AreaCommand::none)
-            return ScreenReaderSpeak(Help::kAreaConfirm);
+            return speakHelp(Help::kAreaConfirm);
         if (IsFollowingEntity())
-            return ScreenReaderSpeak(Help::kFollowing);
+            return speakHelp(Help::kFollowing);
 
         // Placing or building something: the keys change meaning.
         if (Windows::WindowTrackPlaceIsActive())
-            return ScreenReaderSpeak(Help::kPlacingDesign);
+            return speakHelp(Help::kPlacingDesign);
         if (IsRideConstructionWindowOpen())
         {
             // The maze has its own construction window under the same window class.
             const auto* ride = GetRide(_currentRideIndex);
             const bool maze = ride != nullptr && ride->getRideTypeDescriptor().specialType == RtdSpecialType::maze;
-            return ScreenReaderSpeak(maze ? Help::kMazeConstruction : Help::kRideConstruction);
+            return speakHelp(maze ? Help::kMazeConstruction : Help::kRideConstruction);
         }
         if (IsAccessibleRidePlacementActive())
-            return ScreenReaderSpeak(Help::kPlacingRide);
+            return speakHelp(Help::kPlacingRide);
         if (IsEditorPlacementActive())
-            return ScreenReaderSpeak(EditorPlacementHelp());
+            return speakHelp(EditorPlacementHelp());
         if (IsAccessibleSceneryPlacementActive())
-            return ScreenReaderSpeak(Help::kPlacingScenery);
+            return speakHelp(Help::kPlacingScenery);
 
         if (_statusMode)
-            return ScreenReaderSpeak(Help::kStatusReadout);
+            return speakHelp(Help::kStatusReadout);
         if (_mouseMode)
-            return ScreenReaderSpeak(Help::kMouseMode);
+            return speakHelp(Help::kMouseMode);
         // What the step still needs comes first, so it is heard before the keys.
         if (IsEditorLandscapeStep())
-            return ScreenReaderSpeak(EditorLandscapeChecklist() + " " + Help::kMap_Editor);
-        ScreenReaderSpeak(Help::kMap_Park);
+        {
+            // The checklist rows come before the keys, so what the step still needs is heard first.
+            auto checklist = EditorLandscapeChecklist();
+            if (Windows::AccessibilityHelpOpenIfLong("Map", Help::kMap_Editor, checklist))
+                return;
+            std::string text;
+            for (const auto& row : checklist)
+                text += row + " ";
+            return ScreenReaderSpeak(text + Help::kMap_Editor);
+        }
+        speakHelp(Help::kMap_Park);
     }
 
     // Spoken name for a point on the combined speed ladder (slow-motion factor + game speed).

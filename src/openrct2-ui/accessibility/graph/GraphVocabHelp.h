@@ -343,7 +343,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
           "built. Escape: Cancels building the ride.";
 
     inline constexpr const char* kPlacingRide
-        = "Placing a ride or stall. Arrow keys to move it around. R: Rotate by 90 degrees clockwise. Enter: Places "
+        = "Placing a ride or stall. Arrow keys: Move it around. R: Rotate by 90 degrees clockwise. Enter: Places "
           "the ride or stall to be used. Enter again: Builds the ride or stall. Space: Works like Enter. Backspace: "
           "Picks the ride or stall back up if it has not been built yet. Escape: Cancel.";
 

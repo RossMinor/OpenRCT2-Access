@@ -99,6 +99,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         Windows::RegisterMultiplayerGraphScreen();
         Windows::RegisterNewCampaignGraphScreen();
         Windows::RegisterAccessibilityOptionsGraphScreen();
+        Windows::RegisterAccessibilityHelpGraphScreen();
         Windows::RegisterShortcutKeysGraphScreen();
         Windows::RegisterFootpathGraphScreen();
         Windows::RegisterTrackListGraphScreen();
@@ -209,6 +210,11 @@ namespace OpenRCT2::Ui::Accessibility::Graph
         auto* windowMgr = GetWindowManager();
         if (windowMgr == nullptr)
             return nullptr;
+
+        // The F1 help window is opened on purpose over whatever was in front, placement included,
+        // and keeps the keyboard until it closes.
+        if (auto* help = windowMgr->FindByClass(WindowClass::accessibilityHelp); help != nullptr)
+            return help;
 
         // While placing a pre-built ride, the keyboard map cursor positions it, so no window
         // should capture the keys.

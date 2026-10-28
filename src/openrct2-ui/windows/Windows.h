@@ -75,6 +75,13 @@ namespace OpenRCT2::Ui::Windows
     // AccessibilityOptions (settings window for the accessibility mod)
     WindowBase* AccessibilityOptionsOpen();
 
+    // AccessibilityHelp (the accessibility mod's F1 help list). Opens it when `text` lists more than five
+    // commands and returns true; otherwise returns false and the caller speaks the text. `title` is what
+    // the help is for ("Ride list"); empty takes it from the text's first sentence ("Map."). `leadRows`
+    // come before the commands.
+    bool AccessibilityHelpOpenIfLong(
+        const std::string& title, const std::string& text, std::vector<std::string> leadRows = {});
+
     // AssetPacks
     WindowBase* AssetPacksOpen();
 
@@ -371,6 +378,7 @@ namespace OpenRCT2::Ui::Windows
     void RegisterMultiplayerGraphScreen();
     void RegisterNewCampaignGraphScreen();
     void RegisterAccessibilityOptionsGraphScreen();
+    void RegisterAccessibilityHelpGraphScreen();
     void RegisterShortcutKeysGraphScreen();
     void RegisterFootpathGraphScreen();
     void RegisterTrackListGraphScreen();

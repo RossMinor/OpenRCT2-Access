@@ -20,6 +20,7 @@
 #include <cctype>
 #include <openrct2-ui/UiContext.h>
 #include <openrct2-ui/input/ShortcutManager.h>
+#include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Diagnostic.h>
 #include <openrct2/interface/Window.h>
 #include <openrct2/interface/WindowBase.h>
@@ -418,6 +419,7 @@ namespace OpenRCT2::Ui::Accessibility
 
     // F1: the window's title, then its own help, or the list's while one of its combo box lists is
     // open, else the shared texts. The help texts leave the window's name out, as the title says it.
+    // A help with more than five commands opens the help window instead.
     static void SpeakWindowHelp(const GraphScreen& screen, WindowBase& w)
     {
         auto* windowMgr = GetWindowManager();
@@ -437,6 +439,8 @@ namespace OpenRCT2::Ui::Accessibility
         if (text.empty())
             text = Vocab::Help::kWindow;
         const std::string title = WindowNameText(screen, w);
+        if (Windows::AccessibilityHelpOpenIfLong(title, text))
+            return;
         ScreenReaderSpeak(title.empty() ? text : title + ". " + text, true);
     }
 
@@ -601,6 +605,12 @@ namespace OpenRCT2::Ui::Accessibility
                 // its console, here as on the map: tooltips are read on landing instead.
                 if (shift || ctrl || alt)
                     return false;
+                if (screen.f1Closes)
+                {
+                    if (auto* windowMgr = GetWindowManager(); windowMgr != nullptr)
+                        windowMgr->CloseByClass(screen.windowClass);
+                    return true;
+                }
                 SpeakWindowHelp(screen, w);
                 return true;
             case SDLK_BACKSPACE:
@@ -733,7 +743,7 @@ namespace OpenRCT2::Ui::Accessibility
         if (screen == nullptr)
             return false;
         auto kg = MakeGraph(_attachedClass);
-        const bool handled = ProcessKey(kg, *screen, *front, e.button, e.modifiers);
+        const bool handled = ProcessKey(kg, *screen, *front, e.button, e.modifiers) || screen->holdsEveryKey;
         _lastHandledKey = handled ? e.button : 0;
         return handled;
     }
