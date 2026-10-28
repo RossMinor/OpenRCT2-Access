@@ -228,6 +228,10 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
         = "Up and down arrows: Choose a setting. Enter: Apply the setting to the tiles named at the top of the list "
           "and close the window. Escape: Close without changing anything.";
 
+    inline constexpr const char* kLandRights_Park
+        = "Up and down arrows: Choose what to buy. Enter: Buy it on the tiles named at the top of the list and close "
+          "the window. Escape: Close without buying anything.";
+
     inline constexpr const char* kParkEntranceStyles
         = "Up and down arrows: Choose a style. Enter: Pick the style and start placing the entrance on the map. "
           "Escape: Close the window.";
@@ -287,11 +291,10 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
           "path tile. L: Change the slope of a tile to be placed. Home and End: Change the height of your cursor. "
           "Page up and page down: Raise or lower land. Control + page up or page down: Raise or lower water. X: "
           "Clear the scenery under the cursor. B: Changes the size of the brush. K: Places a first and then a second "
-          "marker if pressed again. Z: Create a zone with a marked area. O: Buys the land under the cursor, or under "
-          "the brush or marked area. Shift + O: Buys construction rights. Delete Key: Removes the item under the "
-          "cursor, or opens a menu when there are several. Control + P: Reports if the path under the cursor "
-          "connects to the entrance of the park. Control + H: Rescues all stranded guests. Enter: Interacts with "
-          "whatever is under the cursor. Control + Enter: Build on the ride under the cursor. T: Opens the status "
+          "marker if pressed again. Z: Create a zone with a marked area. O: Opens the land rights menu. Delete Key: "
+          "Removes the item under the cursor, or opens a menu when there are several. Control + P: Reports if the "
+          "path under the cursor connects to the entrance of the park. Control + H: Rescues all stranded guests. "
+          "Enter: Interacts with whatever is under the cursor. T: Opens the status "
           "readout: date, park rating, guests, cash and recent messages. M: Reports your cash amount. P: Pauses the "
           "game. Control + equals or dash: Change the game speed. Shift + C: Opens the construction window. Shift + "
           "F: Open the finances window. Shift + R: Open the rides window. Shift + I: Opens the Park Overview window. "

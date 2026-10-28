@@ -11,6 +11,7 @@
 
 #include <openrct2-ui/input/InputManager.h>
 #include <openrct2/Identifiers.h>
+#include <openrct2/core/Money.hpp>
 #include <openrct2/world/Location.hpp>
 #include <optional>
 #include <string>
@@ -146,4 +147,11 @@ namespace OpenRCT2::Ui::Accessibility
     // area, top left X 3, Y 20, bottom right X 14, Y 9, 12 by 12 tiles", "3 by 3 tiles around X 40,
     // Y 52", or "the tile at X 40, Y 52".
     std::string DescribeKeyboardToolArea();
+
+    // Buys land (or construction rights) over that area, saying what was bought or why nothing was.
+    // The Land rights menu's Enter in a park.
+    void BuyLandRightsInKeyboardArea(bool constructionRights);
+
+    // An amount of money as the game shows it, e.g. "£1,200".
+    std::string SpokenMoney(money64 amount);
 } // namespace OpenRCT2::Ui::Accessibility

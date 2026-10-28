@@ -128,8 +128,12 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
         return text;
     }
 
-    // Land rights (scenario editor and sandbox mode): the five ownership settings, applied from the
-    // keyboard to the map cursor's brush or marked area.
+    // Land rights: the editor's five ownership settings, or a park's two buying options, applied
+    // from the keyboard to the map cursor's brush or marked area.
+    inline constexpr const char* kBuyLand = "Buy land";
+    inline constexpr const char* kBuyConstructionRights = "Buy construction rights";
+    inline constexpr const char* kNothingForSaleHere = "nothing for sale here";
+
     inline std::string LandRightsAppliesTo(const std::string& area)
     {
         return "Applies to " + area;
@@ -210,9 +214,6 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kClearSceneryToolHint
         = "Use X to clear the scenery on the tile you are on. Use B to change the brush size, and K to work on a "
           "marked area.";
-    inline constexpr const char* kLandRightsToolHint
-        = "Use O to buy the land you are on, and Shift O to buy its construction rights. Use B to change the brush "
-          "size, and K to work on a marked area.";
 
     // Connection status window.
     inline constexpr const char* kConnectionStatus = "Connection status";

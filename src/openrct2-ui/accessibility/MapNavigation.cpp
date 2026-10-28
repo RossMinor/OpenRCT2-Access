@@ -244,8 +244,6 @@ namespace OpenRCT2::Ui::Accessibility
         pavePath,
         removePaths,
         clearScenery,
-        buyLand,
-        buyRights,
         raiseLand,
         lowerLand,
         raiseWater,
@@ -1912,6 +1910,7 @@ namespace OpenRCT2::Ui::Accessibility
     static void GetTerraformBounds(int32_t& ax, int32_t& ay, int32_t& bx, int32_t& by);
     static void BuildPathArea(ObjectEntryIndex type, PathConstructFlags flags);
     static void RemovePathArea();
+    static std::string AreaCommandCostText(AreaCommand command);
 
     // The world direction the player is facing: the direction toward the top of the screen at the
     // current camera rotation - the way the Up arrow moves the cursor, and exactly what the F key
@@ -1955,8 +1954,6 @@ namespace OpenRCT2::Ui::Accessibility
         { AreaCommand::pavePath, SDLK_SPACE, 0, "Space", "Pave" },
         { AreaCommand::removePaths, SDLK_d, 0, "D", "Remove all paths from" },
         { AreaCommand::clearScenery, SDLK_x, 0, "X", "Clear scenery from" },
-        { AreaCommand::buyLand, SDLK_o, 0, "O", "Buy the land in" },
-        { AreaCommand::buyRights, SDLK_o, KMOD_SHIFT, "Shift plus O", "Buy construction rights in" },
         { AreaCommand::raiseLand, SDLK_PAGEUP, 0, "Page Up", "Raise the land in" },
         { AreaCommand::lowerLand, SDLK_PAGEDOWN, 0, "Page Down", "Lower the land in" },
         { AreaCommand::raiseWater, SDLK_PAGEUP, KMOD_CTRL, "Control plus Page Up", "Raise the water in" },
@@ -2016,7 +2013,8 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak(
             verb + " marked area, top left X " + std::to_string(leftX) + ", Y " + std::to_string(topY)
             + ", bottom right X " + std::to_string(rightX) + ", Y " + std::to_string(bottomY) + ", "
-            + std::to_string(w) + " by " + std::to_string(h) + " tiles. Press " + binding.keyName
+            + std::to_string(w) + " by " + std::to_string(h) + " tiles" + AreaCommandCostText(binding.command) + ". Press "
+            + binding.keyName
             + " again to confirm, or any other key to cancel.");
     }
 
@@ -2045,6 +2043,25 @@ namespace OpenRCT2::Ui::Accessibility
         return false;
     }
 
+    // The path chosen in the path window, as FootpathPlaceAction takes it, selecting the default
+    // type first if none is chosen. False when the park has no path type at all.
+    static bool SelectedPathType(ObjectEntryIndex& type, PathConstructFlags& flags)
+    {
+        if (!Windows::WindowFootpathSelectDefault())
+            return false;
+
+        type = gFootpathSelection.getSelectedSurface();
+        flags = 0;
+        if (gFootpathSelection.isQueueSelected)
+            flags |= PathConstructFlag::IsQueue;
+        if (gFootpathSelection.legacyPath != kObjectEntryIndexNull)
+        {
+            flags |= PathConstructFlag::IsLegacyPathObject;
+            type = gFootpathSelection.legacyPath;
+        }
+        return true;
+    }
+
     static void BuildPath()
     {
         // A marked rectangle turns Space into an area command; confirm it before spending anything.
@@ -2052,21 +2069,12 @@ namespace OpenRCT2::Ui::Accessibility
         if (!ConfirmAreaCommand(AreaCommand::pavePath))
             return;
 
-        // Ensure a valid default path type is selected.
-        if (!Windows::WindowFootpathSelectDefault())
+        ObjectEntryIndex type;
+        PathConstructFlags flags;
+        if (!SelectedPathType(type, flags))
         {
             ScreenReaderSpeak("No path type available");
             return;
-        }
-
-        ObjectEntryIndex type = gFootpathSelection.getSelectedSurface();
-        PathConstructFlags flags = 0;
-        if (gFootpathSelection.isQueueSelected)
-            flags |= PathConstructFlag::IsQueue;
-        if (gFootpathSelection.legacyPath != kObjectEntryIndexNull)
-        {
-            flags |= PathConstructFlag::IsLegacyPathObject;
-            type = gFootpathSelection.legacyPath;
         }
 
         // With a marked rectangle active, pave the whole area (flat, terrain-following) rather than a
@@ -2795,17 +2803,18 @@ namespace OpenRCT2::Ui::Accessibility
     // world-coordinate area. Elements are gathered before any removal, since removing one rewrites the
     // tile's element list. Used when the cursor's focus is lifted onto a raised level, so clearing
     // acts at that elevation rather than on everything stacked on the tile.
-    static void ClearSceneryAtElevation(int32_t ax, int32_t ay, int32_t bx, int32_t by, int32_t targetBaseHeight)
+    struct SceneryRemoval
     {
-        // type: 0 = small scenery, 1 = large scenery, 2 = wall.
-        struct Removal
-        {
-            int32_t type;
-            CoordsXYZD loc;
-            uint8_t quadrant;
-            ObjectEntryIndex entryOrSequence;
-        };
-        std::vector<Removal> removals;
+        int32_t type; // 0 = small scenery, 1 = large scenery, 2 = wall
+        CoordsXYZD loc;
+        uint8_t quadrant;
+        ObjectEntryIndex entryOrSequence;
+    };
+
+    static std::vector<SceneryRemoval> SceneryAtElevation(
+        int32_t ax, int32_t ay, int32_t bx, int32_t by, int32_t targetBaseHeight)
+    {
+        std::vector<SceneryRemoval> removals;
         for (int32_t wy = ay; wy <= by; wy += kCoordsXYStep)
         {
             for (int32_t wx = ax; wx <= bx; wx += kCoordsXYStep)
@@ -2829,30 +2838,39 @@ namespace OpenRCT2::Ui::Accessibility
                 }
             }
         }
+        return removals;
+    }
+
+    // Runs one removal, or only asks the game what it would do (for the area command's price).
+    static GameActions::Result RunSceneryRemoval(const SceneryRemoval& r, bool execute)
+    {
+        const auto run = [execute](GameActions::GameAction& a) {
+            return execute ? GameActions::Execute(&a, getGameState()) : GameActions::Query(&a, getGameState());
+        };
+        if (r.type == 0)
+        {
+            auto a = GameActions::SmallSceneryRemoveAction({ r.loc.x, r.loc.y, r.loc.z }, r.quadrant, r.entryOrSequence);
+            return run(a);
+        }
+        if (r.type == 1)
+        {
+            auto a = GameActions::LargeSceneryRemoveAction(r.loc, static_cast<uint16_t>(r.entryOrSequence));
+            return run(a);
+        }
+        auto a = GameActions::WallRemoveAction(r.loc);
+        return run(a);
+    }
+
+    static void ClearSceneryAtElevation(int32_t ax, int32_t ay, int32_t bx, int32_t by, int32_t targetBaseHeight)
+    {
+        const auto removals = SceneryAtElevation(ax, ay, bx, by, targetBaseHeight);
 
         int32_t removed = 0;
         const bool prevErrorSound = Windows::gDisableErrorWindowSound;
         Windows::gDisableErrorWindowSound = true; // several removals would otherwise stack error beeps
         for (const auto& r : removals)
         {
-            bool ok = false;
-            if (r.type == 0)
-            {
-                auto a = GameActions::SmallSceneryRemoveAction(
-                    { r.loc.x, r.loc.y, r.loc.z }, r.quadrant, r.entryOrSequence);
-                ok = GameActions::Execute(&a, getGameState()).error == GameActions::Status::ok;
-            }
-            else if (r.type == 1)
-            {
-                auto a = GameActions::LargeSceneryRemoveAction(r.loc, static_cast<uint16_t>(r.entryOrSequence));
-                ok = GameActions::Execute(&a, getGameState()).error == GameActions::Status::ok;
-            }
-            else
-            {
-                auto a = GameActions::WallRemoveAction(r.loc);
-                ok = GameActions::Execute(&a, getGameState()).error == GameActions::Status::ok;
-            }
-            if (ok)
+            if (RunSceneryRemoval(r, true).error == GameActions::Status::ok)
                 removed++;
         }
         Windows::gDisableErrorWindowSound = prevErrorSound;
@@ -3241,21 +3259,139 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
+    // Paving the marked area: each tile's path as BuildPathArea would place it, asked of the game
+    // without building. Tiles it would skip are skipped here too.
+    static std::optional<money64> PathAreaCost(int32_t ax, int32_t ay, int32_t bx, int32_t by)
+    {
+        ObjectEntryIndex type;
+        PathConstructFlags flags;
+        if (!SelectedPathType(type, flags))
+            return std::nullopt;
+
+        money64 total = 0;
+        for (int32_t wy = ay; wy <= by; wy += kCoordsXYStep)
+        {
+            for (int32_t wx = ax; wx <= bx; wx += kCoordsXYStep)
+            {
+                auto placement = FootpathGetOnTerrainPlacement(TileCoordsXY{ wx / kCoordsXYStep, wy / kCoordsXYStep });
+                if (!placement.isValid() || placement.slope.type == FootpathSlopeType::irregular)
+                    continue;
+                auto action = GameActions::FootpathPlaceAction(
+                    { wx, wy, placement.baseZ }, placement.slope, type, gFootpathSelection.railings, kInvalidDirection,
+                    flags);
+                const auto result = GameActions::Query(&action, getGameState());
+                if (result.error == GameActions::Status::ok)
+                    total += result.cost;
+            }
+        }
+        return total;
+    }
+
+    // What an area command would cost over the marked rectangle, asked of the game with the same
+    // action the command runs. Negative is a refund. Empty when the game refuses the whole command.
+    static std::optional<money64> AreaCommandCost(AreaCommand command)
+    {
+        int32_t ax, ay, bx, by;
+        GetTerraformBounds(ax, ay, bx, by);
+        const MapRange range(ax, ay, bx, by);
+        const CoordsXY centre{ (ax + bx) / 2 + 16, (ay + by) / 2 + 16 };
+        const auto query = [](GameActions::GameAction& action) -> std::optional<money64> {
+            const auto result = GameActions::Query(&action, getGameState());
+            if (result.error != GameActions::Status::ok)
+                return std::nullopt;
+            return result.cost;
+        };
+
+        switch (command)
+        {
+            case AreaCommand::pavePath:
+                return PathAreaCost(ax, ay, bx, by);
+            case AreaCommand::removePaths:
+            {
+                auto action = GameActions::ClearAction(
+                    range, GameActions::ClearableItems{ GameActions::ClearableItem::footpaths });
+                return query(action);
+            }
+            case AreaCommand::clearScenery:
+            {
+                if (_scanLocked)
+                {
+                    money64 total = 0;
+                    for (const auto& r : SceneryAtElevation(ax, ay, bx, by, _scanHeight))
+                    {
+                        const auto result = RunSceneryRemoval(r, false);
+                        if (result.error == GameActions::Status::ok)
+                            total += result.cost;
+                    }
+                    return total;
+                }
+                auto action = GameActions::ClearAction(
+                    range,
+                    GameActions::ClearableItems{ GameActions::ClearableItem::smallScenery,
+                                                 GameActions::ClearableItem::largeScenery,
+                                                 GameActions::ClearableItem::walls });
+                return query(action);
+            }
+            case AreaCommand::raiseLand:
+            {
+                auto action = GameActions::LandRaiseAction(centre, range, MapSelectType::full);
+                return query(action);
+            }
+            case AreaCommand::lowerLand:
+            {
+                auto action = GameActions::LandLowerAction(centre, range, MapSelectType::full);
+                return query(action);
+            }
+            case AreaCommand::raiseWater:
+            {
+                auto action = GameActions::WaterRaiseAction(range);
+                return query(action);
+            }
+            case AreaCommand::lowerWater:
+            {
+                auto action = GameActions::WaterLowerAction(range);
+                return query(action);
+            }
+            default:
+                return std::nullopt;
+        }
+    }
+
+    std::string SpokenMoney(money64 amount)
+    {
+        return OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, amount);
+    }
+
+    // The price as the marked-area confirmation reads it, after the area's size: ", costs £2,400",
+    // or ", earns £300" for a refund. Nothing when it is free, the game cannot price it, or the
+    // park has no money.
+    static std::string AreaCommandCostText(AreaCommand command)
+    {
+        if (getGameState().park.flags.has(ParkFlag::noMoney))
+            return {};
+        const auto cost = AreaCommandCost(command);
+        if (!cost.has_value() || *cost == 0)
+            return {};
+        return *cost > 0 ? ", costs " + SpokenMoney(*cost) : ", earns " + SpokenMoney(-*cost);
+    }
+
     // Buys land ownership or construction rights over the brush (or marked) area. The action always
     // reports success (it silently skips tiles that aren't for sale or are already owned), so we
     // branch on the actual cost: if anything was bought, the finance hook also announces the amount
-    // spent; otherwise we explain why nothing happened, based on a sample tile's ownership.
-    static void ChangeLandOwnership(GameActions::LandBuyRightSetting setting)
+    // spent; otherwise we explain why nothing happened, based on a sample tile's ownership. Queued,
+    // so it follows whatever the closing Land rights menu hands focus back to says.
+    void BuyLandRightsInKeyboardArea(bool constructionRights)
     {
-        const bool rights = (setting == GameActions::LandBuyRightSetting::buyConstructionRights);
-        if (!ConfirmAreaCommand(rights ? AreaCommand::buyRights : AreaCommand::buyLand))
-            return;
-
+        if (!_initialised)
+            InitialiseCursor();
         int32_t ax, ay, bx, by;
         GetTerraformBounds(ax, ay, bx, by);
         const TileCoordsXY sample = TerraformSampleTile();
+        const bool rights = constructionRights;
 
-        auto action = GameActions::LandBuyRightsAction(MapRange(ax, ay, bx, by), setting);
+        auto action = GameActions::LandBuyRightsAction(
+            MapRange(ax, ay, bx, by),
+            rights ? GameActions::LandBuyRightSetting::buyConstructionRights : GameActions::LandBuyRightSetting::buyLand);
         action.SetCallback([rights, sample](const GameActions::GameAction*, const GameActions::Result* result) {
             if (result->error != GameActions::Status::ok)
                 return; // spoken via the error window
@@ -3263,7 +3399,7 @@ namespace OpenRCT2::Ui::Accessibility
             if (result->cost != 0)
             {
                 _lastTileDescription.clear(); // ownership changed, so re-announce the tile next move
-                ScreenReaderSpeak(rights ? "Construction rights bought" : "Land bought");
+                ScreenReaderSpeak(rights ? "Construction rights bought" : "Land bought", false);
                 return;
             }
 
@@ -3275,20 +3411,20 @@ namespace OpenRCT2::Ui::Accessibility
             if (rights)
             {
                 if (ownership.hasAny(OwnershipFlag::landOwned, OwnershipFlag::constructionRightsOwned))
-                    ScreenReaderSpeak("You already have construction rights here");
+                    ScreenReaderSpeak("You already have construction rights here", false);
                 else if (!ownership.has(OwnershipFlag::constructionRightsForSale))
-                    ScreenReaderSpeak("Construction rights here are not for sale");
+                    ScreenReaderSpeak("Construction rights here are not for sale", false);
                 else
-                    ScreenReaderSpeak("Nothing to buy here");
+                    ScreenReaderSpeak("Nothing to buy here", false);
             }
             else
             {
                 if (ownership.has(OwnershipFlag::landOwned))
-                    ScreenReaderSpeak("You already own this land");
+                    ScreenReaderSpeak("You already own this land", false);
                 else if (!ownership.has(OwnershipFlag::landForSale))
-                    ScreenReaderSpeak("This land is not for sale");
+                    ScreenReaderSpeak("This land is not for sale", false);
                 else
-                    ScreenReaderSpeak("Nothing to buy here");
+                    ScreenReaderSpeak("Nothing to buy here", false);
             }
         });
         GameActions::Execute(&action, getGameState());
@@ -4485,33 +4621,6 @@ namespace OpenRCT2::Ui::Accessibility
         ScreenReaderSpeak("Nothing here to open");
     }
 
-    // Ctrl+Enter on the map cursor: open the ride/stall under the cursor in construction mode, using
-    // the game's own construction window so all the built-in build tools work.
-    static void EnterRideConstructionAtCursor()
-    {
-        if (!_initialised)
-            InitialiseCursor();
-
-        const RideId rid = RideIdAtCursor();
-        auto* ride = rid.IsNull() ? nullptr : GetRide(rid);
-        if (ride == nullptr)
-        {
-            ScreenReaderSpeak("No ride here to build on");
-            return;
-        }
-        // A newly created construction window announces itself from its own onOpen, which covers
-        // every route into build mode. Only speak here when that window is already up for this ride,
-        // since then no window is created and no onOpen will fire.
-        auto* windowMgr = GetWindowManager();
-        auto* existing = windowMgr != nullptr ? windowMgr->FindByClass(WindowClass::rideConstruction) : nullptr;
-        const bool reusingWindow = existing != nullptr && existing->number == static_cast<int16_t>(rid.ToUnderlying());
-
-        RideInitialiseConstructionWindow(*ride);
-
-        if (reusingWindow)
-            ScreenReaderSpeak("Build mode. " + std::string(ride->getName()));
-    }
-
     // Shift+Page Up/Down: zoom the main view (matching the game's own zoom) and announce the level.
     static void ZoomView(bool zoomIn)
     {
@@ -4557,7 +4666,7 @@ namespace OpenRCT2::Ui::Accessibility
             case SDLK_SPACE:  // build a path, or pave the marked area
             case SDLK_d:      // remove a path
             case SDLK_x:      // clear scenery
-            case SDLK_o:      // buy land / construction rights
+            case SDLK_o:      // the Land rights menu, which buys land / construction rights
             case SDLK_DELETE: // remove the thing at the cursor
                 return true;
             case SDLK_PAGEUP:
@@ -4804,7 +4913,7 @@ namespace OpenRCT2::Ui::Accessibility
 
         // Enter opens whatever is under the cursor - ride, stall, sign, park gate, or failing those a
         // guest, staff member or ride vehicle standing there. Shift+Enter rotates the camera (like
-        // Shift+arrows); Ctrl+Enter opens the ride/stall in construction mode. Placement modes handle
+        // Shift+arrows); Ctrl+Enter is left to the game. Placement modes handle
         // Enter themselves above, so this only runs on the free cursor.
         //
         // Enter opens, Space builds, Delete removes. Keeping those three verbs distinct is why Enter
@@ -4819,7 +4928,7 @@ namespace OpenRCT2::Ui::Accessibility
                 ReportFacing();
             }
             else if (modifiers & KMOD_CTRL)
-                EnterRideConstructionAtCursor();
+                return false;
             else
                 OpenRideOrGateInfoAtCursor();
             return true;
@@ -4870,6 +4979,8 @@ namespace OpenRCT2::Ui::Accessibility
             && key != SDLK_k && key != SDLK_HOME && key != SDLK_END && key != SDLK_PAGEUP
             && key != SDLK_PAGEDOWN && key != SDLK_DELETE && key != SDLK_z && key != SDLK_q)
             return false;
+        if (key == SDLK_o && (modifiers & (KMOD_SHIFT | KMOD_CTRL)))
+            return false; // only plain O is the mod's
 
         // A window owns the keyboard, so the map cursor must not change the world underneath it.
         // The graph navigator gets every key first, but it only claims the ones it navigates with -
@@ -4926,12 +5037,9 @@ namespace OpenRCT2::Ui::Accessibility
                     DeleteAtCursor();
                 break;
             case SDLK_o:
-                // O buys land ownership over the brush area; Shift+O buys construction rights. The
-                // amount spent is announced by the finance hook.
-                if (modifiers & KMOD_SHIFT)
-                    ChangeLandOwnership(GameActions::LandBuyRightSetting::buyConstructionRights);
-                else
-                    ChangeLandOwnership(GameActions::LandBuyRightSetting::buyLand);
+                // O opens the Land rights menu, which buys land or construction rights over the brush
+                // or marked area and reads each one's price (see LandRights.cpp).
+                ContextOpenWindow(WindowClass::landRights);
                 break;
             case SDLK_PAGEUP:
                 // Plain raises land, Ctrl raises water, Shift zooms out (matching the game's
@@ -5378,13 +5486,11 @@ namespace OpenRCT2::Ui::Accessibility
                 || key == SDLK_h || key == SDLK_e))
             return kNotInEditor; // game speed, guest rescue, ride entrance/exit
         if (!shift && (key == SDLK_RETURN || key == SDLK_KP_ENTER) && !IsEditorPlacementActive())
-            return kNotInEditor; // open what is here / build on a ride; Shift+Enter still rotates
+            return kNotInEditor; // open what is here; Shift+Enter still rotates
         if (shift && !ctrl
             && (key == SDLK_b || key == SDLK_c || key == SDLK_f || key == SDLK_d || key == SDLK_r || key == SDLK_i
                 || key == SDLK_g || key == SDLK_s))
             return kNotInEditor; // track breaks, and the park's windows (Shift+M opens the Map window)
-        if (!ctrl && key == SDLK_o)
-            return "In the scenario editor, O sets land rights"; // plain O is handled before this
         return nullptr;
     }
 

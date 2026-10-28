@@ -265,15 +265,6 @@ namespace OpenRCT2::Ui::Windows
         {
             currentFrame++;
 
-            // The map cursor does this tool's job from the keyboard (its own keys and brush), and
-            // none of this window's settings reach them - so in keyboard mode the mouse tool closes
-            // and says which keys to use. In mouse mode (Control Space) it works as usual.
-            if (Accessibility::IsKeyboardNavActive() && !(isInEditorMode() || getGameState().cheats.sandboxMode))
-            {
-                Accessibility::ScreenReaderSpeak(Accessibility::Graph::Vocab::kLandRightsToolHint);
-                close();
-                return;
-            }
             // Close window if another tool is open
             if (!isToolActive(WindowClass::landRights))
             {
@@ -610,21 +601,29 @@ namespace OpenRCT2::Ui::Windows
         }
 
     public:
-        // ---- graph accessibility recipe (scenario editor and sandbox mode only) ----
+        // ---- graph accessibility recipe ----
         //
-        // The five ownership settings as a list, opening on the one the window has chosen. Enter
-        // applies a setting to the map cursor's area - its brush, or the marked rectangle - with the
-        // window's own land rights action, the one its mouse tool runs over a dragged area, then
+        // A list that acts on the map cursor's area - its brush, or the marked rectangle - then
         // closes the window. The list's heading says which tiles that is, so choosing is the
         // confirmation. The window's tool size is left out: the map cursor's brush (B) is the area.
-        // In a park this screen stands aside: from the keyboard the window closes and points to O and
-        // Shift O (see onUpdate).
+        //
+        // In the scenario editor and sandbox mode: the five ownership settings, opening on the one
+        // the window has chosen, applied with the window's own land rights action, the one its mouse
+        // tool runs over a dragged area. In a park: the window's two buying options, each with what
+        // it would cost there.
         void BuildAccessGraph(Accessibility::Graph::GraphBuilder& b)
         {
             using namespace Accessibility::Graph;
             onPrepareDraw(); // the pressed setting and which settings show
 
             b.PushContext(Vocab::LandRightsAppliesTo(Accessibility::DescribeKeyboardToolArea()), Vocab::kRoleList);
+            if (!IsOwnershipMode())
+            {
+                for (const WidgetIndex widx : { WIDX_BUY_LAND_RIGHTS, WIDX_BUY_CONSTRUCTION_RIGHTS })
+                    AddBuyItem(b, widx);
+                b.PopContext();
+                return;
+            }
             for (const WidgetIndex widx : { WIDX_LAND_OWNED_CHECKBOX, WIDX_LAND_SALE_CHECKBOX,
                                             WIDX_CONSTRUCTION_RIGHTS_OWNED_CHECKBOX, WIDX_CONSTRUCTION_RIGHTS_SALE_CHECKBOX,
                                             WIDX_UNOWNED_LAND_CHECKBOX })
@@ -647,6 +646,50 @@ namespace OpenRCT2::Ui::Windows
         }
 
     private:
+        // A buying option: its name, what it would cost over the area (asked of the game with the
+        // action Enter runs), and "unavailable" when the park has none of it left for sale, which is
+        // when the game greys the option out.
+        void AddBuyItem(Accessibility::Graph::GraphBuilder& b, WidgetIndex widx)
+        {
+            using namespace Accessibility::Graph;
+            const bool rights = widx == WIDX_BUY_CONSTRUCTION_RIGHTS;
+            const bool unavailable = isWidgetDisabled(widx);
+
+            std::string price;
+            if (!unavailable && !getGameState().park.flags.has(ParkFlag::noMoney))
+            {
+                auto action = GameActions::LandBuyRightsAction(
+                    Accessibility::KeyboardToolArea(),
+                    rights ? GameActions::LandBuyRightSetting::buyConstructionRights
+                           : GameActions::LandBuyRightSetting::buyLand);
+                const auto res = GameActions::Query(&action, getGameState());
+                if (res.error == GameActions::Status::ok)
+                    price = res.cost != 0 ? Accessibility::SpokenMoney(res.cost) : Vocab::kNothingForSaleHere;
+            }
+
+            NodeVtable vt;
+            vt.announcements.emplace_back(NodeAnnouncement::Static(rights ? Vocab::kBuyConstructionRights : Vocab::kBuyLand));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(price, AnnouncementKinds::kValue));
+            vt.announcements.emplace_back(
+                NodeAnnouncement::Static(unavailable ? Vocab::kUnavailable : "", AnnouncementKinds::kEnabled));
+            vt.onActivate = [this, widx, rights]() {
+                if (isWidgetDisabled(widx))
+                {
+                    // The game's own reason, the tooltip the greyed-out option shows.
+                    Accessibility::ScreenReaderSpeak(FormatStringID(widgets[widx].tooltip));
+                    return;
+                }
+                onMouseUp(widx); // the window's own switch to that option
+                Accessibility::BuyLandRightsInKeyboardArea(rights);
+                close();
+            };
+            vt.focusRect = [this, widx]() -> std::optional<GraphRect> {
+                const auto& wd = widgets[widx];
+                return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+            };
+            b.AddItem(ControlId::Structural("buy:" + std::to_string(widx)), std::move(vt));
+        }
+
         void axApply(WidgetIndex widx)
         {
             onMouseUp(widx); // the window's own switch to that setting
@@ -673,11 +716,12 @@ namespace OpenRCT2::Ui::Windows
         using namespace Accessibility::Graph;
         GraphScreen screen;
         screen.windowClass = WindowClass::landRights;
-        screen.helpText = [](WindowBase&) { return std::string(Accessibility::Graph::Vocab::Help::kLandRights); };
+        screen.helpText = [](WindowBase&) {
+            namespace Help = Accessibility::Graph::Vocab::Help;
+            const bool ownership = isInEditorMode() || getGameState().cheats.sandboxMode;
+            return std::string(ownership ? Help::kLandRights : Help::kLandRights_Park);
+        };
         screen.build = [](GraphBuilder& b, WindowBase& w) { static_cast<LandRightsWindow&>(w).BuildAccessGraph(b); };
-        // Only where the window sets ownership rather than buying it; gated, so it is a fallback like
-        // the Map window it opens from.
-        screen.isActive = []() { return isInEditorMode() || getGameState().cheats.sandboxMode; };
         screen.screenName = []() { return FormatStringID(kWindowTitle); };
         RegisterGraphScreen(std::move(screen));
     }
