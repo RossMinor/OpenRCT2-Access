@@ -4,6 +4,26 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.2 (2026-10-27)
+------------------------------------------------------------------------
+- The scenario editor is now completely accessible. Use this mode to design your own map,
+  how much money you start with, what rides you start with, and much more. It’s pretty
+  much a sandbox mode.
+- Control + G allows users to enter specific coordinates and jump to those coordinates.
+  Simply type the coordinates separated by a space and press enter.
+- F1 now gives context specific help to just about every situation you may find yourself
+  within the game. If F1 lists more than 5 commands you can use, it will instead open a
+  window with a menu containing the various commands you can use.
+- Tooltips are now read when scrolling menus.
+- Stepping onto a queue now names the ride it leads to, for example "Blue queue for Mini
+  Coaster 1."
+- Various fixes to how the mod reports information when interacting with menu elements.
+- Fixed a bug where pressing tab while another window was open would open the toolbar over
+  it.
+- The multiplayer connection window now reads each step of connecting as it happens.
+- When modifying a large area of space using markers, the mod will now tell you how much
+  it will cost before you confirm the change.
+
 1.1.5 (2026-10-21)
 ------------------------------------------------------------------------
 - Fixed Control + E. After jumping to a ride's entrance, pressing it again said "Not on a
