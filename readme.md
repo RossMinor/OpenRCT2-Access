@@ -54,7 +54,7 @@ The mod checks for its own updates, tells you in-game when a new version is out,
 
 ### Important
 
-At any point, you can press F1 to hear what commands you currently have at your disposal and what you can do with them in the game.
+At any point, you can press F1 to hear what commands you currently have at your disposal and what you can do with them in the game. When there are more than five commands, F1 opens a help window that lists one command per line instead of reading them all at once. Use the up and down arrows to read through it, Home and End to jump to the first or last line, and a letter to jump to the next line starting with it. Escape or F1 closes it and puts you back where you were.
 
 ### Currently Not Accessible or Not Fully Tested
 
@@ -81,9 +81,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 ### Information
 
 - Tab: Opens the Tools Menu.
-- F1: Help for wherever you are - the map, the window or menu you are in, or what you are doing, such as placing a ride, building track or choosing what to delete. It says what that place is for and the keys that work there.
-- Shift + F1 in a menu or window: Reads the hint for the option you are on, the same tip a sighted player sees when they point the mouse at it. If that option has no hint, it says "No tooltip".
-- Backtick (`) in a menu or window: Tells you where you are - the window, the section you are in, and the option you are on with its setting and position.
+- F1: Help for wherever you are - the map, the window or menu you are in, or what you are doing, such as placing a ride, building track or choosing what to delete. In a window it says the window's title first, then the keys that work there. Long help opens in the help window described above.
+- Tooltips: Moving onto an option in a menu or window reads its hint after it, the same tip a sighted player sees when they point the mouse at it. If the hint only repeats what was just said, it is skipped.
 - Control + F1: Opens the mod settings.
 - Control + F2: Turns scenery reading on or off. While it is off, trees, plants, statues, fences and walls are not read as you move the cursor or the mouse. They are still found by Control + arrows with the scenery filter, the Delete menu, and Shift + Home or End. It turns back on each time you start the game.
 - Typing into any text box - naming a zone, renaming a ride or a member of staff, naming a save file - now speaks each character as you type it and says what backspace removed. Turn it off with the **Typing echo** setting in the mod settings (Control + F1) if you would rather type in silence.
@@ -115,11 +114,9 @@ At any point, you can press F1 to hear what commands you currently have at your 
 - Control page up or down: Raise or lower the water tile you are currently on.
 - X: Clear the scenery on the tile and elivation you are currently on. Examples are trees, bushes, fences, and other objects.
 - B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.
-- O: Buy land ownership over the tile you're on.
-- Shift + O: Buy construction rights over the tile you're on.
-- K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights. Press K a third time will reset the markers. With an area marked, each of those commands asks before it acts: the first press describes the area - its top left and bottom right corners and its size in tiles - and waits, and a second press of the same key carries it out. Any other key cancels. Each command asks once per marked area, so holding Page Up to raise land several steps only prompts on the first press.
+- O: Opens the land rights menu, with Buy land and Buy construction rights. Its heading tells you which tiles it acts on: your brush, or the area you marked with K. Each option reads what it would cost there, or "nothing for sale here", and an option reads "unavailable" when the park has none of it left for sale. Press Enter to buy, or Escape to close without buying. In the scenario editor, the menu sets land rights instead (see Scenario Editor below).
+- K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights. Press K a third time will reset the markers. With an area marked, each of those commands asks before it acts: the first press describes the area - its top left and bottom right corners, its size in tiles, and what it will cost (or earn, for a refund) - and waits, and a second press of the same key carries it out. Any other key cancels. Each command asks once per marked area, so holding Page Up to raise land several steps only prompts on the first press.
 - Shift + K: Snaps your focus between the two markers.
-- Control + Enter: If hovering over a ride or stall, it will open its construction/build menu.
 - Shift + B: Report the break status of the custom ride tile you are hovering over.
 
 ### Zones
@@ -160,6 +157,25 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 - Control + Space: Toggle between keyboard and mouse mode. When in keyboard mode, the mouse is modified to not interfere with the keyboard focus. With mouse mode on, it allows the mouse to behave as it would in Open RCT2 normally.
 - / (slash): Opens the chat box in multiplayer. This is C in stock OpenRCT2, but C is the coordinate read-out here, so the mod moves chat to slash. You can change it back under Options, Controls and Interface, Shortcut keys.
 - Shift page up or page down: Zooms in and out of the map.
+
+### Land, Water and Clear Scenery Windows
+
+In keyboard mode, these tool windows close as soon as they open and tell you which map keys do their job: Page Up and Page Down for land, Control + Page Up and Page Down for water, X to clear scenery, B for the brush size and K to mark an area. They only set up the mouse tool, so none of their settings would reach the keyboard. Mouse mode is unchanged. The Land rights window is different: it opens the land rights menu, the same one as O.
+
+## Scenario Editor
+
+The scenario editor can now be used from the keyboard. Each step's window has its own F1 help.
+
+- **Object selection:** Tab and Shift + Tab move between the pages of objects. Each object reads everything the details panel shows. Enter adds or removes an object, and there is a search box and a filter list.
+- **Landscape step:** This is the map, with the same keys as in a park. When you arrive, the mod says what the step still needs before you can go forward: owned land, a park entrance, a path from the entrance to the edge of the map, and guest starting positions. F1 starts with the same checklist.
+- **Shift + M:** On the landscape step, opens the Map window. It sets the map size and has options to set land rights, place guest starting positions, build the park entrance and open the Map generator.
+- **O:** Opens the land rights menu. Choose a setting and press Enter to apply it to the tiles under your brush, or to the area you marked with K.
+- **Park entrance:** Choose a style, then move the entrance with the arrow keys and turn it with R. The first Enter tells you which tiles it would cover, or why it can't go there, and the second Enter builds it. Backspace picks it back up.
+- **Guest starting positions:** Move the cursor onto a path outside the park and press Enter to place a start there. R turns the way guests walk from it, and Enter on an existing start removes it. Escape finishes.
+- **Map generator:** Four pages: the map's size and where its land comes from (flat, random hills or a height map image), terrain, water and forests. After Generate, the mod reads a summary of the new map.
+- **Inventions list:** Pick an item up with Enter and put it down in front of another item, in either list.
+- **Scenario options:** The options, objective and scenario details steps. Tab and Shift + Tab change page. Left and right change a number, Shift + left and right change it by ten, and Enter types a value.
+- **Editor steps:** Object selection, the inventions list and the scenario options end with an Editor steps tab, where Back and Forward move to the previous or next step.
 
 ## Tips for Playing the Game
 
