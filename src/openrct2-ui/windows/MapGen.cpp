@@ -1963,7 +1963,7 @@ namespace OpenRCT2::Ui::Windows
                 return;
             NodeVtable vt;
             vt.announcements.emplace_back(NodeAnnouncement::Static(axSpinLabel(w)));
-            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSpinner, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSlider, AnnouncementKinds::kRole));
             vt.announcements.emplace_back([this, w]() { return axSpinValue(w); }, true, AnnouncementKinds::kValue);
             vt.announcements.emplace_back([this, w]() { return axUnavailable(w); }, true);
             vt.onAdjust = [this, w](int32_t sign, bool large) { axAdjust(w, sign, large); };

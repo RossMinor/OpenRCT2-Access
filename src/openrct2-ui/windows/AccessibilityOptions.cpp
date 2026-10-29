@@ -331,9 +331,12 @@ namespace OpenRCT2::Ui::Windows
             {
                 NodeVtable vt;
                 vt.announcements.emplace_back(NodeAnnouncement::Static(labelText(i)));
-                // Two-way settings are checkboxes, read and toggled like the game's own.
+                // Two-way settings are checkboxes, read and toggled like the game's own; the rest
+                // change with Left/Right, so they are sliders.
                 if (i == 5 || i == 9)
                     vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
+                else if (i != 10)
+                    vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSlider, AnnouncementKinds::kRole));
                 if (i != 10)
                 {
                     vt.announcements.emplace_back([this, i]() { return valueText(i); }, true, AnnouncementKinds::kValue);

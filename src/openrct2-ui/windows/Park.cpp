@@ -260,11 +260,15 @@ namespace OpenRCT2::Ui::Windows
         }
 
         // "Admission price, free" or "Admission price, $X", without any hint text.
-        std::string accessPriceText()
+        std::string accessPriceValue()
         {
             const money64 fee = Park::GetEntranceFee(getGameState().park);
-            return fee == 0 ? std::string("Admission price, free")
-                            : "Admission price, " + OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, fee);
+            return fee == 0 ? std::string("free") : OpenRCT2::FormatStringID(STR_BOTTOM_TOOLBAR_CASH, fee);
+        }
+
+        std::string accessPriceText()
+        {
+            return "Admission price, " + accessPriceValue();
         }
 
         std::string getAccessibilityPageSummary()
@@ -280,10 +284,10 @@ namespace OpenRCT2::Ui::Windows
                     return OpenRCT2::FormatStringID(STR_GUESTS_IN_PARK_LABEL, static_cast<uint32_t>(park.numGuestsInPark));
                 case WINDOW_PARK_PAGE_PRICE:
                 {
-                    std::string text = accessPriceText();
-                    if (widgets[WIDX_INCREASE_PRICE].type != WidgetType::empty)
-                        text += ", press Enter to adjust";
-                    return text;
+                    // Adjustable (a slider) only when the park charges admission.
+                    if (widgets[WIDX_INCREASE_PRICE].type == WidgetType::empty)
+                        return accessPriceText();
+                    return "Admission price, slider, " + accessPriceValue() + ", use left and right to adjust";
                 }
                 case WINDOW_PARK_PAGE_STATS:
                 {

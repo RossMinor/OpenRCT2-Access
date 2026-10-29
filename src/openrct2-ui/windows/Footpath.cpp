@@ -758,15 +758,15 @@ namespace OpenRCT2::Ui::Windows
             switch (index)
             {
                 case kAxFootpathType:
-                    return "Footpath type, " + axPathName(gFootpathSelection.normalSurface)
+                    return "Footpath type, slider, " + axPathName(gFootpathSelection.normalSurface)
                         + (gFootpathSelection.isQueueSelected ? "" : ", selected");
                 case kAxQueueType:
-                    return "Queue type, " + axPathName(gFootpathSelection.queueSurface)
+                    return "Queue type, slider, " + axPathName(gFootpathSelection.queueSurface)
                         + (gFootpathSelection.isQueueSelected ? ", selected" : "");
                 case kAxRailings:
-                    return "Railings, " + axRailingsName(gFootpathSelection.railings);
+                    return "Railings, slider, " + axRailingsName(gFootpathSelection.railings);
                 case kAxBuildMode:
-                    return "Build mode, " + axModeName();
+                    return "Build mode, slider, " + axModeName();
             }
             return {};
         }

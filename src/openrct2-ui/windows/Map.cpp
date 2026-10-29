@@ -1326,7 +1326,7 @@ namespace OpenRCT2::Ui::Windows
                 return;
             NodeVtable vt;
             vt.announcements.emplace_back(NodeAnnouncement::Static(label));
-            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSpinner, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSlider, AnnouncementKinds::kRole));
             vt.announcements.emplace_back(
                 [direction]() {
                     const auto& size = getGameState().mapSize;

@@ -357,9 +357,9 @@ namespace OpenRCT2::Ui::Windows
                     return std::string("No entry banner, ")
                         + (banner != nullptr && banner->flags.has(BannerFlag::noEntry) ? Vocab::kOn : Vocab::kOff);
                 case AxKind::mainColour:
-                    return "Sign colour, " + (banner != nullptr ? axColourName(banner->colour) : std::string());
+                    return "Sign colour, slider, " + (banner != nullptr ? axColourName(banner->colour) : std::string());
                 case AxKind::textColour:
-                    return "Text colour, "
+                    return "Text colour, slider, "
                         + (banner != nullptr ? OpenRCT2::FormatStringID(kBannerColouredTextFormats[EnumValue(banner->textColour)])
                                              : std::string());
                 case AxKind::demolish:

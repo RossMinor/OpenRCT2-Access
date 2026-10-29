@@ -282,6 +282,8 @@ namespace OpenRCT2::Ui::Windows
                 {
                     if (f == AxField::advertise)
                         vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
+                    else if (f == AxField::maxPlayers)
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSlider, AnnouncementKinds::kRole));
                     vt.announcements.emplace_back([this, f]() { return valueText(f); }, true, AnnouncementKinds::kValue);
                     switch (f)
                     {

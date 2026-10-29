@@ -42,7 +42,6 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kRoleCheckbox = "checkbox";
     inline constexpr const char* kRoleComboBox = "combo box";
     inline constexpr const char* kRoleEdit = "edit";
-    inline constexpr const char* kRoleSpinner = "spinner";
     inline constexpr const char* kUnavailable = "unavailable";
 
     // State words. An "off" state always has a word: an empty part is never spoken, so a control

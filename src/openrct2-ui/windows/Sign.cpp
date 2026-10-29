@@ -377,9 +377,9 @@ namespace OpenRCT2::Ui::Windows
                     return "Sign text, " + (text.empty() ? std::string("blank") : text);
                 }
                 case AxKind::mainColour:
-                    return "Main colour, " + axColourName(_mainColour);
+                    return "Main colour, slider, " + axColourName(_mainColour);
                 case AxKind::textColour:
-                    return "Text colour, " + axColourName(_textColour);
+                    return "Text colour, slider, " + axColourName(_textColour);
                 case AxKind::demolish:
                     return "Demolish sign";
             }

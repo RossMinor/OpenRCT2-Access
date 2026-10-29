@@ -362,7 +362,7 @@ namespace OpenRCT2::Ui::Windows
             }
             lines.push_back("Month profit, " + cash(profit));
 
-            lines.push_back("Loan, " + cash(park.bankLoan) + ", use left and right to adjust");
+            lines.push_back("Loan, slider, " + cash(park.bankLoan) + ", use left and right to adjust");
             if (!_parkData.flags.has(ParkFlag::rct1Interest))
                 lines.push_back(
                     "Interest rate, "

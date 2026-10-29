@@ -2997,7 +2997,7 @@ namespace OpenRCT2::Ui::Windows
             NodeVtable vt;
             // The caption sits in the label widget just before the spinner.
             vt.announcements.emplace_back([this, w]() { return axText(widgets[w - 1].text); });
-            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSpinner, AnnouncementKinds::kRole));
+            vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleSlider, AnnouncementKinds::kRole));
             // LIVE: most of these change through a game action, readable only a tick later.
             vt.announcements.emplace_back(
                 [this, w]() {
