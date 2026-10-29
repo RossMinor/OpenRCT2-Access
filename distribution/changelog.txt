@@ -4,6 +4,32 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.2.1 (2026-10-29)
+------------------------------------------------------------------------
+- When moving the map cursor, the mod now says "Entering" or "Leaving" and the ride's name
+  when you cross into or out of the area a roller coaster or other tracked ride covers.
+  This also works for a track design you're about to place. Smaller rides, stalls and the
+  park entrance are still only read when you're on them.
+- Fixed a bug where stepping off a ride onto an empty tile inside its area, then stepping
+  back, read nothing. The empty tile now reads "Empty", and stepping back onto the ride
+  reads its name again.
+- A track design you're about to place is now read reliably, and says "Empty" when you
+  step off it.
+- Added an "Automatically read tooltips" option to the mod settings menu. When it's off,
+  tooltips are only read when you ask for them.
+- Shift + Enter now reads the tooltip for whatever you're on, or says "No tooltip" if
+  there isn't one. This works whether automatic tooltip reading is on or off.
+- Settings that are simply on or off are now checkboxes, toggled with Enter, to match the
+  rest of the game. This includes Typing echo in the mod settings menu and Advertise in
+  the Start Server window.
+- Every slider in the game now says "slider". Settings that used to say "spinner" now say
+  "slider" too, so the same kind of control is always read the same way.
+- The admission price in the Park window now correctly says to use left and right to
+  adjust it, instead of Enter.
+- Pressing Tab in a window no longer lands on tabs the game hides. For example, a
+  restroom's window used to Tab to a Vehicle tab even though restrooms don't have
+  vehicles. This is fixed for rides, stalls, and the Park, Finances and Cheats windows.
+
 1.2 (2026-10-27)
 ------------------------------------------------------------------------
 - The scenario editor is now completely accessible. Use this mode to design your own map,
