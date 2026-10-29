@@ -835,11 +835,17 @@ static StringId window_cheats_page_titles[] = {
             b.PopContext();
         }
 
-        // Tab/Shift+Tab: cycle the cheat pages via the window's own page switch; the graph
-        // announces the new page's landing.
+        // Tab/Shift+Tab: cycle the cheat pages via the window's own page switch (skipping tabs
+        // disabled in the scenario editor); the graph announces the new page's landing.
         void AccessChangePage(int32_t delta)
         {
-            const int32_t p = (page + delta + WINDOW_CHEATS_PAGE_COUNT) % WINDOW_CHEATS_PAGE_COUNT;
+            int32_t p = page;
+            for (int32_t i = 0; i < WINDOW_CHEATS_PAGE_COUNT; i++)
+            {
+                p = (p + delta + WINDOW_CHEATS_PAGE_COUNT) % WINDOW_CHEATS_PAGE_COUNT;
+                if (!widgetIsDisabled(*this, WIDX_TAB_1 + p))
+                    break;
+            }
             setPage(p);
         }
 

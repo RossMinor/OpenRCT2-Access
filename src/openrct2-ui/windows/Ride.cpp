@@ -1460,14 +1460,14 @@ namespace OpenRCT2::Ui::Windows
         }
 
         // Tab/Shift+Tab: cycle the visible ride pages via the window's own page switch (skipping tabs
-        // hidden for this ride); the graph announces the new page's landing.
+        // hidden or disabled for this ride); the graph announces the new page's landing.
         void AccessChangePage(int32_t delta)
         {
             int32_t newPage = page;
             for (int32_t i = 0; i < WINDOW_RIDE_PAGE_COUNT; i++)
             {
                 newPage = (newPage + delta + WINDOW_RIDE_PAGE_COUNT) % WINDOW_RIDE_PAGE_COUNT;
-                if (widgets[WIDX_TAB_1 + newPage].type != WidgetType::empty)
+                if (widgets[WIDX_TAB_1 + newPage].type != WidgetType::empty && !widgetIsDisabled(*this, WIDX_TAB_1 + newPage))
                     break;
             }
             setPage(newPage);
