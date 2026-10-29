@@ -1365,16 +1365,10 @@ namespace OpenRCT2::Ui::Accessibility
         }
     }
 
-    // The frozen preview whose outline holds this tile, if any, by name. A shop's, flat ride's or
-    // park entrance's footprint is a solid rectangle, so its outline is the footprint; a design's
-    // runs round its whole track, gaps of open ground included.
+    // The frozen design preview whose outline holds this tile, if any, by name. The outline runs
+    // round its whole track, gaps of open ground included. Designs are always tracked rides.
     static std::optional<std::string> PreviewAround(const TileCoordsXY& tile)
     {
-        for (const auto kind : { PreviewKind::ride, PreviewKind::editor })
-        {
-            if (auto label = PreviewLabelOfKind(kind, tile); label.has_value())
-                return label;
-        }
         TileCoordsXY mn, mx;
         std::string name;
         if (Windows::WindowTrackPlacePreviewBounds(mn, mx, name) && TileInBox(tile, mn, mx))
@@ -1382,8 +1376,10 @@ namespace OpenRCT2::Ui::Accessibility
         return std::nullopt;
     }
 
-    // Crossing into or out of a ride's outline, or a frozen preview's, on a step from one tile to
-    // the next: "Leaving" the ones the step left, then "Entering" the ones it arrived in.
+    // Crossing into or out of a tracked ride's outline (a coaster, log flume, go-karts, maze...),
+    // built or a frozen design, on a step from one tile to the next: "Leaving" the ones the step
+    // left, then "Entering" the ones it arrived in. Flat rides and stalls are only named on their
+    // own tiles.
     static std::vector<std::string> OutlineCrossings(
         const TileCoordsXY& from, const TileCoordsXY& to, std::vector<std::string>& entered)
     {
@@ -1405,6 +1401,9 @@ namespace OpenRCT2::Ui::Accessibility
                 continue;
             auto* ride = GetRide(box.ride);
             if (ride == nullptr)
+                continue;
+            if (const auto& rtd = ride->getRideTypeDescriptor();
+                rtd.flags.has(RtdFlag::isFlatRide) || rtd.flags.has(RtdFlag::isShopOrFacility))
                 continue;
             (isIn ? entered : left).push_back(std::string(ride->getName()));
         }
