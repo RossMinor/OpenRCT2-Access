@@ -82,7 +82,8 @@ At any point, you can press F1 to hear what commands you currently have at your 
 
 - Tab: Opens the Tools Menu.
 - F1: Help for wherever you are - the map, the window or menu you are in, or what you are doing, such as placing a ride, building track or choosing what to delete. In a window it says the window's title first, then the keys that work there. Long help opens in the help window described above.
-- Tooltips: Moving onto an option in a menu or window reads its hint after it, the same tip a sighted player sees when they point the mouse at it. If the hint only repeats what was just said, it is skipped.
+- Tooltips: Moving onto an option in a menu or window reads its hint after it, the same tip a sighted player sees when they point the mouse at it. If the hint only repeats what was just said, it is skipped. Turn this off with the **Automatically read tooltips** setting in the mod settings (Control + F1) if you would rather hear hints only when you ask.
+- Shift + Enter: Reads the tooltip of the option you are on, or says "No tooltip" if it has none. Works whether or not tooltips are read automatically. In the guest, staff, ride and research lists, Shift + Enter on a row keeps its own action.
 - Control + F1: Opens the mod settings.
 - Control + F2: Turns scenery reading on or off. While it is off, trees, plants, statues, fences and walls are not read as you move the cursor or the mouse. They are still found by Control + arrows with the scenery filter, the Delete menu, and Shift + Home or End. It turns back on each time you start the game.
 - Typing into any text box - naming a zone, renaming a ride or a member of staff, naming a save file - now speaks each character as you type it and says what backspace removed. Turn it off with the **Typing echo** setting in the mod settings (Control + F1) if you would rather type in silence.

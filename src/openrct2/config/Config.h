@@ -189,6 +189,9 @@ namespace OpenRCT2::Config
         // Colour of the visible keyboard-focus indicator (a Drawing::Colour enum value). Chosen from a
         // curated high-contrast list in the mod settings window (Ctrl+F1).
         uint8_t accessibilityFocusColour;
+        // Whether landing on a control in a window reads its tooltip after it. Off, Shift+Enter still
+        // reads it on demand. Set via Ctrl+F1.
+        bool accessibilityAutoReadTooltips;
         // Volume (0-100%) of the title/main-menu music, on top of the master and music volumes.
         // Defaults low so a fresh boot isn't blaring; adjustable from the mod settings window (Ctrl+F1).
         uint8_t titleMusicVolume;

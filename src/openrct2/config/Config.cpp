@@ -462,6 +462,7 @@ namespace OpenRCT2::Config
             model->accessibilityTileReadingOrder = reader->GetInt32("accessibility_tile_reading_order", 0);
             model->accessibilityElevationReadMode = reader->GetInt32("accessibility_elevation_read_mode", 1);
             model->accessibilityFocusColour = reader->GetInt32("accessibility_focus_colour", 18); // Colour::yellow
+            model->accessibilityAutoReadTooltips = reader->GetBoolean("accessibility_auto_read_tooltips", true);
             model->titleMusicVolume = reader->GetInt32("title_music_volume", 50);
             model->titleSoundVolume = reader->GetInt32("title_sound_volume", 50);
         }
@@ -487,6 +488,7 @@ namespace OpenRCT2::Config
         writer->WriteInt32("accessibility_tile_reading_order", model->accessibilityTileReadingOrder);
         writer->WriteInt32("accessibility_elevation_read_mode", model->accessibilityElevationReadMode);
         writer->WriteInt32("accessibility_focus_colour", model->accessibilityFocusColour);
+        writer->WriteBoolean("accessibility_auto_read_tooltips", model->accessibilityAutoReadTooltips);
         writer->WriteInt32("title_music_volume", model->titleMusicVolume);
         writer->WriteInt32("title_sound_volume", model->titleSoundVolume);
     }

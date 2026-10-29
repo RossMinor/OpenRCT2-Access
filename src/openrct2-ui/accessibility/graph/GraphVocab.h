@@ -134,6 +134,9 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab
     inline constexpr const char* kBuyConstructionRights = "Buy construction rights";
     inline constexpr const char* kNothingForSaleHere = "nothing for sale here";
 
+    // Shift+Enter on a control the game gives no tooltip.
+    inline constexpr const char* kNoTooltip = "No tooltip";
+
     inline std::string LandRightsAppliesTo(const std::string& area)
     {
         return "Applies to " + area;

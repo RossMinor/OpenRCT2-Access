@@ -22,6 +22,7 @@
 #include <openrct2-ui/input/ShortcutManager.h>
 #include <openrct2-ui/windows/Windows.h>
 #include <openrct2/Diagnostic.h>
+#include <openrct2/config/Config.h>
 #include <openrct2/interface/Window.h>
 #include <openrct2/interface/WindowBase.h>
 #include <openrct2/localisation/Formatting.h>
@@ -259,9 +260,12 @@ namespace OpenRCT2::Ui::Accessibility
     // A landing reads the control's tooltip after it, so nothing waits behind a key (Ross's choice;
     // §7.2 would keep it behind a tooltip verb). Only on arriving at a control - not when a press at
     // an edge re-reads the one already focused - and not when the line already says it, as many of
-    // the game's tooltips just repeat the button's name.
+    // the game's tooltips just repeat the button's name. The "Automatically read tooltips" option
+    // turns this off; Shift+Enter reads the tooltip either way.
     static std::string WithTooltip(std::string line, const GraphNode* from, const GraphNode* to)
     {
+        if (!Config::Get().sound.accessibilityAutoReadTooltips)
+            return line;
         if (to == nullptr || (from != nullptr && from->id == to->id))
             return line;
         auto* w = FrontNavigableWindow();
@@ -646,7 +650,17 @@ namespace OpenRCT2::Ui::Accessibility
                 const uint32_t spokenBefore = ScreenReaderSpokenCount();
                 bool acted;
                 if (shift)
+                {
+                    // A control's own Shift+Enter (following a guest, say) comes first; everywhere
+                    // else Shift+Enter reads the focused control's tooltip.
                     acted = kg.ActivateShift();
+                    if (!acted)
+                    {
+                        const std::string tip = WidgetTooltipText(kg.CurrentNode(), w);
+                        ScreenReaderSpeak(tip.empty() ? std::string(Vocab::kNoTooltip) : tip, true);
+                        return true;
+                    }
+                }
                 else if (ctrl)
                     acted = kg.ActivateCtrl();
                 else

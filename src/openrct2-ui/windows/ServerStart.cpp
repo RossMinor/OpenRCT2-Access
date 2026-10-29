@@ -257,8 +257,8 @@ namespace OpenRCT2::Ui::Windows
 
         // Accessible keyboard navigation. The window is a flat form, so we present its controls as a
         // single up/down list of fields, each spoken as "label, value, position of total". Left/right
-        // adjusts the value where that makes sense (max-players spinner, advertise checkbox); Enter
-        // edits a text field or presses a button.
+        // adjusts the max-players spinner; Enter edits a text field, toggles the advertise checkbox or
+        // presses a button.
         // ---- graph accessibility recipe ----
 
         // The window is a flat form; present its controls as a single up/down list. Text fields open
@@ -280,6 +280,8 @@ namespace OpenRCT2::Ui::Windows
                 }
                 else
                 {
+                    if (f == AxField::advertise)
+                        vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleCheckbox, AnnouncementKinds::kRole));
                     vt.announcements.emplace_back([this, f]() { return valueText(f); }, true, AnnouncementKinds::kValue);
                     switch (f)
                     {
@@ -370,7 +372,7 @@ namespace OpenRCT2::Ui::Windows
                 // Never speak the password itself; just whether one is set.
                 case AxField::password:    return _password[0] ? "set" : "not set";
                 case AxField::maxPlayers:  return std::to_string(Config::Get().network.maxplayers);
-                case AxField::advertise:   return Config::Get().network.advertise ? Vocab::kOn : Vocab::kOff;
+                case AxField::advertise:   return Vocab::Checked(Config::Get().network.advertise);
                 case AxField::startServer:
                 case AxField::loadServer:  return {};
             }
