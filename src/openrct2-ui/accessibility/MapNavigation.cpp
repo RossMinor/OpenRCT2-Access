@@ -33,6 +33,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <chrono>
 #include <unordered_map>
 #include <unordered_set>
 #include <openrct2-ui/UiContext.h>
@@ -167,16 +168,28 @@ namespace OpenRCT2::Ui::Accessibility
     // TileReadout::parts.
     static std::vector<std::string> _lastTileFeatureParts;
 
-    // The ride the cursor was last standing on. A ride's footprint is a bounding box, and a coaster
-    // leaves gaps of open ground inside it; crossing one of those is still "on the ride", so the
-    // ride is carried across the gap and is not announced again on the far side.
-    static RideId _lastRideOnCursor = RideId::GetNull();
+    // The placement previews a tile can be read as part of, before the thing is built: a shop or
+    // flat ride, the editor's park entrance, and a pre-built design (track-place window).
+    enum class PreviewKind : uint8_t
+    {
+        none,
+        ride,
+        editor,
+        design,
+    };
 
-    // Cache of the last computed ride footprint, to avoid rescanning the map repeatedly.
-    static RideId _cachedBoundsRide = RideId::GetNull();
-    static TileCoordsXY _cachedBoundsMin{};
-    static TileCoordsXY _cachedBoundsMax{};
-    static bool _cachedBoundsValid = false;
+    // Every ride's outline - the smallest and largest tile its track reaches - from one pass over the
+    // map. Refreshed at most once a second as it is asked for, so a ride built, extended or
+    // demolished shows up promptly without rescanning the map on every keypress.
+    struct RideOutline
+    {
+        RideId ride;
+        TileCoordsXY min;
+        TileCoordsXY max;
+    };
+    static std::vector<RideOutline> _rideOutlines;
+    static std::chrono::steady_clock::time_point _rideOutlinesAt{};
+    static bool _rideOutlinesValid = false;
 
     // Cache of every tile a ride occupies, for the whole-ride focus highlight (issue: highlight the
     // entire ride under the cursor, not a single tile). World coords, one per occupied tile.
@@ -339,52 +352,66 @@ namespace OpenRCT2::Ui::Accessibility
         return RideId::GetNull();
     }
 
-    // Computes the tile bounding box of a ride's footprint (cached for the last ride).
-    static bool ComputeRideBounds(RideId rideId, TileCoordsXY& outMin, TileCoordsXY& outMax)
+    static const std::vector<RideOutline>& RideOutlines()
     {
-        if (rideId.IsNull())
-            return false;
+        const auto now = std::chrono::steady_clock::now();
+        if (_rideOutlinesValid && now - _rideOutlinesAt < std::chrono::seconds(1))
+            return _rideOutlines;
 
-        if (_cachedBoundsValid && _cachedBoundsRide == rideId)
-        {
-            outMin = _cachedBoundsMin;
-            outMax = _cachedBoundsMax;
-            return true;
-        }
-
-        bool found = false;
+        _rideOutlines.clear();
+        std::unordered_map<uint16_t, size_t> index; // ride -> its entry in _rideOutlines
         const auto mapSize = getGameState().mapSize;
         for (int32_t y = 0; y < mapSize.y; y++)
         {
             for (int32_t x = 0; x < mapSize.x; x++)
             {
-                if (GetRideAtTile(TileCoordsXY{ x, y }) != rideId)
-                    continue;
-
-                if (!found)
+                const TileCoordsXY tile{ x, y };
+                for (TileElement* el = MapGetFirstElementAt(tile); el != nullptr;)
                 {
-                    found = true;
-                    outMin = TileCoordsXY{ x, y };
-                    outMax = TileCoordsXY{ x, y };
-                }
-                else
-                {
-                    outMin.x = std::min(outMin.x, x);
-                    outMin.y = std::min(outMin.y, y);
-                    outMax.x = std::max(outMax.x, x);
-                    outMax.y = std::max(outMax.y, y);
+                    if (auto* track = el->asTrack(); track != nullptr && !el->isGhost())
+                    {
+                        const RideId rid = track->getRideIndex();
+                        auto [it, added] = index.try_emplace(rid.ToUnderlying(), _rideOutlines.size());
+                        if (added)
+                            _rideOutlines.push_back({ rid, tile, tile });
+                        else
+                        {
+                            auto& box = _rideOutlines[it->second];
+                            box.min = { std::min(box.min.x, x), std::min(box.min.y, y) };
+                            box.max = { std::max(box.max.x, x), std::max(box.max.y, y) };
+                        }
+                    }
+                    if (el->isLastForTile())
+                        break;
+                    el++;
                 }
             }
         }
+        _rideOutlinesAt = now;
+        _rideOutlinesValid = true;
+        return _rideOutlines;
+    }
 
-        if (found)
+    // The tile bounding box of a ride's footprint.
+    static bool ComputeRideBounds(RideId rideId, TileCoordsXY& outMin, TileCoordsXY& outMax)
+    {
+        if (rideId.IsNull())
+            return false;
+        for (const auto& box : RideOutlines())
         {
-            _cachedBoundsValid = true;
-            _cachedBoundsRide = rideId;
-            _cachedBoundsMin = outMin;
-            _cachedBoundsMax = outMax;
+            if (box.ride == rideId)
+            {
+                outMin = box.min;
+                outMax = box.max;
+                return true;
+            }
         }
-        return found;
+        return false;
+    }
+
+    static bool TileInBox(const TileCoordsXY& tile, const TileCoordsXY& mn, const TileCoordsXY& mx)
+    {
+        return tile.x >= mn.x && tile.x <= mx.x && tile.y >= mn.y && tile.y <= mx.y;
     }
 
     // Every tile (in world coords) that the given ride occupies, cached for the last ride so the map
@@ -1322,6 +1349,68 @@ namespace OpenRCT2::Ui::Accessibility
         return DescribeTrackPiece(OpenRCT2::TrackMetadata::GetTrackElementDescriptor(element.getTrackType()), &element);
     }
 
+    // What a frozen preview of that kind reads as on the tile, or nullopt when it does not cover it.
+    static std::optional<std::string> PreviewLabelOfKind(PreviewKind kind, const TileCoordsXY& tile)
+    {
+        switch (kind)
+        {
+            case PreviewKind::ride:
+                return AccessibleRidePlacementPreviewLabel(tile);
+            case PreviewKind::editor:
+                return EditorPlacementPreviewLabel(tile);
+            case PreviewKind::design:
+                return Windows::WindowTrackPlacePreviewLabel(tile);
+            default:
+                return std::nullopt;
+        }
+    }
+
+    // The frozen preview whose outline holds this tile, if any, by name. A shop's, flat ride's or
+    // park entrance's footprint is a solid rectangle, so its outline is the footprint; a design's
+    // runs round its whole track, gaps of open ground included.
+    static std::optional<std::string> PreviewAround(const TileCoordsXY& tile)
+    {
+        for (const auto kind : { PreviewKind::ride, PreviewKind::editor })
+        {
+            if (auto label = PreviewLabelOfKind(kind, tile); label.has_value())
+                return label;
+        }
+        TileCoordsXY mn, mx;
+        std::string name;
+        if (Windows::WindowTrackPlacePreviewBounds(mn, mx, name) && TileInBox(tile, mn, mx))
+            return name;
+        return std::nullopt;
+    }
+
+    // Crossing into or out of a ride's outline, or a frozen preview's, on a step from one tile to
+    // the next: "Leaving" the ones the step left, then "Entering" the ones it arrived in.
+    static std::vector<std::string> OutlineCrossings(
+        const TileCoordsXY& from, const TileCoordsXY& to, std::vector<std::string>& entered)
+    {
+        std::vector<std::string> left;
+        const auto previewFrom = PreviewAround(from);
+        const auto previewTo = PreviewAround(to);
+        if (previewFrom != previewTo)
+        {
+            if (previewFrom.has_value())
+                left.push_back(*previewFrom);
+            if (previewTo.has_value())
+                entered.push_back(*previewTo);
+        }
+        for (const auto& box : RideOutlines())
+        {
+            const bool wasIn = TileInBox(from, box.min, box.max);
+            const bool isIn = TileInBox(to, box.min, box.max);
+            if (wasIn == isIn)
+                continue;
+            auto* ride = GetRide(box.ride);
+            if (ride == nullptr)
+                continue;
+            (isIn ? entered : left).push_back(std::string(ride->getName()));
+        }
+        return left;
+    }
+
     static void Move(int32_t dx, int32_t dy, const char* directionName)
     {
         const auto mapSize = getGameState().mapSize;
@@ -1335,6 +1424,7 @@ namespace OpenRCT2::Ui::Accessibility
         }
 
         const bool wasOwned = IsTileOwned(_cursor); // ownership of the tile we are leaving
+        const TileCoordsXY from = _cursor;
         _cursor = target;
         CentreViewportOnCursor();
 
@@ -1456,60 +1546,49 @@ namespace OpenRCT2::Ui::Accessibility
         TileReadout readout = (_brushSize > 1) ? DescribeBrushArea()
                                                : DescribeTileReadout(_cursor, _hideSceneryWhileBrowsing);
         std::string description = std::move(readout.text);
-        // While a ride-placement preview is frozen, read its footprint tiles as though the ride were
-        // already there, so the player can arrow over the preview and trace its shape/position.
+        // While a placement preview is frozen, read its footprint tiles as though the ride (or park
+        // entrance) were already there, so the player can arrow over the preview and trace its shape.
+        // Shop / flat-ride and park entrance footprints are small, so they always read (onPreviewTile)
+        // regardless of the tile-speech mode. A pre-built design's footprint is large, so it follows
+        // the mode: on "on change" its name reads once as the player enters and stays quiet across
+        // the rest. The name is one of the tile's features too, or "on change" (which compares
+        // features) would never hear it arrive, nor say "Empty" on stepping off it.
         bool onPreviewTile = false;
-        if (auto previewLabel = AccessibleRidePlacementPreviewLabel(_cursor); previewLabel.has_value())
+        PreviewKind previewKind = PreviewKind::none;
+        std::optional<std::string> previewLabel;
+        for (const auto kind : { PreviewKind::ride, PreviewKind::editor, PreviewKind::design })
         {
-            // Shop / flat-ride footprint: a small area, so always read (onPreviewTile) regardless of the
-            // tile-speech mode, letting the player trace each of its few tiles.
+            previewLabel = PreviewLabelOfKind(kind, _cursor);
+            if (previewLabel.has_value())
+            {
+                previewKind = kind;
+                break;
+            }
+        }
+        if (previewLabel.has_value())
+        {
             description = readout.bareGround ? *previewLabel : (*previewLabel + ", " + description);
+            if (readout.bareGround)
+                readout.parts = { *previewLabel };
+            else
+                readout.parts.insert(readout.parts.begin(), *previewLabel);
             readout.bareGround = false;
-            onPreviewTile = true;
+            onPreviewTile = previewKind != PreviewKind::design;
         }
-        else if (auto editorLabel = EditorPlacementPreviewLabel(_cursor); editorLabel.has_value())
-        {
-            // The park entrance: three tiles, always read, as with a stall's footprint.
-            description = readout.bareGround ? *editorLabel : (*editorLabel + ", " + description);
-            readout.bareGround = false;
-            onPreviewTile = true;
-        }
-        // A frozen pre-built ride/coaster design preview (the track-place window). Its footprint is
-        // large, so this follows the tile-speech mode rather than forcing a read on every tile: on
-        // "every tile" each tile reads, on "on change" the ride name reads once as the player enters the
-        // footprint and stays quiet across the rest, and on "off" it is silent - whatever the setting.
-        else if (auto tdLabel = Windows::WindowTrackPlacePreviewLabel(_cursor); tdLabel.has_value())
-        {
-            description = readout.bareGround ? *tdLabel : (*tdLabel + ", " + description);
-            readout.bareGround = false;
-        }
+
+        // Stepping across a ride's outline, or a frozen preview's, says "Leaving" or "Entering" and
+        // its name, before the tile.
+        std::vector<std::string> entered;
+        const std::vector<std::string> left = OutlineCrossings(from, _cursor, entered);
         const auto tileMode = static_cast<TileSpeechMode>(Config::Get().sound.accessibilityTileSpeechMode);
         if (tileMode != TileSpeechMode::off || onPreviewTile)
         {
             // "Every tile" reads on every move; "on change" (the original behaviour) reads only when
             // the description differs from the previous tile. A ride-preview footprint tile always
             // reads so the player can trace the whole shape.
-            // A ride's footprint is a bounding box and a coaster leaves open ground inside it. A gap
-            // like that is still part of the ride's area, so carry the ride across it: the gap still
-            // reads as empty, but stepping back onto the track on the far side does not announce the
-            // ride a second time. Only bare gaps carry it - a path inside the box is its own thing.
+            // A gap of open ground inside a ride's outline reads "Empty", so stepping back onto the
+            // track names the ride again.
             const bool singleTile = (_brushSize <= 1);
-            if (singleTile)
-            {
-                if (const RideId here = RideIdAtCursor(); !here.IsNull())
-                {
-                    _lastRideOnCursor = here;
-                }
-                else if (readout.bareGround && !_lastRideOnCursor.IsNull())
-                {
-                    TileCoordsXY mn, mx;
-                    if (ComputeRideBounds(_lastRideOnCursor, mn, mx) && _cursor.x >= mn.x && _cursor.x <= mx.x
-                        && _cursor.y >= mn.y && _cursor.y <= mx.y)
-                        readout.parts.push_back(RideNameWithDimensions(_lastRideOnCursor));
-                    else
-                        _lastRideOnCursor = RideId::GetNull(); // left the ride's area for good
-                }
-            }
 
             // Say only what is new since the tile just left. Anything carried over - the queue still
             // underfoot, the ride still overhead - has already been named and is plainly still there,
@@ -1543,7 +1622,27 @@ namespace OpenRCT2::Ui::Accessibility
 
             // Skip the bare-ground label right after a boundary cue (which already said it). This
             // rides on the describer's flag, not on matching its wording.
-            if (!spoken.empty() && !(announcedCrossing && readout.bareGround))
+            if (announcedCrossing && readout.bareGround)
+                spoken.clear();
+
+            // A tile that names the ride just entered starts with its name; "Entering" has said it,
+            // so the tile goes on from there ("Entering Mini Coaster 1, 10 by 8").
+            SpeechBuilder crossings;
+            for (const auto& name : left)
+                crossings.add("Leaving " + name);
+            for (const auto& name : entered)
+            {
+                crossings.add("Entering " + name);
+                if (spoken.rfind(name, 0) == 0)
+                {
+                    spoken.erase(0, name.size());
+                    if (spoken.rfind(", ", 0) == 0)
+                        spoken.erase(0, 2);
+                }
+            }
+            if (!crossings.str().empty())
+                spoken = spoken.empty() ? crossings.str() : (crossings.str() + ", " + spoken);
+            if (!spoken.empty())
                 ScreenReaderSpeak(spoken, !announcedCrossing);
 
             _lastTileFeatureParts = std::move(readout.parts);

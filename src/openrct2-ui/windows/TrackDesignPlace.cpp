@@ -1007,6 +1007,23 @@ namespace OpenRCT2::Ui::Windows
             return out;
         }
 
+        bool previewBounds(TileCoordsXY& outMin, TileCoordsXY& outMax, std::string& outName)
+        {
+            if (!_accPreviewing)
+                return false;
+            const auto tiles = previewTiles(_accPreviewOrigin);
+            if (tiles.empty())
+                return false;
+            outMin = outMax = tiles.front();
+            for (const auto& t : tiles)
+            {
+                outMin = { std::min(outMin.x, t.x), std::min(outMin.y, t.y) };
+                outMax = { std::max(outMax.x, t.x), std::max(outMax.y, t.y) };
+            }
+            outName = _accPreviewName;
+            return true;
+        }
+
         // If a preview is frozen and covers the given tile, returns the design's name so the tile
         // reader can announce the ride as though it were already there. Otherwise nullopt.
         std::optional<std::string> previewLabelForTile(const TileCoordsXY& tile)
@@ -1608,6 +1625,12 @@ namespace OpenRCT2::Ui::Windows
         if (auto* w = GetTrackPlaceWindow(); w != nullptr)
             return w->previewLabelForTile(tile);
         return std::nullopt;
+    }
+
+    bool WindowTrackPlacePreviewBounds(TileCoordsXY& outMin, TileCoordsXY& outMax, std::string& outName)
+    {
+        auto* w = GetTrackPlaceWindow();
+        return w != nullptr && w->previewBounds(outMin, outMax, outName);
     }
 
     std::vector<std::pair<CoordsXY, std::string>> WindowTrackPlaceEntranceExitTiles()
