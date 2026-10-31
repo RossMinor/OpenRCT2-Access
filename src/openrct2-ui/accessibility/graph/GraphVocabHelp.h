@@ -78,7 +78,8 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
 
     inline constexpr const char* kPark
         = "Tab and Shift + Tab: Move between the pages: entrance, rating, guests, price, statistics, objective and "
-          "awards. Enter: Open or close the park. Left and right arrows: Change the entry price. Escape: Close the "
+          "awards. Up and down arrows: Read the lines of the objective page. Enter: Open or close the park, or enter "
+          "your name into the scenario chart. Left and right arrows: Change the entry price. Escape: Close the "
           "window.";
 
     inline constexpr const char* kFinances

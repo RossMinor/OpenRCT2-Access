@@ -245,9 +245,31 @@ namespace OpenRCT2::Ui::Windows
                 vt.announcements.emplace_back([sc]() {
                     std::string text = sc.scenario->Name;
                     if (sc.is_locked)
-                        text += ", locked";
-                    else if (sc.scenario->Highscore != nullptr)
-                        text += ", completed";
+                        return text + ", locked";
+                    // What the preview panel shows for the scenario: who completed it and with what
+                    // company value (the game shows "???" when no name was entered), then the
+                    // description and the objective.
+                    if (sc.scenario->Highscore != nullptr)
+                    {
+                        u8string completedByName = "???";
+                        if (!sc.scenario->Highscore->name.empty())
+                            completedByName = sc.scenario->Highscore->name;
+                        auto ft = Formatter();
+                        ft.Add<StringId>(STR_STRING);
+                        ft.Add<const char*>(completedByName.c_str());
+                        ft.Add<money64>(sc.scenario->Highscore->company_value);
+                        text += ", " + OpenRCT2::FormatStringIDLegacy(STR_COMPLETED_BY_WITH_COMPANY_VALUE, ft.Data());
+                    }
+                    if (!sc.scenario->Details.empty())
+                        text += ". " + sc.scenario->Details;
+                    Scenario::Objective objective = { .Type = sc.scenario->ObjectiveType,
+                                                      .Year = sc.scenario->ObjectiveArg1,
+                                                      .NumGuests = static_cast<uint16_t>(sc.scenario->ObjectiveArg3),
+                                                      .Currency = sc.scenario->ObjectiveArg2 };
+                    auto ft = Formatter();
+                    ft.Add<StringId>(kObjectiveNames[EnumValue(sc.scenario->ObjectiveType)]);
+                    formatObjective(ft, objective);
+                    text += ". " + OpenRCT2::FormatStringIDLegacy(STR_OBJECTIVE, ft.Data());
                     return text;
                 });
                 vt.onActivate = [this, sc]() {

@@ -189,6 +189,25 @@ namespace OpenRCT2::Ui::Windows
         return text;
     }
 
+    // The objective page's result line once the scenario has ended - the game's own text, as
+    // onDrawObjective draws it - or empty while the scenario is still running.
+    static std::string GetParkObjectiveOutcomeText()
+    {
+        auto& gameState = getGameState();
+        if (gameState.scenarioCompletedCompanyValue == kMoney64Undefined)
+            return {};
+        if (gameState.scenarioCompletedCompanyValue == kCompanyValueOnFailedObjective)
+            return OpenRCT2::FormatStringID(STR_OBJECTIVE_FAILED);
+        return OpenRCT2::FormatStringID(STR_OBJECTIVE_ACHIEVED, gameState.scenarioCompletedCompanyValue);
+    }
+
+    // Graph keys of the objective page's lines. The objective itself keeps the page's own key, so a
+    // Tab onto the page lands on it as before.
+    static Accessibility::Graph::ControlId ParkObjectiveOutcomeKey()
+    {
+        return Accessibility::Graph::ControlId::Structural("park:" + std::to_string(WINDOW_PARK_PAGE_OBJECTIVE) + ":result");
+    }
+
     class ParkWindow final : public Window
     {
     private:
@@ -201,6 +220,9 @@ namespace OpenRCT2::Ui::Windows
 
         ScreenRect _ratingGraphBounds;
         ScreenRect _guestGraphBounds;
+
+        // Where onDrawObjective last drew the result line (window-relative), for the focus box.
+        std::optional<ScreenRect> _axOutcomeBounds;
 
         ParkData& _parkData;
 
@@ -410,6 +432,45 @@ namespace OpenRCT2::Ui::Windows
             }
 
             b.AddItem(ControlId::Structural("park:" + std::to_string(page)), std::move(vt));
+
+            if (page == WINDOW_PARK_PAGE_OBJECTIVE)
+                BuildAccessObjectiveLines(b);
+        }
+
+        // The rest of the objective page, in screen order below the objective: the result line once
+        // the scenario has ended, then the "Enter name into scenario chart" button while the game
+        // shows it (a winning company value that beat the scenario's best).
+        void BuildAccessObjectiveLines(Accessibility::Graph::GraphBuilder& b)
+        {
+            using namespace Accessibility::Graph;
+
+            if (!GetParkObjectiveOutcomeText().empty())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back([]() { return GetParkObjectiveOutcomeText(); });
+                vt.focusRect = [this]() -> std::optional<GraphRect> {
+                    if (!_axOutcomeBounds.has_value())
+                        return std::nullopt;
+                    const auto& r = *_axOutcomeBounds;
+                    return GraphRect{ windowPos.x + r.GetLeft(), windowPos.y + r.GetTop(), r.GetWidth(), r.GetHeight() };
+                };
+                b.AddItem(ParkObjectiveOutcomeKey(), std::move(vt));
+            }
+
+            if (widgets[WIDX_ENTER_NAME].isVisible())
+            {
+                NodeVtable vt;
+                vt.announcements.emplace_back(NodeAnnouncement::Static(OpenRCT2::FormatStringID(widgets[WIDX_ENTER_NAME].text)));
+                vt.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
+                // The game's own button handler: it opens the game's name prompt.
+                vt.onActivate = [this]() { onMouseUp(WIDX_ENTER_NAME); };
+                vt.focusRect = [this]() -> std::optional<GraphRect> {
+                    const auto& wd = widgets[WIDX_ENTER_NAME];
+                    return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+                };
+                b.AddItem(
+                    ControlId::Structural("park:" + std::to_string(WINDOW_PARK_PAGE_OBJECTIVE) + ":entername"), std::move(vt));
+            }
         }
 
         // Tab/Shift+Tab: cycle the visible park pages via the window's own page switch (skipping tabs
@@ -1209,6 +1270,8 @@ namespace OpenRCT2::Ui::Windows
                 std::string strText(text);
                 ScenarioSuccessSubmitName(getGameState(), strText.c_str());
                 invalidate();
+                // The game takes the button away; keep the keyboard on the result line above it.
+                Accessibility::Graph::GraphStateForClass(classification).nextSuggestedMove = ParkObjectiveOutcomeKey();
             }
         }
 
@@ -1275,20 +1338,24 @@ namespace OpenRCT2::Ui::Windows
             screenCoords.y += 5;
 
             // Objective outcome
+            _axOutcomeBounds.reset();
             if (gameState.scenarioCompletedCompanyValue != kMoney64Undefined)
             {
+                int32_t outcomeHeight;
                 if (gameState.scenarioCompletedCompanyValue == kCompanyValueOnFailedObjective)
                 {
                     // Objective failed
-                    drawTextWrapped(rt, screenCoords, 222, STR_OBJECTIVE_FAILED);
+                    outcomeHeight = drawTextWrapped(rt, screenCoords, 222, STR_OBJECTIVE_FAILED);
                 }
                 else
                 {
                     // Objective completed
                     ft = Formatter();
                     ft.Add<money64>(gameState.scenarioCompletedCompanyValue);
-                    drawTextWrapped(rt, screenCoords, 222, STR_OBJECTIVE_ACHIEVED, ft);
+                    outcomeHeight = drawTextWrapped(rt, screenCoords, 222, STR_OBJECTIVE_ACHIEVED, ft);
                 }
+                const auto topLeft = screenCoords - windowPos;
+                _axOutcomeBounds = ScreenRect{ topLeft, topLeft + ScreenCoordsXY{ 222, outcomeHeight } };
             }
         }
 #pragma endregion
@@ -1529,8 +1596,18 @@ namespace OpenRCT2::Ui::Windows
             wnd->windowPos.y = ContextGetHeight() / 2 - 87;
             wnd->invalidate();
 
-            // Read the opening text aloud and let the player dismiss it with Enter.
-            Accessibility::ScreenReaderSpeak(GetParkObjectiveText());
+            if (!GetParkObjectiveOutcomeText().empty())
+            {
+                // The scenario has ended: start on the result line, which the graph then reads -
+                // the Enter name button, when the game shows it, is the next line down.
+                Accessibility::Graph::GraphStateForClass(WindowClass::parkInformation).nextSuggestedMove
+                    = ParkObjectiveOutcomeKey();
+            }
+            else
+            {
+                // Read the opening text aloud and let the player dismiss it with Enter.
+                Accessibility::ScreenReaderSpeak(GetParkObjectiveText());
+            }
         }
         return wnd;
     }
