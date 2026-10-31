@@ -4,6 +4,28 @@ OpenRCT2-Access - accessibility fork changelog
 Changes to the blind-accessibility fork (NVDA speech and keyboard support).
 The upstream OpenRCT2 changelog follows below.
 
+1.2.2 (2026-10-31)
+------------------------------------------------------------------------
+- Fixed a bug where you couldn't enter your name into the scenario chart after winning a
+  scenario. When a scenario ends, the mod now reads whether you won or failed, and the up
+  and down arrows move through the objective page, including the "Enter name into scenario
+  chart" button.
+- The Scenario Select screen now reads who completed each scenario and the company value
+  they finished with, along with each scenario's description and objective.
+- Patrol areas are now accessible. In a staff member's window, "Set patrol area" opens a
+  menu with Set Patrol Area and Cancel Patrol Area. Previously this button did nothing.
+- Set Patrol Area puts you in patrol mode on the map. Space adds your brush or marked area
+  to the patrol area, or removes it if the tile you're on is already patrolled. With a
+  marked area, you press Space twice to confirm. Escape takes you back to the staff
+  member's window.
+- In patrol mode, each tile says whether it's patrolled by the staff member you're
+  setting, by other staff of the same type, or not at all, matching what the game shows a
+  sighted player.
+- The Staff list has a new "Show patrol areas" option, which shows where the selected type
+  of staff patrol. Press Space on a path to set the patrol area of the nearest staff
+  member who patrols it. Escape takes you back to the Staff list.
+- The Staff list now says "patrol area" after the name of any staff member who has one.
+
 1.2.1 (2026-10-29)
 ------------------------------------------------------------------------
 - When moving the map cursor, the mod now says "Entering" or "Leaving" and the ride's name
