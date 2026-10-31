@@ -17,6 +17,7 @@
 #include "ElevationTone.h"
 #include "GuestRescue.h"
 #include "MenuNavigation.h"
+#include "PatrolAreaPainting.h"
 #include "QueueRoute.h"
 #include "graph/GraphScreens.h"
 #include "graph/GraphVocab.h"
@@ -261,6 +262,7 @@ namespace OpenRCT2::Ui::Accessibility
         lowerLand,
         raiseWater,
         lowerWater,
+        setPatrolArea,
     };
 
     // The command awaiting its confirming second press, and the commands already confirmed for the
@@ -1575,6 +1577,29 @@ namespace OpenRCT2::Ui::Accessibility
             onPreviewTile = previewKind != PreviewKind::design;
         }
 
+        // While setting a patrol area the game paints it onto the map, so each tile says whether it
+        // is patrolled. It is one of the tile's parts, so "on change" reads it only when it changes.
+        if (IsPatrolAreaModeActive())
+        {
+            std::string patrol;
+            if (_brushSize > 1)
+            {
+                int32_t ax, ay, bx, by;
+                GetBrushBounds(ax, ay, bx, by);
+                patrol = PatrolAreaRangeText(MapRange(ax, ay, bx, by));
+            }
+            else
+            {
+                patrol = PatrolAreaTileText(_cursor);
+            }
+            if (!patrol.empty())
+            {
+                description += ", " + patrol;
+                readout.parts.push_back(patrol);
+                readout.bareGround = false;
+            }
+        }
+
         // Stepping across a ride's outline, or a frozen preview's, says "Leaving" or "Entering" and
         // its name, before the tile.
         std::vector<std::string> entered;
@@ -2056,6 +2081,7 @@ namespace OpenRCT2::Ui::Accessibility
         { AreaCommand::lowerLand, SDLK_PAGEDOWN, 0, "Page Down", "Lower the land in" },
         { AreaCommand::raiseWater, SDLK_PAGEUP, KMOD_CTRL, "Control plus Page Up", "Raise the water in" },
         { AreaCommand::lowerWater, SDLK_PAGEDOWN, KMOD_CTRL, "Control plus Page Down", "Lower the water in" },
+        { AreaCommand::setPatrolArea, SDLK_SPACE, 0, "Space", "Add to the patrol area the" },
     };
 
     static const AreaCommandBinding& AreaBindingFor(AreaCommand command)
@@ -2107,6 +2133,9 @@ namespace OpenRCT2::Ui::Accessibility
         std::string verb = binding.verb;
         if (binding.command == AreaCommand::pavePath && gFootpathSelection.isQueueSelected)
             verb = "Queue";
+        // Patrol areas follow the game's first click: a patrolled cursor tile removes instead.
+        if (binding.command == AreaCommand::setPatrolArea && PatrolAreaModeWouldRemove(_cursor))
+            verb = "Remove from the patrol area the";
 
         ScreenReaderSpeak(
             verb + " marked area, top left X " + std::to_string(leftX) + ", Y " + std::to_string(topY)
@@ -4946,6 +4975,37 @@ namespace OpenRCT2::Ui::Accessibility
             }
         }
 
+        // Setting a staff member's patrol area: Space adds the brush or marked area to it, or removes
+        // it when the cursor's tile is already patrolled; Escape finishes. Everything else (arrows,
+        // B, K) works as usual. Not while a window has the keyboard - Space then falls through to the
+        // "Close the window first" refusal below rather than painting behind the window.
+        if (IsPatrolAreaModeActive() && !(modifiers & (KMOD_CTRL | KMOD_SHIFT))
+            && Graph::FrontNavigableWindow() == nullptr)
+        {
+            switch (key)
+            {
+                case SDLK_SPACE:
+                {
+                    if (!_initialised)
+                        InitialiseCursor();
+                    if (IsPatrolAreaViewActive())
+                    {
+                        PatrolAreaViewLocate(_cursor);
+                        return true;
+                    }
+                    if (!ConfirmAreaCommand(AreaCommand::setPatrolArea))
+                        return true;
+                    int32_t ax, ay, bx, by;
+                    GetTerraformBounds(ax, ay, bx, by);
+                    PatrolAreaModeApply(MapRange(ax, ay, bx, by), _cursor);
+                    return true;
+                }
+                case SDLK_ESCAPE:
+                    PatrolAreaModeFinish();
+                    return true;
+            }
+        }
+
         if (key == SDLK_TAB)
             return EnterMenuMode();
 
@@ -5442,6 +5502,10 @@ namespace OpenRCT2::Ui::Accessibility
             return speakHelp(EditorPlacementHelp());
         if (IsAccessibleSceneryPlacementActive())
             return speakHelp(Help::kPlacingScenery);
+        if (IsPatrolAreaViewActive())
+            return speakHelp(Help::kPatrolAreaView);
+        if (IsPatrolAreaModeActive())
+            return speakHelp(Help::kPatrolArea);
 
         if (_statusMode)
             return speakHelp(Help::kStatusReadout);
@@ -5546,6 +5610,7 @@ namespace OpenRCT2::Ui::Accessibility
     static void ResetMapCursorSession()
     {
         EditorPlacementReset();
+        PatrolAreaModeReset();
         _initialised = false;
         _statusMode = false;
         _markerCount = 0; // drop any terraform-area markers; a freshly loaded park starts clean
@@ -5921,7 +5986,7 @@ namespace OpenRCT2::Ui::Accessibility
         // (the construction window) leaves toolbar menu mode so plain arrows drive the map cursor.
         if (_menuMode
             && (IsRideConstructionWindowOpen() || Windows::WindowTrackPlaceIsActive()
-                || IsAccessibleRidePlacementActive() || IsAccessibleSceneryPlacementActive()))
+                || IsAccessibleRidePlacementActive() || IsAccessibleSceneryPlacementActive() || IsPatrolAreaModeActive()))
             _menuMode = false;
 
         const bool handled = _menuMode ? HandleMenuModeKey() : HandleMapCursorKey(key, e.modifiers);

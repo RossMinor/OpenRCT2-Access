@@ -287,7 +287,7 @@ namespace OpenRCT2::Ui::Windows
                     staff->formatActionTo(fa);
                     data("Doing, " + OpenRCT2::FormatStringIDLegacy(STR_STRINGID, fa.Data()));
                     items.push_back({ "Locate, button", SxKind::dropdown, WIDX_LOCATE });
-                    items.push_back({ "Set patrol area, button", SxKind::button, WIDX_PATROL });
+                    items.push_back({ "Set patrol area, button", SxKind::dropdown, WIDX_PATROL });
                     items.push_back({ "Rename, button", SxKind::button, WIDX_RENAME });
                     items.push_back({ "Fire, button", SxKind::button, WIDX_FIRE });
                     break;
@@ -788,6 +788,12 @@ namespace OpenRCT2::Ui::Windows
 
                         auto staffSetPatrolAreaAction = GameActions::StaffSetPatrolAreaAction(
                             staff->id, {}, GameActions::StaffSetPatrolAreaMode::clearAll);
+                        // Queued, so say it once it has happened - after the menu's closing landing.
+                        staffSetPatrolAreaAction.SetCallback(
+                            [](const GameActions::GameAction*, const GameActions::Result* result) {
+                                if (result->error == GameActions::Status::ok)
+                                    Accessibility::ScreenReaderSpeak("Patrol area cancelled", false);
+                            });
                         GameActions::Execute(&staffSetPatrolAreaAction, gameState);
                     }
                     else

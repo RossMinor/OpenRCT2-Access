@@ -78,7 +78,7 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
 
     inline constexpr const char* kPark
         = "Tab and Shift + Tab: Move between the pages: entrance, rating, guests, price, statistics, objective and "
-          "awards. Up and down arrows: Read the lines of the objective page. Enter: Open or close the park, or enter "
+          "awards. Up and down arrows: Read the lines of the objective page. Enter: Open the park, close the park, enter "
           "your name into the scenario chart. Left and right arrows: Change the entry price. Escape: Close the "
           "window.";
 
@@ -127,8 +127,8 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
 
     inline constexpr const char* kStaffList
         = "Tab and Shift + Tab, or left and right arrows: Move between handymen, mechanics, security guards and "
-          "entertainers. Up and down arrows: Move through the staff. Enter: Hire a staff member, or open a staff "
-          "member's window. Shift + Enter: Follow the staff member with the camera until you press Escape. Escape: "
+          "entertainers. Up and down arrows: Move through the staff. Enter: Hire a staff member, show patrol areas, "
+          "open a staff member's window. Shift + Enter: Follow the staff member with the camera until you press Escape. Escape: "
           "Close the window.";
 
     inline constexpr const char* kStaff
@@ -359,6 +359,16 @@ namespace OpenRCT2::Ui::Accessibility::Graph::Vocab::Help
           "top left corner of the tile. Shift + E: Places focus on the top right of the tile. Shift + C: Places "
           "focus on the bottom right corner of the tile. Shift + Z: Places focus on the bottom left corner of the "
           "tile. Enter or Space: Places the scenery, and you can keep placing. Escape: Exits the scenery builder.";
+
+    inline constexpr const char* kPatrolArea
+        = "Setting a patrol area. Arrow keys: Move the cursor. Space: Adds the brush or marked area to the patrol "
+          "area, removes it if the tile you are on is already patrolled. B: Changes the size of the brush. K: Places a first and then a second marker if pressed again. "
+          "Escape: Stops setting the patrol area and goes back to the staff member's window.";
+
+    inline constexpr const char* kPatrolAreaView
+        = "Showing patrol areas. Arrow keys: Move the cursor. Space: On a path, sets the patrol area of the nearest "
+          "staff member who patrols it. B: Changes the size of the brush. Escape: Stops showing patrol areas and goes "
+          "back to the staff list.";
 
     inline constexpr const char* kPlacingGuestStarts
         = "Placing guest starting positions. Arrow keys: Move the cursor. R: Turn the way guests walk. Enter: Place "

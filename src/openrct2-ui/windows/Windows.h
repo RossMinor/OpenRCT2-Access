@@ -34,6 +34,7 @@ enum class ScatterToolDensity : uint8_t;
 namespace OpenRCT2
 {
     enum class GuestListFilterType : int32_t;
+    enum class StaffType : uint8_t;
 
     class Formatter;
     struct ObjectEntryDescriptor;
@@ -428,6 +429,8 @@ namespace OpenRCT2::Ui::Windows
 
     // StaffList
     WindowBase* StaffListOpen();
+    WindowBase* StaffListOpenOn(StaffType staffType);
+    Peep* StaffListClosestStaffMemberAt(StaffType staffType, const CoordsXY& footpathCoords);
     void WindowStaffListRefresh();
 
     // TextInput

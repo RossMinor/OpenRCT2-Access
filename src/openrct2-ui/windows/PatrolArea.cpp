@@ -9,6 +9,8 @@
 
 #include "../interface/ViewportQuery.h"
 
+#include <openrct2-ui/accessibility/MapNavigation.h>
+#include <openrct2-ui/accessibility/PatrolAreaPainting.h>
 #include <openrct2-ui/interface/LandTool.h>
 #include <openrct2-ui/interface/Widget.h>
 #include <openrct2-ui/interface/Window.h>
@@ -286,6 +288,19 @@ namespace OpenRCT2::Ui::Windows
     WindowBase* PatrolAreaOpen(EntityId staffId)
     {
         auto* windowMgr = GetWindowManager();
+
+        // From the keyboard the map cursor paints the area instead of this mouse tool. The staff
+        // window (and the staff list it came from) would keep the keyboard, so they close and the
+        // cursor takes over; Escape there finishes. Mouse mode keeps the game's own tool.
+        if (Accessibility::IsKeyboardNavActive())
+        {
+            if (auto* staffWindow = windowMgr->FindByNumber(WindowClass::peep, staffId); staffWindow != nullptr)
+                windowMgr->Close(*staffWindow);
+            windowMgr->CloseByClass(WindowClass::staffList);
+            Accessibility::BeginPatrolAreaMode(staffId);
+            return nullptr;
+        }
+
         auto* w = windowMgr->FocusOrCreate<PatrolAreaWindow>(
             WindowClass::patrolArea, ScreenCoordsXY(ContextGetWidth() - kWindowSize.width, 29), kWindowSize, {});
         if (w != nullptr)

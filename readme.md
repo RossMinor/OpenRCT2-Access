@@ -104,16 +104,16 @@ At any point, you can press F1 to hear what commands you currently have at your 
 
 - Space: Places whatever you are placing. With nothing selected that means a footpath of the current type on the current tile; while placing a ride, stall or scenery it places that instead. Enter also still works for placing, so either key will do.
 - Delete: Removes an object on the current tile: paths, bins or benches, scenery, ride pieces, etc.
-- Control + P: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location. If there is a break, the mod will tell you were it is and why it's there.
+- Control + P: Tells the user if the path they are currently on connects all the way to the entrance. Useful for knowing if guests can get to a ride or other location. If there is a break, the mod will tell you where it is and why it's there.
 - Shift + P or F4: Opens the path menu. Allows you to choose path or queues type, color, type of railings, and more.
 - Shift + X or F3: Opens the scenery menu, where you pick the scenery you want to place. Pressing it again closes the menu.
-- D: Deletes the path on the current tile and elivation. Unlike Delete, this works across a whole marked area.
-- L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path. The sloped path will build in the direction you are facing. So if you are facing north and have slope set to up, the path will gain elivation going north. The elevation cursor will also move up each tile to make things quick while placing slopes.
-- Home or End: Raise and lower the elivation you are working on. This is useful for building elivated paths.
+- D: Deletes the path on the current tile and elevation. Unlike Delete, this works across a whole marked area.
+- L: Change the slope of the path. Once your desired slope is selected, you can resume using space to build the path. The sloped path will build in the direction you are facing. So if you are facing north and have slope set to up, the path will gain elevation going north. The elevation cursor will also move up each tile to make things quick while placing slopes.
+- Home or End: Raise and lower the elevation you are working on. This is useful for building elivated paths.
 - Shift + Home or End: Snaps the cursor to any objects above or below you, respectively.
 - Page up or down: Raises and lower the land tile you are currently on. **Note:** There is a sound that plays with terrain to indicate elevation. The higher pitch, the higher the elevation. The lower the pitch, the lower the elevation.
 - Control page up or down: Raise or lower the water tile you are currently on.
-- X: Clear the scenery on the tile and elivation you are currently on. Examples are trees, bushes, fences, and other objects.
+- X: Clear the scenery on the tile and elevation you are currently on. Examples are trees, bushes, fences, and other objects.
 - B: Cycle the size of the brush from 1x1, 3x3, 5x5, and 7x7.
 - O: Opens the land rights menu, with Buy land and Buy construction rights. Its heading tells you which tiles it acts on: your brush, or the area you marked with K. Each option reads what it would cost there, or "nothing for sale here", and an option reads "unavailable" when the park has none of it left for sale. Press Enter to buy, or Escape to close without buying. In the scenario editor, the menu sets land rights instead (see Scenario Editor below).
 - K: Place a first and then second marker to determine an area to be modified. Actions that can be performed are terraforming, laying and deleting paths, clearing scenery, and purchasing land and construction rights. Press K a third time will reset the markers. With an area marked, each of those commands asks before it acts: the first press describes the area - its top left and bottom right corners, its size in tiles, and what it will cost (or earn, for a refund) - and waits, and a second press of the same key carries it out. Any other key cancels. Each command asks once per marked area, so holding Page Up to raise land several steps only prompts on the first press.
@@ -126,6 +126,17 @@ Zones are your own names for parts of the map. Once an area is named, the cursor
 
 - Z: With an area marked (see K above), names that area as a zone. It tells you how big the area is and opens a box to type a name into; press Enter to finish. Typing the name of a zone you already have extends that zone instead of making a second one, which is how you grow a zone: mark the new part and name it the same thing. If the area overlaps a *different* zone, the mod names that zone and asks before taking those tiles from it, and Enter confirms.
 - Z with no markers placed: Opens the zone list. Up and Down arrows move through your zones and read each one's name and size, Enter jumps the cursor to that zone, R renames it, Delete removes it (press Delete a second time to confirm), and Escape closes the list. It opens on the zone you are standing in, if you are in one.
+
+### Patrol Areas
+
+A patrol area keeps a staff member working in one part of your park. Staff without one wander the whole park. Mechanics with a patrol area only answer breakdowns at rides whose entrance is inside it.
+
+- Setting an area: Open a staff member's window, press Enter on "Set patrol area", then choose "Set Patrol Area". The mod says "Entering patrol mode" and you are back on the map. Each tile says "patrolled by" and the staff member's name when it is in their area, "patrolled by other handymen" when another staff member of the same type patrols it, and "not patrolled" otherwise. These match the colours the game shows a sighted player.
+- Space: Adds your brush or marked area to the patrol area. If the tile you are on is already patrolled, it removes it instead, the same way a click works for sighted players. With an area marked with K, the first press describes the area and the second carries it out.
+- Escape: Finishes and takes you back to the staff member's window.
+- Cancel Patrol Area: In the same menu as Set Patrol Area. Removes the staff member's whole patrol area.
+- Show patrol areas: An option in the Staff list. You walk the map hearing which tiles are patrolled by the staff type you were on, such as "patrolled by handymen". Press Space on a path to start setting the patrol area of the nearest staff member who patrols it. Off a path, the mod says "Not on a path". Escape takes you back to the Staff list.
+- In the Staff list, a staff member who has a patrol area says "patrol area" after their name.
 
 ### About elevation numbers
 
@@ -140,8 +151,8 @@ Build mode is activated when you construct pre-built or custom rides. It will ca
 - Space or Enter: Attempts to place the ride. If there is scenery in the location area where the ride will be placed, it will automatically remove the scenery. If there is scenery in the area, but it is still an invalid construction area, the scenery will stay and the game will report the error that is preventing you from constructing and tell you how and where it needs to be fixed.
 - Backspace: Picks a positioned ride back up so you can put it somewhere else, and returns the cursor to the tile you positioned it at. Checking a ride's footprint walks the cursor away from that spot, so without this you would have to find your chosen position again before you could nudge it.
 - Escape: Cancels construction or exits build mode.
-- Shift + W, A, S, or D: Focusses the scenery you are building on the tile's edge of that direction. For example, if you are placing a bench, you can press shift + W to put it on the top edge of the tile you are currently on and then press space to place it.
-- Shift + Q, E, Z, or C: Focusses the scenery you are building on the tile's corner you are currently on. For example, if you were placing flowers, you can press shift + Q to point a flower at the top left corner of the tile you are on and then can press space to place the flower.
+- Shift + W, A, S, or D: Focuses the scenery you are building on the tile's edge of that direction. For example, if you are placing a bench, you can press shift + W to put it on the top edge of the tile you are currently on and then press space to place it.
+- Shift + Q, E, Z, or C: Focuses the scenery you are building on the tile's corner you are currently on. For example, if you were placing flowers, you can press shift + Q to point a flower at the top left corner of the tile you are on and then can press space to place the flower.
 - Control + Up or Down: Cycles through the custom ride builder menu. The menu items you get depend on the ride: only the pieces that ride type can actually build are offered. Note that while the builder is open these keys belong to it, so Control + arrow keys will not jump the cursor to a nearby ride until you close the builder.
 - Control + Left or Right: Cycle between the options for that menu item.
 - Special piece: One of the custom ride builder's menu items, sitting just after Curve. This is where a ride type's own pieces live - vertical loops, corkscrews, helices, reversers, s-bends, on-ride photo sections and so on - so its contents differ from one ride type to the next. Control + Left or Right steps through the pieces you can build from where you are standing; pieces that don't fit your current slope, banking or heading are skipped. The first entry is "none", which takes you back to ordinary curve-and-slope track. Note that a special piece comes with its slope, banking and chain lift already built in, so the game locks those three menu items for as long as one is selected. They will read as "locked" when you arrive on them, and trying to change one will tell you which piece is holding it. Set Special piece back to "none" to get them back.

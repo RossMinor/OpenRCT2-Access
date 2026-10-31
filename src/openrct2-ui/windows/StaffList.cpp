@@ -13,6 +13,7 @@
 #include <openrct2-ui/accessibility/MapNavigation.h>
 #include <openrct2-ui/accessibility/AccessFollow.h>
 #include <openrct2-ui/accessibility/ListNavigation.h>
+#include <openrct2-ui/accessibility/PatrolAreaPainting.h>
 #include <openrct2-ui/accessibility/ScreenReader.h>
 #include <openrct2-ui/accessibility/graph/GraphBuilder.h>
 #include <openrct2-ui/accessibility/graph/GraphVocab.h>
@@ -159,6 +160,15 @@ namespace OpenRCT2::Ui::Windows
                     break;
                 }
                 case WIDX_STAFF_LIST_SHOW_PATROL_AREA_BUTTON:
+                    // From the keyboard the map cursor shows the areas and finds the staff member, in
+                    // place of this mouse tool; the list would keep the keyboard, so it closes.
+                    if (Accessibility::IsKeyboardNavActive())
+                    {
+                        const auto staffType = GetSelectedStaffType();
+                        close();
+                        Accessibility::BeginPatrolAreaView(staffType);
+                        break;
+                    }
                     if (!ToolSet(*this, WIDX_STAFF_LIST_SHOW_PATROL_AREA_BUTTON, Tool::crosshair))
                     {
                         ShowGridlines();
@@ -282,6 +292,9 @@ namespace OpenRCT2::Ui::Windows
                 const auto act = OpenRCT2::FormatStringIDLegacy(STR_STRINGID, ft.Data());
                 if (!act.empty())
                     text += ", " + act;
+                // The row's patrol icon.
+                if (peep->hasPatrolArea())
+                    text += ", patrol area";
             }
             return text;
         }
@@ -313,6 +326,20 @@ namespace OpenRCT2::Ui::Windows
             hire.onActivate = [this]() { hireAccessibilityStaff(); };
             hire.excludeFromSearch = true;
             b.AddItem(ControlId::Structural("hire"), std::move(hire));
+
+            if (widgets[WIDX_STAFF_LIST_SHOW_PATROL_AREA_BUTTON].isVisible())
+            {
+                NodeVtable patrol;
+                patrol.announcements.emplace_back(NodeAnnouncement::Static("Show patrol areas"));
+                patrol.announcements.emplace_back(NodeAnnouncement::Static(Vocab::kRoleButton, AnnouncementKinds::kRole));
+                patrol.onActivate = [this]() { onMouseUp(WIDX_STAFF_LIST_SHOW_PATROL_AREA_BUTTON); };
+                patrol.focusRect = [this]() -> std::optional<GraphRect> {
+                    const auto& wd = widgets[WIDX_STAFF_LIST_SHOW_PATROL_AREA_BUTTON];
+                    return GraphRect{ windowPos.x + wd.left, windowPos.y + wd.top, wd.width() + 1, wd.height() + 1 };
+                };
+                patrol.excludeFromSearch = true;
+                b.AddItem(ControlId::Structural("showpatrol"), std::move(patrol));
+            }
 
             int32_t index = 0;
             for (const auto& entry : _staffList)
@@ -807,43 +834,18 @@ namespace OpenRCT2::Ui::Windows
             auto footpathCoords = FootpathGetCoordinatesFromPos(screenCoords, &direction, &tileElement);
             if (footpathCoords.IsNull())
                 return nullptr;
-
-            auto isPatrolAreaSet = IsPatrolAreaSetForStaffType(GetSelectedStaffType(), footpathCoords);
-
-            Peep* closestPeep = nullptr;
-            auto closestPeepDistance = std::numeric_limits<int32_t>::max();
-            for (auto peep : EntityList<Staff>())
-            {
-                if (peep->assignedStaffType != GetSelectedStaffType())
-                    continue;
-
-                if (isPatrolAreaSet)
-                {
-                    if (!peep->hasPatrolArea())
-                    {
-                        continue;
-                    }
-                    if (!peep->isLocationInPatrol(footpathCoords))
-                    {
-                        continue;
-                    }
-                }
-
-                if (peep->x == kLocationNull)
-                {
-                    continue;
-                }
-
-                auto distance = std::abs(footpathCoords.x - peep->x) + std::abs(footpathCoords.y - peep->y);
-                if (distance < closestPeepDistance)
-                {
-                    closestPeepDistance = distance;
-                    closestPeep = peep;
-                }
-            }
-            return closestPeep;
+            return StaffListClosestStaffMemberAt(GetSelectedStaffType(), footpathCoords);
         }
 
+    public:
+        void SetSelectedStaffType(StaffType type)
+        {
+            _selectedTab = static_cast<int32_t>(type);
+            RefreshList();
+            invalidate();
+        }
+
+    private:
         static constexpr StaffNamingConvention GetStaffNamingConvention(StaffType type)
         {
             switch (type)
@@ -880,6 +882,55 @@ namespace OpenRCT2::Ui::Windows
             return ImageId(animObj->GetInlineImageId());
         }
     };
+
+    // The staff member the game's "show patrol area" tool picks for a path tile: the nearest one of
+    // this type - only among those who patrol it, when any of this type does.
+    Peep* StaffListClosestStaffMemberAt(StaffType staffType, const CoordsXY& footpathCoords)
+    {
+        auto isPatrolAreaSet = IsPatrolAreaSetForStaffType(staffType, footpathCoords);
+
+        Peep* closestPeep = nullptr;
+        auto closestPeepDistance = std::numeric_limits<int32_t>::max();
+        for (auto peep : EntityList<Staff>())
+        {
+            if (peep->assignedStaffType != staffType)
+                continue;
+
+            if (isPatrolAreaSet)
+            {
+                if (!peep->hasPatrolArea())
+                {
+                    continue;
+                }
+                if (!peep->isLocationInPatrol(footpathCoords))
+                {
+                    continue;
+                }
+            }
+
+            if (peep->x == kLocationNull)
+            {
+                continue;
+            }
+
+            auto distance = std::abs(footpathCoords.x - peep->x) + std::abs(footpathCoords.y - peep->y);
+            if (distance < closestPeepDistance)
+            {
+                closestPeepDistance = distance;
+                closestPeep = peep;
+            }
+        }
+        return closestPeep;
+    }
+
+    // Opens the staff list on one staff type's tab.
+    WindowBase* StaffListOpenOn(StaffType staffType)
+    {
+        auto* w = static_cast<StaffListWindow*>(StaffListOpen());
+        if (w != nullptr)
+            w->SetSelectedStaffType(staffType);
+        return w;
+    }
 
     WindowBase* StaffListOpen()
     {

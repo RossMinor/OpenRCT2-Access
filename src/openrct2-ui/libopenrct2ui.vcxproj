@@ -59,6 +59,7 @@
     <ClInclude Include="accessibility\RideDesignPaths.h" />
     <ClInclude Include="accessibility\RidePlacement.h" />
     <ClInclude Include="accessibility\RideVisualDescriptions.h" />
+    <ClInclude Include="accessibility\PatrolAreaPainting.h" />
     <ClInclude Include="accessibility\SceneryPlacement.h" />
     <ClInclude Include="accessibility\TrackDesignDescription.h" />
     <ClInclude Include="accessibility\ScreenReader.h" />
@@ -155,6 +156,7 @@
     <ClCompile Include="accessibility\RideDesignPaths.cpp" />
     <ClCompile Include="accessibility\RidePlacement.cpp" />
     <ClCompile Include="accessibility\RideVisualDescriptions.cpp" />
+    <ClCompile Include="accessibility\PatrolAreaPainting.cpp" />
     <ClCompile Include="accessibility\SceneryPlacement.cpp" />
     <ClCompile Include="accessibility\TrackDesignDescription.cpp" />
     <ClCompile Include="accessibility\ScreenReader.cpp" />
